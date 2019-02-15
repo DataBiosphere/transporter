@@ -1,10 +1,10 @@
 # Transporter
-Bulk file-transfer system for data ingest.
+Bulk file-transfer system for data ingest / delivery.
 
 ## Why Transporter?
 Data ingest into our cloud environment requires bulk file transfer from both on-prem storage and other clouds.
-Transporter aims to provide uniform (but extensible) APIs for submitting, monitoring, and executing bulk transfers
-between these various environments.
+Similarly, data delivery requires uploading large files to external systems. Transporter aims to provide uniform
+(but extensible) APIs for submitting, monitoring, and executing bulk transfers between these various environments.
 
 ## Building
 Transporter is built using `sbt`. Installation instructions for `sbt` are [here](https://www.scala-sbt.org/download.html).
