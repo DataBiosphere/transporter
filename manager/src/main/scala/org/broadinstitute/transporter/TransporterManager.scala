@@ -1,10 +1,12 @@
 package org.broadinstitute.transporter
 
 import cats.effect.{ExitCode, IO, IOApp, Resource}
+import cats.implicits._
 import doobie.util.ExecutionContexts
-import org.broadinstitute.transporter.api.ManagerApi
+import org.broadinstitute.transporter.api.{ManagerApi, SwaggerUiApi}
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.status.StatusController
+import org.http4s.implicits._
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.Logger
 import pureconfig.module.catseffect._
@@ -29,12 +31,13 @@ object TransporterManager extends IOApp {
         statusController = new StatusController(dbClient)
       )
 
-      val routes = new ManagerApi(
-        BuildInfo.version,
-        BuildInfo.swaggerVersion,
-        app,
-        blockingEc
-      ).routes
+      val apiDocsPath = "api-docs.json"
+
+      val appApi = new ManagerApi(BuildInfo.version, apiDocsPath, app)
+      val swaggerApi = new SwaggerUiApi(BuildInfo.swaggerVersion, apiDocsPath, blockingEc)
+
+      val routes =
+        appApi.routes.combineK(swaggerApi.routes).orNotFound
 
       BlazeServerBuilder[IO]
         .bindHttp(port = config.port, host = "0.0.0.0")
