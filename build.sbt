@@ -1,3 +1,5 @@
+// Settings to apply across the entire build.
+enablePlugins(GitVersioning)
 inThisBuild(
   Seq(
     organization := "org.broadinstitute",
@@ -56,7 +58,7 @@ val kafkaClientsVersion = "2.1.0"
 val logbackVersion = "1.2.3"
 
 // Web.
-val http4sVersion = "0.20.0-M5"
+val http4sVersion = "0.20.0-M5" // -M6 breaks rho for now (2/19/18).
 val rhoVersion = "0.19.0-M5"
 val swaggerUiVersion = "3.20.8"
 
@@ -92,6 +94,7 @@ lazy val transporter = project
 
 lazy val `transporter-manager` = project
   .in(file("./manager"))
+  .enablePlugins(BuildInfoPlugin)
   .settings(commonSettings)
   .settings(
     // Main dependencies.
@@ -123,7 +126,14 @@ lazy val `transporter-manager` = project
       "org.testcontainers" % "testcontainers" % testcontainersVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion
-    )
+    ),
+
+    // Inject version information into the app.
+    buildInfoKeys := Seq(
+      version,
+      "swaggerVersion" -> swaggerUiVersion
+    ),
+    buildInfoPackage := "org.broadinstitute.transporter"
   )
 
 lazy val `transporter-agent-template` = project

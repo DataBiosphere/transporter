@@ -16,8 +16,8 @@ object TransporterManager extends IOApp {
 
   private def bindAndRun(blockingEc: ExecutionContext): IO[ExitCode] = {
     val routes = new ManagerApi(
-      "0.0.0-SNAP",
-      "3.20.8",
+      BuildInfo.version,
+      BuildInfo.swaggerVersion,
       blockingEc
     ).routes
 
