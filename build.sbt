@@ -40,9 +40,25 @@ inThisBuild(
 // Compiler plugins.
 val betterMonadicForVersion = "0.2.4"
 
-// Typelevel stack.
+// Core.
 val catsVersion = "1.6.0"
 val catsEffectVersion = "1.2.0"
+val fs2Version = "1.0.3"
+
+// DB.
+val doobieVersion = "0.7.0-M2"
+
+// Kafka.
+val fs2KafkaVersion = "0.19.1"
+val kafkaClientsVersion = "2.1.0"
+
+// Logging.
+val logbackVersion = "1.2.3"
+
+// Web.
+val http4sVersion = "0.20.0-M5"
+val rhoVersion = "0.19.0-M5"
+val swaggerUiVersion = "3.20.8"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
@@ -78,9 +94,19 @@ lazy val `transporter-manager` = project
   .in(file("./manager"))
   .settings(commonSettings)
   .settings(
+    // Main dependencies.
     libraryDependencies ++= Seq(
-      "org.typelevel" %% "cats-effect" % catsEffectVersion
+      "ch.qos.logback" % "logback-classic" % logbackVersion,
+      "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
+      "org.http4s" %% "http4s-blaze-server" % http4sVersion,
+      "org.http4s" %% "http4s-dsl" % http4sVersion,
+      "org.http4s" %% "rho-swagger" % rhoVersion,
+      "org.tpolecat" %% "doobie-core" % doobieVersion,
+      "org.tpolecat" %% "doobie-postgres" % doobieVersion,
+      "org.webjars" % "swagger-ui" % swaggerUiVersion
     ),
+
+    // Test dependencies.
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
@@ -88,9 +114,15 @@ lazy val `transporter-manager` = project
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
     ).map(_ % Test),
+
+    // Pin transitive dependencies to avoid chaos.
     dependencyOverrides := Seq(
+      "co.fs2" %% "fs2-core" % fs2Version,
+      "co.fs2" %% "fs2-io" % fs2Version,
+      "org.apache.kafka" % "kafka-clients" % kafkaClientsVersion,
       "org.testcontainers" % "testcontainers" % testcontainersVersion,
-      "org.typelevel" %% "cats-core" % catsVersion
+      "org.typelevel" %% "cats-core" % catsVersion,
+      "org.typelevel" %% "cats-effect" % catsEffectVersion
     )
   )
 
