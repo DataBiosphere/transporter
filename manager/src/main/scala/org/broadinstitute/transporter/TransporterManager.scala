@@ -4,6 +4,7 @@ import cats.effect.{ExitCode, IO, IOApp, Resource}
 import doobie.util.ExecutionContexts
 import org.broadinstitute.transporter.api.ManagerApi
 import org.http4s.server.blaze.BlazeServerBuilder
+import org.http4s.server.middleware.Logger
 
 import scala.concurrent.ExecutionContext
 
@@ -23,7 +24,7 @@ object TransporterManager extends IOApp {
 
     BlazeServerBuilder[IO]
       .bindHttp(port = 8080, host = "0.0.0.0")
-      .withHttpApp(routes)
+      .withHttpApp(Logger(logHeaders = true, logBody = true)(routes))
       .serve
       .compile
       .lastOrError

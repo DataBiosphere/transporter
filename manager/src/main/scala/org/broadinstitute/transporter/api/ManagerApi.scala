@@ -56,7 +56,11 @@ class ManagerApi(
 
   def routes: Http[IO, IO] = {
     val swaggerMiddleware = swaggerIo.createRhoMiddleware(
-      apiInfo = Info(title = "Transporter API", version = appVersion),
+      apiInfo = Info(
+        title = "Transporter API",
+        version = appVersion,
+        description = Some("Bulk file-transfer system for data ingest / delivery.")
+      ),
       apiPath = TypedPath(PathMatch("api-docs.json"))
     )
 
