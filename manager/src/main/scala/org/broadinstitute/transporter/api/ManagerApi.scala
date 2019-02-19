@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.api
 
 import cats.effect.{ContextShift, Effect, IO}
 import cats.implicits._
+import org.broadinstitute.transporter.ManagerApp
 import org.http4s.{Http, HttpRoutes, Uri}
 import org.http4s.headers.Location
 import org.http4s.implicits._
@@ -17,6 +18,7 @@ import scala.concurrent.ExecutionContext
 class ManagerApi(
   appVersion: String,
   swaggerVersion: String,
+  app: ManagerApp,
   blockingEc: ExecutionContext
 )(
   implicit eff: Effect[IO],
@@ -28,7 +30,7 @@ class ManagerApi(
   private val infoRoutes = new RhoRoutes[IO] {
 
     "Query operational status of the system" **
-      GET / "status" |>> Ok("It's alive")
+      GET / "status" |>> app.statusController.status.map(Ok(_))
 
     "Query version of the system" **
       GET / "version" |>> Ok(appVersion)

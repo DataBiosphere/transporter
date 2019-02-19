@@ -4,8 +4,8 @@ import org.broadinstitute.transporter.db.DbConfig
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto._
 
-case class TransporterConfig(port: Int, db: DbConfig)
+case class ManagerConfig(port: Int, db: DbConfig)
 
-object TransporterConfig {
-  implicit val reader: ConfigReader[TransporterConfig] = deriveReader
+object ManagerConfig {
+  implicit val reader: ConfigReader[ManagerConfig] = deriveReader
 }
