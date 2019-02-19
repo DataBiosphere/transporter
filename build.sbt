@@ -42,6 +42,9 @@ inThisBuild(
 // Compiler plugins.
 val betterMonadicForVersion = "0.2.4"
 
+// Configuration.
+val pureConfigVersion = "0.10.2"
+
 // Core.
 val catsVersion = "1.6.0"
 val catsEffectVersion = "1.2.0"
@@ -100,11 +103,14 @@ lazy val `transporter-manager` = project
     // Main dependencies.
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % logbackVersion,
+      "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
+      "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
       "org.http4s" %% "http4s-blaze-server" % http4sVersion,
       "org.http4s" %% "http4s-dsl" % http4sVersion,
       "org.http4s" %% "rho-swagger" % rhoVersion,
       "org.tpolecat" %% "doobie-core" % doobieVersion,
+      "org.tpolecat" %% "doobie-hikari" % doobieVersion,
       "org.tpolecat" %% "doobie-postgres" % doobieVersion,
       "org.webjars" % "swagger-ui" % swaggerUiVersion
     ),
