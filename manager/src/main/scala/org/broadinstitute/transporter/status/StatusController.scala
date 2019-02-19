@@ -5,7 +5,11 @@ import org.broadinstitute.transporter.db.DbClient
 
 class StatusController(dbClient: DbClient) {
 
-  def status: IO[String] = dbClient.checkReady.map { ready =>
-    if (ready) "It's alive" else "Oh no!"
-  }
+  def status: IO[ManagerStatus] =
+    dbStatus.map(db => ManagerStatus(db.ok, Map("db" -> db)))
+
+  private def dbStatus: IO[SystemStatus] =
+    dbClient.checkReady.map { ready =>
+      SystemStatus(ok = ready, messages = if (ready) Nil else List("Can't connect to DB"))
+    }
 }

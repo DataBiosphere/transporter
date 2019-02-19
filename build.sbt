@@ -53,6 +53,10 @@ val fs2Version = "1.0.3"
 // DB.
 val doobieVersion = "0.7.0-M2"
 
+// JSON.
+val circeVersion = "0.11.1"
+val circeDerivationVersion = "0.11.0-M1"
+
 // Kafka.
 val fs2KafkaVersion = "0.19.1"
 val kafkaClientsVersion = "2.1.0"
@@ -106,7 +110,10 @@ lazy val `transporter-manager` = project
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
+      "io.circe" %% "circe-core" % circeVersion,
+      "io.circe" %% "circe-derivation" % circeDerivationVersion,
       "org.http4s" %% "http4s-blaze-server" % http4sVersion,
+      "org.http4s" %% "http4s-circe" % http4sVersion,
       "org.http4s" %% "http4s-dsl" % http4sVersion,
       "org.http4s" %% "rho-swagger" % rhoVersion,
       "org.tpolecat" %% "doobie-core" % doobieVersion,

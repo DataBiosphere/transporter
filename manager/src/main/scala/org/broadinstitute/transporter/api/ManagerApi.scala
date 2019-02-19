@@ -2,7 +2,9 @@ package org.broadinstitute.transporter.api
 
 import cats.effect.{ContextShift, Effect, IO}
 import cats.implicits._
+import io.circe.syntax._
 import org.broadinstitute.transporter.ManagerApp
+import org.http4s.circe.CirceEntityEncoder
 import org.http4s.{Http, HttpRoutes, Uri}
 import org.http4s.headers.Location
 import org.http4s.implicits._
@@ -27,10 +29,16 @@ class ManagerApi(
 
   import swaggerIo._
 
-  private val infoRoutes = new RhoRoutes[IO] {
+  private val infoRoutes = new RhoRoutes[IO] with CirceEntityEncoder {
 
     "Query operational status of the system" **
-      GET / "status" |>> app.statusController.status.map(Ok(_))
+      GET / "status" |>> app.statusController.status.map { status =>
+      if (status.ok) {
+        Ok(status.asJson)
+      } else {
+        InternalServerError(status.asJson)
+      }
+    }
 
     "Query version of the system" **
       GET / "version" |>> Ok(appVersion)
