@@ -12,13 +12,22 @@ import org.http4s.rho.swagger.SwaggerSupport
 class ManagerApi(appVersion: String, apiDocsPath: String, app: ManagerApp)
     extends SwaggerSupport[IO] {
 
+  // This is in-sourced from `CirceEntityEncoder`, with pinned type params.
+  // It _should_ work to instead extend than trait, but for some reason that
+  // gives diverging implicits errors.
   private implicit val statusEncoder: EntityEncoder[IO, ManagerStatus] =
     org.http4s.circe.jsonEncoderOf
 
-  private val infoRoutes = new RhoRoutes[IO] {
+  private val infoRoutes: RhoRoutes[IO] = new RhoRoutes[IO] {
+
+    private val statusRoute =
+      "Query operational status of the system" ** GET / "status"
+
+    private val versionRoute =
+      "Query version of the system" ** GET / "version"
 
     // NOTE: Has to be a thunk here to prevent eager evaluation / caching.
-    "Query operational status of the system" ** GET / "status" |>> { () =>
+    statusRoute |>> { () =>
       app.statusController.status.flatMap { status =>
         if (status.ok) {
           Ok(status)
@@ -30,7 +39,7 @@ class ManagerApi(appVersion: String, apiDocsPath: String, app: ManagerApp)
 
     // NOTE: The response here is evaluated at startup and cached,
     // since it's not a thunk.
-    "Query version of the system" ** GET / "version" |>> Ok(appVersion)
+    versionRoute |>> Ok(appVersion)
   }
 
   def routes: HttpRoutes[IO] = {
