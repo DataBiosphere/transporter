@@ -1,10 +1,9 @@
 package org.broadinstitute.transporter.api
 
 import cats.effect.IO
-import io.circe.syntax._
 import org.broadinstitute.transporter.ManagerApp
+import org.http4s._
 import org.http4s.circe.CirceEntityEncoder
-import org.http4s.HttpRoutes
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.bits.PathAST.{PathMatch, TypedPath}
 import org.http4s.rho.swagger.models.Info
@@ -16,17 +15,20 @@ class ManagerApi(appVersion: String, apiDocsPath: String, app: ManagerApp) {
 
   private val infoRoutes = new RhoRoutes[IO] with CirceEntityEncoder {
 
-    "Query operational status of the system" **
-      GET / "status" |>> app.statusController.status.map { status =>
-      if (status.ok) {
-        Ok(status.asJson)
-      } else {
-        InternalServerError(status.asJson)
+    // NOTE: Has to be a thunk here to prevent eager evaluation / caching.
+    "Query operational status of the system" ** GET / "status" |>> { () =>
+      app.statusController.status.map { status =>
+        if (status.ok) {
+          Ok.pure(status)
+        } else {
+          InternalServerError.pure(status)
+        }
       }
     }
 
-    "Query version of the system" **
-      GET / "version" |>> Ok(appVersion)
+    // NOTE: The response here is evaluated at startup and cached,
+    // since it's not a thunk.
+    "Query version of the system" ** GET / "version" |>> Ok(appVersion)
   }
 
   def routes: HttpRoutes[IO] = {

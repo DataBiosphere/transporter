@@ -45,13 +45,13 @@ val betterMonadicForVersion = "0.2.4"
 // Configuration.
 val pureConfigVersion = "0.10.2"
 
-// Core.
+// Data types & control flow.
 val catsVersion = "1.6.0"
 val catsEffectVersion = "1.2.0"
 val fs2Version = "1.0.3"
 
 // DB.
-val doobieVersion = "0.7.0-M2"
+val doobieVersion = "0.7.0-M3"
 
 // JSON.
 val circeVersion = "0.11.1"

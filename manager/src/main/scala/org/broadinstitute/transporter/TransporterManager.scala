@@ -34,7 +34,7 @@ object TransporterManager extends IOApp {
       val apiDocsPath = "api-docs.json"
 
       val appApi = new ManagerApi(BuildInfo.version, apiDocsPath, app)
-      val swaggerApi = new SwaggerUiApi(BuildInfo.swaggerVersion, apiDocsPath, blockingEc)
+      val swaggerApi = new SwaggerUiApi(apiDocsPath, blockingEc)
 
       val routes =
         appApi.routes.combineK(swaggerApi.routes).orNotFound
