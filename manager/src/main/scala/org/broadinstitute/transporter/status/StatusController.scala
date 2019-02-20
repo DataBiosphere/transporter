@@ -3,8 +3,11 @@ package org.broadinstitute.transporter.status
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import org.broadinstitute.transporter.db.DbClient
+import org.broadinstitute.transporter.kafka.KafkaClient
 
-class StatusController(dbClient: DbClient)(implicit cs: ContextShift[IO]) {
+class StatusController(dbClient: DbClient, kafkaClient: KafkaClient)(
+  implicit cs: ContextShift[IO]
+) {
 
   def status: IO[ManagerStatus] =
     (dbStatus, kafkaStatus).parMapN {
@@ -17,5 +20,11 @@ class StatusController(dbClient: DbClient)(implicit cs: ContextShift[IO]) {
       SystemStatus(ok = ready, messages = if (ready) Nil else List("Can't connect to DB"))
     }
 
-  private def kafkaStatus: IO[SystemStatus] = ???
+  private def kafkaStatus: IO[SystemStatus] =
+    kafkaClient.checkReady.map { ready =>
+      SystemStatus(
+        ok = ready,
+        messages = if (ready) Nil else List("Can't connect to Kafka")
+      )
+    }
 }
