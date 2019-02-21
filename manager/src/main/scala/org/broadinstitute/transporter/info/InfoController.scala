@@ -1,11 +1,11 @@
-package org.broadinstitute.transporter.status
+package org.broadinstitute.transporter.info
 
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaClient
 
-class StatusController(dbClient: DbClient, kafkaClient: KafkaClient)(
+class InfoController(appVersion: String, dbClient: DbClient, kafkaClient: KafkaClient)(
   implicit cs: ContextShift[IO]
 ) {
 
@@ -14,6 +14,8 @@ class StatusController(dbClient: DbClient, kafkaClient: KafkaClient)(
       case (db, kafka) =>
         ManagerStatus(db.ok && kafka.ok, Map("db" -> db, "kafka" -> kafka))
     }
+
+  def version: IO[ManagerVersion] = IO.pure(ManagerVersion(appVersion))
 
   private def dbStatus: IO[SystemStatus] =
     dbClient.checkReady.map { ready =>

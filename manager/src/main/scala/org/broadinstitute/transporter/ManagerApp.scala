@@ -1,5 +1,7 @@
 package org.broadinstitute.transporter
 
-import org.broadinstitute.transporter.status.StatusController
+import org.broadinstitute.transporter.info.InfoController
 
-case class ManagerApp(statusController: StatusController)
+case class ManagerApp(
+  infoController: InfoController
+)

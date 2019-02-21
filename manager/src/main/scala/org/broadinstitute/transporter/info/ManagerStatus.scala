@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.status
+package org.broadinstitute.transporter.info
 
 import io.circe.Encoder
 

@@ -65,8 +65,8 @@ val kafkaClientsVersion = "2.1.0"
 val logbackVersion = "1.2.3"
 
 // Web.
-val http4sVersion = "0.20.0-M5" // -M6 breaks rho for now (2/19/18).
-val rhoVersion = "0.19.0-M5"
+val http4sVersion = "0.20.0-M6"
+val rhoVersion = "0.19.0-M6"
 val swaggerUiVersion = "3.20.8"
 
 // Testing.
