@@ -3,7 +3,7 @@ package org.broadinstitute.transporter
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import org.broadinstitute.transporter.api.{ManagerApi, SwaggerMiddleware}
+import org.broadinstitute.transporter.web.{ManagerApi, SwaggerMiddleware}
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaClient
 import org.broadinstitute.transporter.status.StatusController

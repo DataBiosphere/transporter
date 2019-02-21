@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.api
+package org.broadinstitute.transporter.web
 
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
