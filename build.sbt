@@ -128,6 +128,7 @@ lazy val `transporter-manager` = project
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
       "org.postgresql" % "postgresql" % postgresqlDriverVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
+      "org.testcontainers" % "kafka" % testcontainersVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
     ).map(_ % Test),
 
