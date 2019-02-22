@@ -35,7 +35,7 @@ object TransporterManager extends IOApp {
     blockingEc: ExecutionContext
   ): IO[ExitCode] = {
     val dbResource = DbClient.resource(config.db, blockingEc)
-    val kafkaResource = KafkaClient.resource(config.kafka)
+    val kafkaResource = KafkaClient.resource(config.kafka, blockingEc)
 
     (dbResource, kafkaResource).tupled.use {
       case (dbClient, kafkaClient) =>

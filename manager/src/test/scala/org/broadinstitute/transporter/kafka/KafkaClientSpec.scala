@@ -1,8 +1,8 @@
 package org.broadinstitute.transporter.kafka
 
-import cats.effect.{ContextShift, IO}
+import cats.effect.{ContextShift, IO, Timer}
 import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
-import fs2.kafka.AdminClientSettings
+import doobie.util.ExecutionContexts
 import org.scalatest.{FlatSpec, Matchers}
 import org.testcontainers.containers.KafkaContainer
 
@@ -17,30 +17,39 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   }
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  private val blockingEc = ExecutionContexts.cachedThreadPool[IO]
 
   behavior of "KafkaClient"
 
   it should "report ready on good configuration" in {
     val settings =
-      AdminClientSettings.Default.withBootstrapServers(baseContainer.getBootstrapServers)
+      KafkaConfig(baseContainer.getBootstrapServers.split(',').toList, "test-admin")
 
-    fs2.kafka
-      .adminClientResource[IO](settings)
-      .map(new KafkaClient(_))
-      .use(_.checkReady)
-      .unsafeRunSync() shouldBe true
+    val clientResource = for {
+      ec <- blockingEc
+      client <- KafkaClient.resource(settings, ec)
+    } yield {
+      client
+    }
+
+    clientResource.use(_.checkReady).unsafeRunSync() shouldBe true
   }
 
   it should "report not ready on bad configuration" in {
-    val settings =
-      AdminClientSettings.Default.withBootstrapServers(
-        baseContainer.getBootstrapServers.dropRight(1)
-      )
+    val settings = KafkaConfig(
+      baseContainer.getBootstrapServers.dropRight(1).split(',').toList,
+      "test-admin"
+    )
 
-    fs2.kafka
-      .adminClientResource[IO](settings)
-      .map(new KafkaClient(_))
-      .use(_.checkReady)
-      .unsafeRunSync() shouldBe false
+    val clientResource = for {
+      ec <- blockingEc
+      client <- KafkaClient.resource(settings, ec)
+    } yield {
+      client
+    }
+
+    clientResource.use(_.checkReady).unsafeRunSync() shouldBe false
   }
 }
