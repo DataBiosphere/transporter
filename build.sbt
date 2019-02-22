@@ -68,6 +68,7 @@ val log4catsVersion = "0.3.0"
 // Web.
 val http4sVersion = "0.20.0-M6"
 val rhoVersion = "0.19.0-M6"
+val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.20.8"
 
 // Testing.
@@ -121,7 +122,7 @@ lazy val `transporter-manager` = project
       "org.tpolecat" %% "doobie-core" % doobieVersion,
       "org.tpolecat" %% "doobie-hikari" % doobieVersion,
       "org.tpolecat" %% "doobie-postgres" % doobieVersion,
-      "org.webjars" % "swagger-ui" % swaggerUiVersion
+      "org.webjars" % swaggerUiModule % swaggerUiVersion
     ),
 
     // Test dependencies.
@@ -147,7 +148,8 @@ lazy val `transporter-manager` = project
     // Inject version information into the app.
     buildInfoKeys := Seq(
       version,
-      "swaggerVersion" -> swaggerUiVersion
+      "swaggerVersion" -> swaggerUiVersion,
+      "swaggerLibrary" -> swaggerUiModule
     ),
     buildInfoPackage := "org.broadinstitute.transporter"
   )

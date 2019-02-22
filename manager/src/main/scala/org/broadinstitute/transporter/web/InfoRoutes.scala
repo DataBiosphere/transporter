@@ -1,13 +1,19 @@
 package org.broadinstitute.transporter.web
 
 import cats.effect.IO
-import org.broadinstitute.transporter.ManagerApp
-import org.broadinstitute.transporter.info.{ManagerStatus, ManagerVersion}
+import org.broadinstitute.transporter.info.{InfoController, ManagerStatus, ManagerVersion}
 import org.http4s._
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.{syntax => swaggerSyntax}
 
-class ManagerApi(app: ManagerApp) extends RhoRoutes[IO] {
+/**
+  * Container for Transporter's "info" (unversioned, non-API) routes.
+  *
+  * NOTE: We use Rho to generate Swagger documentation from the definitions here.
+  * The derivation can sometimes go haywire, but (so far) we've been able to find
+  * workarounds.
+  */
+class InfoRoutes(infoController: InfoController) extends RhoRoutes[IO] {
 
   import swaggerSyntax.io._
 
@@ -36,7 +42,7 @@ class ManagerApi(app: ManagerApp) extends RhoRoutes[IO] {
     implicit val encoder: EntityEncoder[IO, ManagerStatus] =
       org.http4s.circe.jsonEncoderOf
 
-    app.infoController.status.flatMap { status =>
+    infoController.status.flatMap { status =>
       if (status.ok) {
         Ok(status)
       } else {
@@ -49,6 +55,6 @@ class ManagerApi(app: ManagerApp) extends RhoRoutes[IO] {
     implicit val encoder: EntityEncoder[IO, ManagerVersion] =
       org.http4s.circe.jsonEncoderOf
 
-    app.infoController.version.flatMap(Ok(_))
+    infoController.version.flatMap(Ok(_))
   }
 }

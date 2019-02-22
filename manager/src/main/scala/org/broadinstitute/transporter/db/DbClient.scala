@@ -8,14 +8,26 @@ import doobie.util.ExecutionContexts
 import doobie.util.transactor.Transactor
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 
-import scala.concurrent.{ExecutionContext, TimeoutException}
+import scala.concurrent.ExecutionContext
 
+/**
+  * Client responsible for sending requests to / parsing responses from
+  * Transporter's backing DB.
+  *
+  * @param transactor wrapper around a source of DB connections which can
+  *                   actually run SQL
+  * @param cs proof of the ability to shift IO-wrapped computations
+  *           onto other threads
+  * @see https://tpolecat.github.io/doobie/docs/01-Introduction.html for
+  *      documentation on `doobie`, the library used for DB access
+  */
 class DbClient private[db] (transactor: Transactor[IO])(
   implicit cs: ContextShift[IO]
 ) {
 
   private val logger = Slf4jLogger.getLogger[IO]
 
+  /** Check if the client can interact with the backing DB. */
   def checkReady: IO[Boolean] = {
     val check = for {
       _ <- logger.info("Running status check against DB...")
@@ -24,23 +36,35 @@ class DbClient private[db] (transactor: Transactor[IO])(
       isValid
     }
 
-    check.handleErrorWith {
-      case _: TimeoutException =>
-        logger.error("DB status check timed out!").as(false)
-      case err =>
-        logger.error(err)("DB status check hit error").as(false)
+    check.handleErrorWith { err =>
+      logger.error(err)("DB status check hit error").as(false)
     }
   }
 }
 
 object DbClient {
+  // Recommendation from Hikari docs:
+  // https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing#the-formula
   private val MaxDbConnections = (2 * Runtime.getRuntime.availableProcessors) + 1
 
+  /**
+    * Construct a DB client, wrapped in logic which will:
+    *   1. Automatically spin up a Hikari connection pool on startup, and
+    *   2. Automatically clean up the connection pool on shutdown
+    *
+    * @param config settings for the underlying DB transactor powering the client
+    * @param blockingEc execution context which should run all blocking
+    *                   I/O required by the DB transactor
+    * @param cs proof of the ability to shift IO-wrapped computations
+    *           onto other threads
+    */
   def resource(config: DbConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
   ): Resource[IO, DbClient] =
     for {
       transactionContext <- ExecutionContexts.fixedThreadPool[IO](MaxDbConnections)
+      // NOTE: Lines beneath here are from doobie's implementation of `HikariTransactor.newHikariTransactor`.
+      // Have to open up the guts to set detailed configuration.
       _ <- Resource.liftF(IO.delay(Class.forName(config.driverClassname)))
       transactor <- HikariTransactor.initial[IO](blockingEc, transactionContext)
       _ <- Resource.liftF {
