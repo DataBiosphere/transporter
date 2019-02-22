@@ -3,34 +3,40 @@ package org.broadinstitute.transporter.kafka
 import java.util.concurrent.{CancellationException, CompletionException}
 
 import cats.effect._
+import cats.implicits._
 import fs2.kafka.AdminClientSettings
+import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.common.KafkaFuture
 
-import scala.concurrent.ExecutionContext
-import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext, TimeoutException}
 
 class KafkaClient private[kafka] (
   adminClient: AdminClient,
   blockingEc: ExecutionContext
-)(implicit cs: ContextShift[IO], t: Timer[IO]) {
+)(implicit cs: ContextShift[IO]) {
 
   import KafkaClient.KafkaFutureSyntax
+
+  private val logger = Slf4jLogger.getLogger[IO]
 
   def checkReady: IO[Boolean] = {
     val clusterId = IO.suspend(adminClient.describeCluster().clusterId().cancelable)
 
     val okCheck = for {
+      _ <- logger.info("Running status check against Kafka cluster...")
       id <- cs.evalOn(blockingEc)(clusterId)
-      _ <- IO.delay(println(s"Got $id"))
+      _ <- logger.debug(s"Got cluster ID $id")
     } yield {
       true
     }
 
-    okCheck.timeoutTo(5.seconds, IO.delay {
-      println("TIMING OUT!!!!!")
-      false
-    })
+    okCheck.handleErrorWith {
+      case _: TimeoutException =>
+        logger.error("Kafka status check timed out").as(false)
+      case err =>
+        logger.error(err)("Kafka status check hit error").as(false)
+    }
   }
 }
 
@@ -57,13 +63,13 @@ object KafkaClient {
   }
 
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
-    implicit cs: ContextShift[IO],
-    t: Timer[IO]
+    implicit cs: ContextShift[IO]
   ): Resource[IO, KafkaClient] = {
     val settings = AdminClientSettings.Default
       .withBootstrapServers(config.bootstrapServers.mkString(","))
       .withClientId(config.clientId)
-      .withCloseTimeout(1.second)
+      .withRequestTimeout(config.timeouts.requestTimeout)
+      .withCloseTimeout(config.timeouts.closeTimeout)
 
     val initClient =
       cs.evalOn(blockingEc)(settings.adminClientFactory.create[IO](settings))

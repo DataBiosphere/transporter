@@ -45,30 +45,23 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
       .unsafeRunSync()
   }
 
-  private def baseConfig = DbConfig(
-    container.driverClassName,
-    container.jdbcUrl,
-    container.username,
-    container.password
-  )
-
-  private def testTransactor(config: DbConfig): Transactor[IO] =
+  private def testTransactor(password: String): Transactor[IO] =
     Transactor.fromDriverManager[IO](
-      config.driverClassname,
-      config.connectURL,
-      config.username,
-      config.password
+      container.driverClassName,
+      container.jdbcUrl,
+      container.username,
+      password
     )
 
   behavior of "DbClient"
 
   it should "report ready on good configuration" in {
-    val client = new DbClient(testTransactor(baseConfig))
+    val client = new DbClient(testTransactor(container.password))
     client.checkReady.unsafeRunSync() shouldBe true
   }
 
   it should "report not ready on bad configuration" in {
-    val client = new DbClient(testTransactor(baseConfig.copy(password = "nope")))
+    val client = new DbClient(testTransactor("nope"))
     client.checkReady.unsafeRunSync() shouldBe false
   }
 }

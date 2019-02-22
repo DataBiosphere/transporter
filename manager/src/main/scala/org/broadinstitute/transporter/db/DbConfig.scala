@@ -7,7 +7,8 @@ case class DbConfig(
   driverClassname: String,
   connectURL: String,
   username: String,
-  password: String
+  password: String,
+  timeouts: TimeoutConfig
 )
 
 object DbConfig {

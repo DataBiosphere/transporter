@@ -1,12 +1,13 @@
 package org.broadinstitute.transporter.kafka
 
-import cats.effect.{ContextShift, IO, Timer}
+import cats.effect.{ContextShift, IO}
 import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
 import doobie.util.ExecutionContexts
 import org.scalatest.{FlatSpec, Matchers}
 import org.testcontainers.containers.KafkaContainer
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration._
 
 class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
 
@@ -17,15 +18,22 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   }
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
-  private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
 
   private val blockingEc = ExecutionContexts.cachedThreadPool[IO]
+
+  private val timeouts = TimeoutConfig(
+    requestTimeout = 2.seconds,
+    closeTimeout = 1.seconds
+  )
 
   behavior of "KafkaClient"
 
   it should "report ready on good configuration" in {
-    val settings =
-      KafkaConfig(baseContainer.getBootstrapServers.split(',').toList, "test-admin")
+    val settings = KafkaConfig(
+      baseContainer.getBootstrapServers.split(',').toList,
+      "test-admin",
+      timeouts
+    )
 
     val clientResource = for {
       ec <- blockingEc
@@ -40,7 +48,8 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   it should "report not ready on bad configuration" in {
     val settings = KafkaConfig(
       baseContainer.getBootstrapServers.dropRight(1).split(',').toList,
-      "test-admin"
+      "test-admin",
+      timeouts
     )
 
     val clientResource = for {
