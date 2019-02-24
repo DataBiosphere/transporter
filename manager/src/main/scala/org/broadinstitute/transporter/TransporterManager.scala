@@ -30,16 +30,10 @@ object TransporterManager extends IOApp {
     description = Some("Bulk file-transfer system for data ingest / delivery")
   )
 
-  /** Type-fu version of `main`. */
+  /** [[IOApp]] equivalent of `main`. */
   override def run(args: List[String]): IO[ExitCode] =
     loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter").flatMap { config =>
-      val appResource = for {
-        app <- buildApp(config)
-      } yield {
-        app
-      }
-
-      appResource.use(bindAndRun(_, config.web))
+      appResource(config).use(bindAndRun(_, config.web))
     }
 
   /**
@@ -49,7 +43,7 @@ object TransporterManager extends IOApp {
     * setup / teardown logic for the underlying thread pools & external
     * connections used by the app.
     */
-  private def buildApp(config: ManagerConfig): Resource[IO, HttpApp[IO]] =
+  private def appResource(config: ManagerConfig): Resource[IO, HttpApp[IO]] =
     for {
       // Set up a thread pool to run all blocking I/O throughout the app.
       blockingEc <- ExecutionContexts.cachedThreadPool[IO]
@@ -59,10 +53,10 @@ object TransporterManager extends IOApp {
       kafkaResource = KafkaClient.resource(config.kafka, blockingEc)
       (dbClient, kafkaClient) <- (dbResource, kafkaResource).tupled
     } yield {
-      val appApi = new InfoRoutes(
-        infoController = new InfoController(appInfo.version, dbClient, kafkaClient)
+      val infoRoutes = new InfoRoutes(
+        new InfoController(appInfo.version, dbClient, kafkaClient)
       )
-      val appRoutes = SwaggerMiddleware(appApi, appInfo, blockingEc).orNotFound
+      val appRoutes = SwaggerMiddleware(infoRoutes, appInfo, blockingEc).orNotFound
       Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
     }
 
