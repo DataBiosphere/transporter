@@ -1,13 +1,9 @@
 package org.broadinstitute.transporter.kafka
 
-import java.util.concurrent.{CancellationException, CompletionException}
-
 import cats.effect._
 import cats.implicits._
-import fs2.kafka.AdminClientSettings
+import fs2.kafka.{AdminClientSettings, KafkaAdminClient}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.apache.kafka.clients.admin.AdminClient
-import org.apache.kafka.common.KafkaFuture
 
 import scala.concurrent.ExecutionContext
 
@@ -23,21 +19,18 @@ import scala.concurrent.ExecutionContext
   *           onto other threads
   */
 class KafkaClient private[kafka] (
-  adminClient: AdminClient,
+  adminClient: KafkaAdminClient[IO],
   blockingEc: ExecutionContext
 )(implicit cs: ContextShift[IO]) {
-
-  import KafkaClient.KafkaFutureSyntax
 
   private val logger = Slf4jLogger.getLogger[IO]
 
   /** Check if the client can interact with the backing cluster. */
   def checkReady: IO[Boolean] = {
-    val clusterId = IO.suspend(adminClient.describeCluster().clusterId().cancelable)
 
     val okCheck = for {
       _ <- logger.info("Running status check against Kafka cluster...")
-      id <- cs.evalOn(blockingEc)(clusterId)
+      id <- cs.evalOn(blockingEc)(adminClient.describeCluster.clusterId)
       _ <- logger.debug(s"Got cluster ID $id")
     } yield {
       true
@@ -50,39 +43,6 @@ class KafkaClient private[kafka] (
 }
 
 object KafkaClient {
-
-  /**
-    * Extension methods for Kafka's bespoke Future implementation.
-    *
-    * Copied from https://github.com/ovotech/fs2-kafka until they
-    * add functionality we need to their admin wrapper.
-    */
-  implicit final class KafkaFutureSyntax[A](
-    private val future: KafkaFuture[A]
-  ) extends AnyVal {
-
-    /**
-      * Cancel the Future and return an IO-wrapped token.
-      *
-      * Can't be named 'cancel' because there's already a method
-      * on the Future type with that name.
-      */
-    def cancelToken: CancelToken[IO] =
-      IO.delay { future.cancel(true); () }
-
-    /** Convert the wrapped Future into a cancellable IO. */
-    def cancelable: IO[A] =
-      IO.cancelable { cb =>
-        future.whenComplete { (a: A, t: Throwable) =>
-          t match {
-            case null                                         => cb(Right(a))
-            case _: CancellationException                     => ()
-            case e: CompletionException if e.getCause != null => cb(Left(e.getCause))
-            case e                                            => cb(Left(e))
-          }
-        }.cancelToken
-      }
-  }
 
   /**
     * Construct a Kafka client, wrapped in logic which will:
@@ -107,16 +67,6 @@ object KafkaClient {
       .withRequestTimeout(config.timeouts.requestTimeout)
       .withCloseTimeout(config.timeouts.closeTimeout)
 
-    val initClient =
-      cs.evalOn(blockingEc)(settings.adminClientFactory.create[IO](settings))
-
-    val closeClient = (client: AdminClient) =>
-      cs.evalOn(blockingEc)(IO.delay {
-        client.close(settings.closeTimeout.length, settings.closeTimeout.unit)
-      })
-
-    Resource
-      .make(initClient)(closeClient)
-      .map(new KafkaClient(_, blockingEc))
+    fs2.kafka.adminClientResource[IO](settings).map(new KafkaClient(_, blockingEc))
   }
 }

@@ -52,13 +52,14 @@ val fs2Version = "1.0.3"
 
 // DB.
 val doobieVersion = "0.7.0-M3"
+val postgresqlDriverVersion = "42.2.5"
 
 // JSON.
 val circeVersion = "0.11.1"
 val circeDerivationVersion = "0.11.0-M1"
 
 // Kafka.
-val fs2KafkaVersion = "0.19.1"
+val fs2KafkaVersion = "0.19.2"
 val kafkaClientsVersion = "2.1.0"
 
 // Logging.
@@ -69,11 +70,10 @@ val log4catsVersion = "0.3.0"
 val http4sVersion = "0.20.0-M6"
 val rhoVersion = "0.19.0-M6"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.20.8"
+val swaggerUiVersion = "3.20.9"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
-val postgresqlDriverVersion = "42.2.5"
 val scalaTestVersion = "3.0.5"
 val testcontainersVersion = "1.10.6"
 val testcontainersScalaVersion = "0.23.0"
@@ -129,7 +129,6 @@ lazy val `transporter-manager` = project
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
-      "org.postgresql" % "postgresql" % postgresqlDriverVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       "org.testcontainers" % "kafka" % testcontainersVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
@@ -140,9 +139,11 @@ lazy val `transporter-manager` = project
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
       "org.apache.kafka" % "kafka-clients" % kafkaClientsVersion,
-      "org.testcontainers" % "testcontainers" % testcontainersVersion,
+      "org.postgresql" % "postgresql" % postgresqlDriverVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
-      "org.typelevel" %% "cats-effect" % catsEffectVersion
+      "org.typelevel" %% "cats-effect" % catsEffectVersion,
+
+      "org.testcontainers" % "testcontainers" % testcontainersVersion % Test
     ),
 
     // Inject version information into the app.
