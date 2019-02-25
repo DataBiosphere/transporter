@@ -31,7 +31,7 @@ class DbClient private[db] (transactor: Transactor[IO])(
   def checkReady: IO[Boolean] = {
     val check = for {
       _ <- logger.info("Running status check against DB...")
-      isValid <- doobie.FC.isValid(0).transact(transactor)
+      isValid <- doobie.free.connection.isValid(0).transact(transactor)
     } yield {
       isValid
     }
@@ -62,6 +62,7 @@ object DbClient {
     implicit cs: ContextShift[IO]
   ): Resource[IO, DbClient] =
     for {
+      // Recommended by doobie docs: use a fixed-size thread pool to avoid flooding the DB.
       transactionContext <- ExecutionContexts.fixedThreadPool[IO](MaxDbConnections)
       // NOTE: Lines beneath here are from doobie's implementation of `HikariTransactor.newHikariTransactor`.
       // Have to open up the guts to set detailed configuration.
