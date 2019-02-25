@@ -13,6 +13,11 @@ pipeline {
                 sh 'sbt compile'
             }
         }
+        stage('Test') {
+            steps {
+                sh 'sbt test'
+            }
+        }
     }
     post {
         cleanup {
