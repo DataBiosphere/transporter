@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.kafka
 
 import cats.effect.{ContextShift, IO}
+import cats.implicits._
 import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
 import doobie.util.ExecutionContexts
 import org.scalatest.{FlatSpec, Matchers}
@@ -60,5 +61,28 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
     }
 
     clientResource.use(_.checkReady).unsafeRunSync() shouldBe false
+  }
+
+  it should "create topics" in {
+    val settings = KafkaConfig(
+      baseContainer.getBootstrapServers.split(',').toList,
+      "test-admin",
+      timeouts
+    )
+
+    val topics = List("foo", "bar")
+
+    (KafkaClient.clientResource(settings), blockingEc).tupled.use {
+      case (client, ec) =>
+        val wrapperClient = new KafkaClient(client, ec)
+
+        for {
+          originalTopics <- client.listTopics.names
+          _ <- wrapperClient.createTopics(topics)
+          newTopics <- client.listTopics.names
+        } yield {
+          newTopics.diff(originalTopics) shouldBe topics.toSet
+        }
+    }.unsafeRunSync()
   }
 }

@@ -4,6 +4,7 @@ import cats.effect._
 import cats.implicits._
 import fs2.kafka.{AdminClientSettings, KafkaAdminClient}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import org.apache.kafka.clients.admin.NewTopic
 
 import scala.concurrent.ExecutionContext
 
@@ -40,9 +41,25 @@ class KafkaClient private[kafka] (
       logger.error(err)("Kafka status check hit error").as(false)
     }
   }
+
+  // TODO: What happens if some topics succeed, but others fail?
+  // TODO: How to choose replication factor?
+  // TODO: How to set timeout?
+  def createTopics(topicNames: List[String]): IO[Unit] = {
+    val newTopics = topicNames.map { name =>
+      new NewTopic(name, KafkaClient.DefaultPartitions, 1)
+    }
+
+    for {
+      _ <- logger.info(s"Creating Kafka topics: ${topicNames.mkString(", ")}")
+      _ <- adminClient.createTopics(newTopics)
+    } yield ()
+  }
 }
 
 object KafkaClient {
+
+  val DefaultPartitions: Int = 3
 
   /**
     * Construct a Kafka client, wrapped in logic which will:
@@ -60,13 +77,18 @@ object KafkaClient {
     */
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, KafkaClient] = {
+  ): Resource[IO, KafkaClient] =
+    clientResource(config).map(new KafkaClient(_, blockingEc))
+
+  private[kafka] def clientResource(config: KafkaConfig)(
+    implicit cs: ContextShift[IO]
+  ): Resource[IO, KafkaAdminClient[IO]] = {
     val settings = AdminClientSettings.Default
       .withBootstrapServers(config.bootstrapServers.mkString(","))
       .withClientId(config.clientId)
       .withRequestTimeout(config.timeouts.requestTimeout)
       .withCloseTimeout(config.timeouts.closeTimeout)
 
-    fs2.kafka.adminClientResource[IO](settings).map(new KafkaClient(_, blockingEc))
+    fs2.kafka.adminClientResource[IO](settings)
   }
 }
