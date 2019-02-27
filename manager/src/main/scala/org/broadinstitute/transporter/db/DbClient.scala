@@ -7,6 +7,7 @@ import doobie.implicits._
 import doobie.util.ExecutionContexts
 import doobie.util.transactor.Transactor
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import org.broadinstitute.transporter.queue.Queue
 
 import scala.concurrent.ExecutionContext
 
@@ -40,6 +41,23 @@ class DbClient private[db] (transactor: Transactor[IO])(
       logger.error(err)("DB status check hit error").as(false)
     }
   }
+
+  def insertQueue(queue: Queue): IO[Unit] = {
+    val insert =
+      sql"""insert into queues
+            (name, request_topic, response_topic, request_schema)
+            values
+            (${queue.name}, ${queue.requestTopic}, ${queue.responseTopic}, ${queue.schema})"""
+
+    insert.update.run.void.transact(transactor)
+  }
+
+  def lookupQueue(name: String): IO[Option[Queue]] =
+    sql"""select name, request_topic, response_topic, request_schema
+          from queues where name = '$name'"""
+      .query[Queue]
+      .option
+      .transact(transactor)
 }
 
 object DbClient {

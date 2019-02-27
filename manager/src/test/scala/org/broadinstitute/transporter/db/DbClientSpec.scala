@@ -6,9 +6,11 @@ import java.sql.DriverManager
 import cats.effect.{ContextShift, IO, Resource}
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import doobie.util.transactor.Transactor
+import io.circe.literal._
 import liquibase.{Contexts, Liquibase}
 import liquibase.database.jvm.JdbcConnection
 import liquibase.resource.FileSystemResourceAccessor
+import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.scalatest.{FlatSpec, Matchers}
 
 import scala.concurrent.ExecutionContext
@@ -63,5 +65,25 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   it should "report not ready on bad configuration" in {
     val client = new DbClient(testTransactor("nope"))
     client.checkReady.unsafeRunSync() shouldBe false
+  }
+
+  it should "insert and lookup transfer queues" in {
+    val queue = Queue(
+      "test-queue",
+      "test-queue.requests",
+      "test-queue.responses",
+      json"{}".as[QueueSchema].right.get
+    )
+
+    val client = new DbClient(testTransactor(container.password))
+
+    for {
+      res <- client.lookupQueue(queue.name)
+      _ = res shouldBe None
+      _ <- client.insertQueue(queue)
+      res2 <- client.lookupQueue(queue.name)
+    } yield {
+      res2 shouldBe Some(queue)
+    }
   }
 }

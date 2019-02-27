@@ -126,6 +126,7 @@ lazy val `transporter-manager` = project
       "org.tpolecat" %% "doobie-core" % doobieVersion,
       "org.tpolecat" %% "doobie-hikari" % doobieVersion,
       "org.tpolecat" %% "doobie-postgres" % doobieVersion,
+      "org.tpolecat" %% "doobie-postgres-circe" % doobieVersion,
       "org.webjars" % swaggerUiModule % swaggerUiVersion
     ),
 

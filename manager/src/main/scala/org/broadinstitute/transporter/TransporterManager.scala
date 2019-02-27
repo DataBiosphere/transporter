@@ -3,10 +3,10 @@ package org.broadinstitute.transporter
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import org.broadinstitute.transporter.web.{InfoRoutes, SwaggerMiddleware, WebConfig}
+import org.broadinstitute.transporter.web.{SwaggerMiddleware, WebConfig}
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaClient
-import org.broadinstitute.transporter.info.InfoController
+import org.broadinstitute.transporter.info.{InfoController, InfoRoutes}
 import org.http4s.HttpApp
 import org.http4s.implicits._
 import org.http4s.rho.swagger.models.Info

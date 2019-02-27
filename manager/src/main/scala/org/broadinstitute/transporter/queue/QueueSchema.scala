@@ -2,6 +2,8 @@ package org.broadinstitute.transporter.queue
 
 import cats.data.Validated
 import cats.implicits._
+import doobie.postgres.circe.Instances
+import doobie.util.{Get, Put}
 import io.circe.Decoder.Result
 import io.circe._
 import io.circe.syntax._
@@ -10,7 +12,7 @@ import org.everit.json.schema.loader.SchemaLoader
 import org.json.{JSONArray, JSONObject, JSONTokener}
 
 class QueueSchema private (
-  private val json: JsonObject,
+  private val json: Json,
   private[this] val validator: Schema
 ) {
 
@@ -18,9 +20,12 @@ class QueueSchema private (
     Validated.catchNonFatal {
       validator.validate(QueueSchema.circeToEverit(json))
     }.as(json)
+
+  override def hashCode(): Int = json.hashCode()
+  override def equals(obj: Any): Boolean = json.equals(obj)
 }
 
-object QueueSchema {
+object QueueSchema extends Instances.JsonInstances {
 
   private[queue] def schemaUrl(v: Int): Json =
     s"http://json-schema.org/draft-0$v/schema".asJson
@@ -38,7 +43,7 @@ object QueueSchema {
       jsonObject = circeObjToEverit
     )
 
-  implicit val encoder: Encoder[QueueSchema] = _.json.asJson
+  implicit val encoder: Encoder[QueueSchema] = _.json
 
   implicit val decoder: Decoder[QueueSchema] = new Decoder[QueueSchema] {
 
@@ -57,14 +62,18 @@ object QueueSchema {
 
     override def apply(cursor: HCursor): Result[QueueSchema] =
       for {
-        json <- cursor.as[JsonObject]
+        obj <- cursor.as[JsonObject]
         schema <- Either.catchNonFatal {
-          val obj = circeObjToEverit(json)
-          schemaSchema.validate(obj)
-          SchemaLoader.load(obj)
+          val everitObj = circeObjToEverit(obj)
+          schemaSchema.validate(everitObj)
+          SchemaLoader.load(everitObj)
         }.leftMap(DecodingFailure.fromThrowable(_, Nil))
       } yield {
-        new QueueSchema(json, schema)
+        new QueueSchema(obj.asJson, schema)
       }
   }
+
+  implicit val get: Get[QueueSchema] = pgDecoderGet
+
+  implicit val put: Put[QueueSchema] = pgEncoderPut
 }
