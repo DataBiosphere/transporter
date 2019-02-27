@@ -34,7 +34,9 @@ class QueueRoutes(queueController: QueueController) extends RhoRoutes[IO] {
     queueController.lookupQueue(name).attempt.map {
       case Right(queue)                         => Ok(queue)
       case Left(QueueController.NoSuchQueue(q)) => NotFound(s"Queue $q does not exist")
-      case Left(_)                              => InternalServerError(s"Failed to lookup queue $name")
+      case Left(err) =>
+        IO.delay(err.printStackTrace())
+          .flatMap(_ => InternalServerError(s"Failed to lookup queue $name"))
     }
   }
 }

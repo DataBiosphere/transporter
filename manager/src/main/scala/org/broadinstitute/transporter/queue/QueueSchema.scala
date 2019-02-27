@@ -22,7 +22,10 @@ class QueueSchema private (
     }.as(json)
 
   override def hashCode(): Int = json.hashCode()
-  override def equals(obj: Any): Boolean = json.equals(obj)
+  override def equals(obj: Any): Boolean = obj match {
+    case qs: QueueSchema => json.equals(qs.json)
+    case _               => false
+  }
 }
 
 object QueueSchema extends Instances.JsonInstances {

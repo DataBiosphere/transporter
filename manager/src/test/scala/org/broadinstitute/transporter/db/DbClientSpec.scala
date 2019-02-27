@@ -77,7 +77,7 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
 
     val client = new DbClient(testTransactor(container.password))
 
-    for {
+    val check = for {
       res <- client.lookupQueue(queue.name)
       _ = res shouldBe None
       _ <- client.insertQueue(queue)
@@ -85,5 +85,7 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
     } yield {
       res2 shouldBe Some(queue)
     }
+
+    check.unsafeRunSync()
   }
 }

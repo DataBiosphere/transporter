@@ -26,6 +26,7 @@ class DbClient private[db] (transactor: Transactor[IO])(
   implicit cs: ContextShift[IO]
 ) {
 
+  // TODO: Enable doobie's logging.
   private val logger = Slf4jLogger.getLogger[IO]
 
   /** Check if the client can interact with the backing DB. */
@@ -55,7 +56,7 @@ class DbClient private[db] (transactor: Transactor[IO])(
 
   def lookupQueue(name: String): IO[Option[Queue]] =
     sql"""select name, request_topic, response_topic, request_schema
-          from queues where name = '$name'"""
+          from queues where name = $name"""
       .query[Queue]
       .option
       .transact(transactor)
