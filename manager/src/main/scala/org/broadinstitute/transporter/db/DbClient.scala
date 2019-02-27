@@ -83,11 +83,14 @@ object DbClient {
   ): Resource[IO, DbClient] =
     for {
       // Recommended by doobie docs: use a fixed-size thread pool to avoid flooding the DB.
-      transactionContext <- ExecutionContexts.fixedThreadPool[IO](MaxDbConnections)
+      connectionContext <- ExecutionContexts.fixedThreadPool[IO](MaxDbConnections)
       // NOTE: Lines beneath here are from doobie's implementation of `HikariTransactor.newHikariTransactor`.
       // Have to open up the guts to set detailed configuration.
       _ <- Resource.liftF(IO.delay(Class.forName(config.driverClassname)))
-      transactor <- HikariTransactor.initial[IO](blockingEc, transactionContext)
+      transactor <- HikariTransactor.initial[IO](
+        connectEC = connectionContext,
+        transactEC = blockingEc
+      )
       _ <- Resource.liftF {
         transactor.configure { dataSource =>
           IO.delay {
