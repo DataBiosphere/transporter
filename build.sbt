@@ -67,6 +67,9 @@ val kafkaClientsVersion = "2.1.0"
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
 
+// Utils.
+val fuuidVersion = "0.2.0-M5"
+
 // Web.
 val http4sVersion = "0.20.0-M6"
 val rhoVersion = "0.19.0-M6"
@@ -116,6 +119,7 @@ lazy val `transporter-manager` = project
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
+      "io.chrisdavenport" %% "fuuid" % fuuidVersion,
       "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
       "io.circe" %% "circe-core" % circeVersion,
       "io.circe" %% "circe-derivation" % circeDerivationVersion,
