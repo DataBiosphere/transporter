@@ -57,6 +57,7 @@ val postgresqlDriverVersion = "42.2.5"
 // JSON.
 val circeVersion = "0.11.1"
 val circeDerivationVersion = "0.11.0-M1"
+val everitJsonSchemaVersion = "1.11.0"
 
 // Kafka.
 val fs2KafkaVersion = "0.19.2"
@@ -106,9 +107,12 @@ lazy val `transporter-manager` = project
   .enablePlugins(BuildInfoPlugin)
   .settings(commonSettings)
   .settings(
+    // Needed to resolve JSON schema lib.
+    resolvers += "Jitpack" at "https://jitpack.io",
     // Main dependencies.
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % logbackVersion,
+      "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
@@ -128,6 +132,7 @@ lazy val `transporter-manager` = project
     // Test dependencies.
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
+      "io.circe" %% "circe-literal" % circeVersion,
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       "org.testcontainers" % "kafka" % testcontainersVersion,
