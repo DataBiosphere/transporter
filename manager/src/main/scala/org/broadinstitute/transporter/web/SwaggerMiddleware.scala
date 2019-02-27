@@ -4,17 +4,20 @@ import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import org.broadinstitute.transporter.BuildInfo
+import org.broadinstitute.transporter.queue.QueueSchema
 import org.http4s.dsl.io._
 import org.http4s.headers.Location
 import org.http4s.{HttpRoutes, Uri}
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.bits.PathAST.{PathMatch, TypedPath}
-import org.http4s.rho.swagger.models.Info
+import org.http4s.rho.swagger.DefaultSwaggerFormats
+import org.http4s.rho.swagger.models.{AbstractProperty, Info}
 import org.http4s.rho.swagger.syntax.{io => swaggerIo}
 import org.http4s.server.staticcontent.WebjarService
 import org.http4s.server.staticcontent.WebjarService.Config
 
 import scala.concurrent.ExecutionContext
+import scala.reflect.runtime.universe.typeOf
 
 /**
   * Converter from `RhoRoutes[IO]` to `HttpRoutes[IO]` which
@@ -81,7 +84,9 @@ object SwaggerMiddleware {
 
     val swaggerMiddleware = swaggerIo.createRhoMiddleware(
       apiInfo = headerInfo,
-      apiPath = TypedPath(PathMatch(apiDocsPath))
+      apiPath = TypedPath(PathMatch(apiDocsPath)),
+      swaggerFormats = DefaultSwaggerFormats
+        .withFieldSerializers(typeOf[QueueSchema], AbstractProperty(`type` = "object"))
     )
 
     // Converts the Rho routes to corresponding http4s routes, then tacks
