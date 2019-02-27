@@ -42,6 +42,7 @@ class DbClient private[db] (transactor: Transactor[IO])(
     }
   }
 
+  // TODO: What if the queue already exists?
   def insertQueue(queue: Queue): IO[Unit] = {
     val insert =
       sql"""insert into queues

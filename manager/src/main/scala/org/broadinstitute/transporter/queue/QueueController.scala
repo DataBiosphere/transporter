@@ -7,6 +7,7 @@ import org.broadinstitute.transporter.kafka.KafkaClient
 
 class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
 
+  // TODO: Check for queue existence before touching Kafka.
   def createQueue(request: QueueRequest): IO[Queue] =
     for {
       uuid <- FUUID.randomFUUID[IO]

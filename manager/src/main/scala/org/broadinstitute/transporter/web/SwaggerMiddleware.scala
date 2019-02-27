@@ -1,5 +1,6 @@
 package org.broadinstitute.transporter.web
 
+import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import org.broadinstitute.transporter.BuildInfo
@@ -54,7 +55,7 @@ object SwaggerMiddleware {
     *           onto other threads
     */
   def apply(
-    routesToDocument: RhoRoutes[IO],
+    routesToDocument: NonEmptyList[RhoRoutes[IO]],
     headerInfo: Info,
     blockingEc: ExecutionContext
   )(
@@ -85,8 +86,9 @@ object SwaggerMiddleware {
 
     // Converts the Rho routes to corresponding http4s routes, then tacks
     // a route to serve generated API documentation onto the end.
-    val documentedRoutes =
-      routesToDocument.toRoutes(swaggerMiddleware)
+    val documentedRoutes = routesToDocument
+      .reduce[RhoRoutes[IO]](_.and(_))
+      .toRoutes(swaggerMiddleware)
 
     // `combineK` is like `combine`, but for type functions.
     // Ex: `Int` has `combine` (+), but `List` has `combineK` (::)

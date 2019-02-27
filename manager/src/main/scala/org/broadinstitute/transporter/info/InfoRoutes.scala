@@ -13,7 +13,6 @@ import org.http4s.rho.swagger.{syntax => swaggerSyntax}
   * workarounds.
   */
 class InfoRoutes(infoController: InfoController) extends RhoRoutes[IO] {
-
   import swaggerSyntax.io._
 
   private val statusRoute =
