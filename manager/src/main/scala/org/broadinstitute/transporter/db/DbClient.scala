@@ -5,6 +5,7 @@ import cats.implicits._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
 import doobie.util.ExecutionContexts
+import doobie.util.log.LogHandler
 import doobie.util.transactor.Transactor
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.queue.Queue
@@ -26,8 +27,8 @@ class DbClient private[db] (transactor: Transactor[IO])(
   implicit cs: ContextShift[IO]
 ) {
 
-  // TODO: Enable doobie's logging.
   private val logger = Slf4jLogger.getLogger[IO]
+  private implicit val logHandler: LogHandler = DbLogHandler(logger)
 
   /** Check if the client can interact with the backing DB. */
   def checkReady: IO[Boolean] = {
@@ -43,16 +44,13 @@ class DbClient private[db] (transactor: Transactor[IO])(
     }
   }
 
-  // TODO: What if the queue already exists?
-  def insertQueue(queue: Queue): IO[Unit] = {
-    val insert =
-      sql"""insert into queues
-            (name, request_topic, response_topic, request_schema)
-            values
-            (${queue.name}, ${queue.requestTopic}, ${queue.responseTopic}, ${queue.schema})"""
+  def insertQueue(queue: Queue): IO[Unit] =
+    sql"""insert into queues (name, request_topic, response_topic, request_schema)
+          values (${queue.name}, ${queue.requestTopic}, ${queue.responseTopic}, ${queue.schema})""".update.run.void
+      .transact(transactor)
 
-    insert.update.run.void.transact(transactor)
-  }
+  def deleteQueue(name: String): IO[Unit] =
+    sql"""delete from queues where name = $name""".update.run.void.transact(transactor)
 
   def lookupQueue(name: String): IO[Option[Queue]] =
     sql"""select name, request_topic, response_topic, request_schema

@@ -60,7 +60,7 @@ val circeDerivationVersion = "0.11.0-M1"
 val everitJsonSchemaVersion = "1.11.0"
 
 // Kafka.
-val fs2KafkaVersion = "0.19.2"
+val fs2KafkaVersion = "0.19.3"
 val kafkaClientsVersion = "2.1.0"
 
 // Logging.
@@ -78,7 +78,7 @@ val swaggerUiVersion = "3.20.9"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
-val scalaTestVersion = "3.0.5"
+val scalaTestVersion = "3.0.6"
 val testcontainersVersion = "1.10.6"
 val testcontainersScalaVersion = "0.23.0"
 
