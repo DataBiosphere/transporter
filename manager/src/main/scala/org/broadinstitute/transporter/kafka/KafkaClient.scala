@@ -2,7 +2,6 @@ package org.broadinstitute.transporter.kafka
 
 import java.util.concurrent.{CancellationException, CompletionException}
 
-import cats.data.Validated.{Invalid, Valid}
 import cats.effect._
 import cats.implicits._
 import fs2.kafka.AdminClientSettings
@@ -26,7 +25,7 @@ import scala.collection.JavaConverters._
   */
 class KafkaClient private[kafka] (
   adminClient: AdminClient,
-  replicationFactor: Short,
+  topicConfig: TopicConfig,
   blockingEc: ExecutionContext
 )(implicit cs: ContextShift[IO]) {
   import KafkaClient._
@@ -53,7 +52,7 @@ class KafkaClient private[kafka] (
 
   def createTopics(topicNames: String*): IO[Unit] = {
     val newTopics = topicNames.map { name =>
-      new NewTopic(name, DefaultPartitions, replicationFactor)
+      new NewTopic(name, topicConfig.partitions, topicConfig.replicationFactor)
     }
 
     val tryCreateAndSummarize = {
@@ -63,20 +62,25 @@ class KafkaClient private[kafka] (
           .values()
           .asScala
           .toList
-          .traverse { case (topic, res) => res.cancelable.attempt.map(topic -> _.void) }
+          .parTraverse {
+            case (topic, res) => res.cancelable.attempt.map(topic -> _.void)
+          }
       }
 
-      cs.evalOn(blockingEc)(attempts).flatMap {
-        _.foldLeft(Set.empty[String].valid[TopicCreationFailed]) {
-          case (Valid(createdTopics), (topic, Left(err))) =>
-            Invalid(TopicCreationFailed(Map(topic -> err), createdTopics))
-          case (Valid(createdTopics), (topic, _)) =>
-            Valid(createdTopics + topic)
-          case (Invalid(TopicCreationFailed(errs, successes)), (topic, Left(err))) =>
-            Invalid(TopicCreationFailed(errs + (topic -> err), successes))
-          case (Invalid(TopicCreationFailed(errs, successes)), (topic, _)) =>
-            Invalid(TopicCreationFailed(errs, successes + topic))
-        }.fold(IO.raiseError, IO.pure)
+      cs.evalOn(blockingEc)(attempts).flatMap { results =>
+        val (successes, failures) =
+          results.foldLeft((Set.empty[String], Map.empty[String, Throwable])) {
+            case ((createdTopics, errs), (topic, Left(err))) =>
+              (createdTopics, errs + (topic -> err))
+            case ((createdTopics, errs), (topic, _)) =>
+              (createdTopics + topic, errs)
+          }
+
+        if (failures.isEmpty) {
+          IO.pure(successes)
+        } else {
+          IO.raiseError(TopicCreationFailed(failures, successes))
+        }
       }
     }
 
@@ -110,8 +114,6 @@ class KafkaClient private[kafka] (
 }
 
 object KafkaClient {
-
-  val DefaultPartitions: Int = 3
 
   /**
     * Extension methods for Kafka's bespoke Future implementation.
@@ -169,7 +171,7 @@ object KafkaClient {
     implicit cs: ContextShift[IO]
   ): Resource[IO, KafkaClient] =
     clientResource(config, blockingEc)
-      .map(new KafkaClient(_, config.replicationFactor, blockingEc))
+      .map(new KafkaClient(_, config.topicDefaults, blockingEc))
 
   private[kafka] def clientResource(
     config: KafkaConfig,

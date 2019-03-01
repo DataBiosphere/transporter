@@ -23,9 +23,19 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
 
   private val blockingEc = ExecutionContexts.cachedThreadPool[IO]
 
+  private val topicConfig = TopicConfig(
+    partitions = 1,
+    replicationFactor = 1
+  )
   private val timeouts = TimeoutConfig(
     requestTimeout = 2.seconds,
     closeTimeout = 1.seconds
+  )
+  private def config = KafkaConfig(
+    baseContainer.getBootstrapServers.split(',').toList,
+    "test-admin",
+    topicConfig,
+    timeouts
   )
 
   import KafkaClient.KafkaFutureSyntax
@@ -33,16 +43,9 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   behavior of "KafkaClient"
 
   it should "report ready on good configuration" in {
-    val settings = KafkaConfig(
-      baseContainer.getBootstrapServers.split(',').toList,
-      "test-admin",
-      1,
-      timeouts
-    )
-
     val clientResource = for {
       ec <- blockingEc
-      client <- KafkaClient.resource(settings, ec)
+      client <- KafkaClient.resource(config, ec)
     } yield {
       client
     }
@@ -51,11 +54,8 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   }
 
   it should "report not ready on bad configuration" in {
-    val settings = KafkaConfig(
-      baseContainer.getBootstrapServers.dropRight(1).split(',').toList,
-      "test-admin",
-      1,
-      timeouts
+    val settings = config.copy(
+      bootstrapServers = List(config.bootstrapServers.head.dropRight(1))
     )
 
     val clientResource = for {
@@ -69,20 +69,13 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   }
 
   it should "create topics" in {
-    val settings = KafkaConfig(
-      baseContainer.getBootstrapServers.split(',').toList,
-      "test-admin",
-      1,
-      timeouts
-    )
-
     val topics = List("foo", "bar")
 
     blockingEc.flatMap { ec =>
-      KafkaClient.clientResource(settings, ec).map(_ -> ec)
+      KafkaClient.clientResource(config, ec).map(_ -> ec)
     }.use {
       case (client, ec) =>
-        val wrapperClient = new KafkaClient(client, settings.replicationFactor, ec)
+        val wrapperClient = new KafkaClient(client, topicConfig, ec)
 
         for {
           originalTopics <- IO.suspend(client.listTopics().names().cancelable)
