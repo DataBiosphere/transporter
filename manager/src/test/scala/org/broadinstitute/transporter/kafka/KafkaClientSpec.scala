@@ -79,7 +79,7 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
 
         for {
           originalTopics <- IO.suspend(client.listTopics().names().cancelable)
-          _ <- wrapperClient.createTopics(topics: _*)
+          _ <- wrapperClient.createTopics(topics)
           newTopics <- IO.suspend(client.listTopics().names().cancelable)
         } yield {
           newTopics.asScala.diff(originalTopics.asScala) shouldBe topics.toSet

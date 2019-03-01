@@ -44,14 +44,25 @@ class DbClient private[db] (transactor: Transactor[IO])(
     }
   }
 
+  /**
+    * Record a new queue resource in the DB.
+    *
+    * Will fail if a queue already exists with the input's name.
+    */
   def insertQueue(queue: Queue): IO[Unit] =
     sql"""insert into queues (name, request_topic, response_topic, request_schema)
           values (${queue.name}, ${queue.requestTopic}, ${queue.responseTopic}, ${queue.schema})""".update.run.void
       .transact(transactor)
 
+  /**
+    * Remove the queue resource with the given name from the DB.
+    *
+    * No-ops if no such queue exists in the DB.
+    */
   def deleteQueue(name: String): IO[Unit] =
     sql"""delete from queues where name = $name""".update.run.void.transact(transactor)
 
+  /** Pull the queue resource with the given name from the DB, if it exists. */
   def lookupQueue(name: String): IO[Option[Queue]] =
     sql"""select name, request_topic, response_topic, request_schema
           from queues where name = $name"""

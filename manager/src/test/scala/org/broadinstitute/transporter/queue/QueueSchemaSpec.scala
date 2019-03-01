@@ -52,20 +52,20 @@ class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
 
   it should "parse draft-4 JSON schemas" in {
     val schema = draft4Schema.as[QueueSchema].right.value
-    schema.validated(json"{}").isValid shouldBe true
-    schema.validated(json"[]").isValid shouldBe false
+    schema.validate(json"{}").isValid shouldBe true
+    schema.validate(json"[]").isValid shouldBe false
   }
 
   it should "parse draft-6 JSON schemas" in {
     val schema = draft6Schema.as[QueueSchema].right.value
-    schema.validated(json"{}").isValid shouldBe true
-    schema.validated(json"[]").isValid shouldBe false
+    schema.validate(json"{}").isValid shouldBe true
+    schema.validate(json"[]").isValid shouldBe false
   }
 
   it should "parse draft-7 JSON schemas" in {
     val schema = draft7Schema.as[QueueSchema].right.value
-    schema.validated(json"{}").isValid shouldBe true
-    schema.validated(json"[]").isValid shouldBe false
+    schema.validate(json"{}").isValid shouldBe true
+    schema.validate(json"[]").isValid shouldBe false
   }
 
   it should "parse JSON schemas into validators" in {
@@ -107,10 +107,10 @@ class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
         }
       }"""
 
-    schema.validated(goodRequest1).isValid shouldBe true
-    schema.validated(goodRequest2).isValid shouldBe true
-    schema.validated(badRequest1).isValid shouldBe false
-    schema.validated(badRequest2).isValid shouldBe false
+    schema.validate(goodRequest1).isValid shouldBe true
+    schema.validate(goodRequest2).isValid shouldBe true
+    schema.validate(badRequest1).isValid shouldBe false
+    schema.validate(badRequest2).isValid shouldBe false
   }
 
   it should "not lose information when converting JSON types" in {

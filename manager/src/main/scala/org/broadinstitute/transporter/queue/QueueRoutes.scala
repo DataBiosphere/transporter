@@ -7,13 +7,21 @@ import org.http4s.{EntityEncoder, Method}
 import org.http4s.rho.RhoRoutes
 import org.http4s.rho.swagger.{syntax => swaggerSyntax}
 
+/** Container for Transporter's queue-related API routes. */
 class QueueRoutes(queueController: QueueController) extends RhoRoutes[IO] {
   import swaggerSyntax.io._
 
   private val log = Slf4jLogger.getLogger[IO]
 
+  /** Build an API route prefix beginning with the given HTTP method. */
   private def api(m: Method) = m / "api" / "transporter" / "v1"
 
+  /**
+    * Build a 500 error response containing the given message,
+    * using our uniform error response model.
+    *
+    * Logs the error causing the 500 response.
+    */
   private def ISE(
     message: String,
     err: Throwable

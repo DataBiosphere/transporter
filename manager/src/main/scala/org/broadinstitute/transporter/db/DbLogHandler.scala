@@ -4,8 +4,15 @@ import cats.effect.IO
 import doobie.util.log._
 import io.chrisdavenport.log4cats.SelfAwareStructuredLogger
 
+/**
+  * Factory for doobie's specific logger.
+  *
+  * Integrates with log4cats' logger type to fire-and-forget
+  * logs in the background.
+  */
 object DbLogHandler {
 
+  /** Wrap a log4cats logger into a doobie log handler. */
   def apply(logger: SelfAwareStructuredLogger[IO]): LogHandler = LogHandler {
 
     case Success(sql, args, dbTime, clientTime) =>

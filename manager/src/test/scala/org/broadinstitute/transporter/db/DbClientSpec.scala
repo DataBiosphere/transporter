@@ -67,7 +67,7 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
     client.checkReady.unsafeRunSync() shouldBe false
   }
 
-  it should "insert and lookup transfer queues" in {
+  it should "insert, lookup, and delete transfer queues" in {
     val queue = Queue(
       "test-queue",
       "test-queue.requests",
@@ -79,13 +79,39 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
 
     val check = for {
       res <- client.lookupQueue(queue.name)
-      _ = res shouldBe None
       _ <- client.insertQueue(queue)
       res2 <- client.lookupQueue(queue.name)
+      _ <- client.deleteQueue(queue.name)
+      res3 <- client.lookupQueue(queue.name)
     } yield {
+      res shouldBe None
       res2 shouldBe Some(queue)
+      res3 shouldBe None
     }
 
     check.unsafeRunSync()
+  }
+
+  it should "fail to double-insert a queue by name" in {
+    val queue = Queue(
+      "test-queue",
+      "test-queue.requests",
+      "test-queue.responses",
+      json"{}".as[QueueSchema].right.get
+    )
+
+    val client = new DbClient(testTransactor(container.password))
+
+    val tryInsert = for {
+      _ <- client.insertQueue(queue)
+      _ <- client.insertQueue(queue)
+    } yield ()
+
+    tryInsert.attempt.unsafeRunSync().isLeft shouldBe true
+  }
+
+  it should "no-op when deleting a nonexistent queue" in {
+    val client = new DbClient(testTransactor(container.password))
+    client.deleteQueue("nope").unsafeRunSync()
   }
 }
