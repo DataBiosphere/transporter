@@ -82,11 +82,19 @@ object QueueSchema extends Instances.JsonInstances {
 
   implicit val decoder: Decoder[QueueSchema] = new Decoder[QueueSchema] {
 
+    /**
+      * Meta-schema matching valid draft-4, draft-6, and draft-7 JSON schemas.
+      *
+      * The supported JSON schema versions were chosen to match what our underlying
+      * JSON schema validation library supports.
+      */
     val schemaSchema: Schema = SchemaLoader.load {
 
       val supportedVersions = List(4, 6, 7)
       val schemaJson = JsonObject(
         "$schema" -> schemaUrl(supportedVersions.last),
+        // NOTE: I tried using 'oneOf', but that caused spurious failures on
+        // payloads that matched multiple drafts of the JSON schema spec.
         "anyOf" -> supportedVersions.map { v =>
           Json.obj("$ref" -> schemaUrl(v))
         }.asJson

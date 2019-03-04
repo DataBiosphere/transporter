@@ -48,7 +48,7 @@ val pureConfigVersion = "0.10.2"
 // Data types & control flow.
 val catsVersion = "1.6.0"
 val catsEffectVersion = "1.2.0"
-val fs2Version = "1.0.3"
+val fs2Version = "1.0.4"
 
 // DB.
 val doobieVersion = "0.7.0-M3"
@@ -60,7 +60,7 @@ val circeDerivationVersion = "0.11.0-M1"
 val everitJsonSchemaVersion = "1.11.0"
 
 // Kafka.
-val fs2KafkaVersion = "0.19.3"
+val fs2KafkaVersion = "0.19.4"
 val kafkaClientsVersion = "2.1.0"
 
 // Logging.

@@ -54,9 +54,9 @@ class QueueRoutes(queueController: QueueController) extends RhoRoutes[IO] {
 
   lookupRoute |>> { name: String =>
     queueController.lookupQueue(name).attempt.map {
-      case Right(queue)                         => Ok(queue)
-      case Left(QueueController.NoSuchQueue(q)) => NotFound(s"Queue $q does not exist")
-      case Left(err)                            => ISE(s"Failed to lookup queue $name", err)
+      case Right(Some(queue)) => Ok(queue)
+      case Right(None)        => NotFound(s"Queue $name does not exist")
+      case Left(err)          => ISE(s"Failed to lookup queue $name", err)
     }
   }
 }

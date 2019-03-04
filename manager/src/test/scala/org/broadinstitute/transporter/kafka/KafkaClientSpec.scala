@@ -1,13 +1,12 @@
 package org.broadinstitute.transporter.kafka
 
-import cats.effect.{ContextShift, IO}
+import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
 import doobie.util.ExecutionContexts
 import org.scalatest.{FlatSpec, Matchers}
 import org.testcontainers.containers.KafkaContainer
 
-import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
@@ -38,19 +37,16 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
     timeouts
   )
 
-  import KafkaClient.KafkaFutureSyntax
+  private def clientResource(config: KafkaConfig): Resource[IO, KafkaClient] =
+    for {
+      ec <- blockingEc
+      client <- KafkaClient.resource(config, ec)
+    } yield client
 
   behavior of "KafkaClient"
 
   it should "report ready on good configuration" in {
-    val clientResource = for {
-      ec <- blockingEc
-      client <- KafkaClient.resource(config, ec)
-    } yield {
-      client
-    }
-
-    clientResource.use(_.checkReady).unsafeRunSync() shouldBe true
+    clientResource(config).use(_.checkReady).unsafeRunSync() shouldBe true
   }
 
   it should "report not ready on bad configuration" in {
@@ -58,32 +54,34 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
       bootstrapServers = List(config.bootstrapServers.head.dropRight(1))
     )
 
-    val clientResource = for {
-      ec <- blockingEc
-      client <- KafkaClient.resource(settings, ec)
-    } yield {
-      client
-    }
-
-    clientResource.use(_.checkReady).unsafeRunSync() shouldBe false
+    clientResource(settings).use(_.checkReady).unsafeRunSync() shouldBe false
   }
 
-  it should "create topics" in {
+  it should "create and list topics" in {
     val topics = List("foo", "bar")
 
-    blockingEc.flatMap { ec =>
-      KafkaClient.clientResource(config, ec).map(_ -> ec)
-    }.use {
-      case (client, ec) =>
-        val wrapperClient = new KafkaClient(client, topicConfig, ec)
+    clientResource(config).use { client =>
+      for {
+        originalTopics <- client.listTopics
+        _ <- client.createTopics(topics)
+        newTopics <- client.listTopics
+      } yield {
+        newTopics.diff(originalTopics) shouldBe topics.toSet
+      }
+    }.unsafeRunSync()
+  }
 
-        for {
-          originalTopics <- IO.suspend(client.listTopics().names().cancelable)
-          _ <- wrapperClient.createTopics(topics)
-          newTopics <- IO.suspend(client.listTopics().names().cancelable)
-        } yield {
-          newTopics.asScala.diff(originalTopics.asScala) shouldBe topics.toSet
-        }
+  it should "roll back successfully created topics when other topics in the request fail" in {
+    val topics = List("baz", "qux", "$$$")
+
+    clientResource(config).use { client =>
+      for {
+        err <- client.createTopics(topics).attempt
+        existingTopics <- client.listTopics
+      } yield {
+        err.isLeft shouldBe true
+        existingTopics.diff(topics.toSet) shouldBe existingTopics
+      }
     }.unsafeRunSync()
   }
 }

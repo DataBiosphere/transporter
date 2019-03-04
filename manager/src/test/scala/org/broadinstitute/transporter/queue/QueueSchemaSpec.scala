@@ -116,4 +116,32 @@ class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
   it should "not lose information when converting JSON types" in {
     cloudCopySchema.as[QueueSchema].right.value.asJson shouldBe cloudCopySchema
   }
+
+  it should "validate null" in {
+    val schema = json"""{ "type": "null" }""".as[QueueSchema].right.value
+    schema.validate(json"null").isValid shouldBe true
+    schema.validate(json"{}").isValid shouldBe false
+  }
+
+  it should "validate numbers" in {
+    val schema = json"""{ "type": "number" }""".as[QueueSchema].right.value
+    schema.validate(json"1.234567890").isValid shouldBe true
+    schema.validate(json"null").isValid shouldBe false
+  }
+
+  it should "validate strings" in {
+    val schema = json"""{ "type": "string" }""".as[QueueSchema].right.value
+    schema.validate(json""""foo"""").isValid shouldBe true
+    schema.validate(json"[]").isValid shouldBe false
+  }
+
+  it should "validate arrays" in {
+    val schema = json"""{ "type": "array", "items": { "type": "number" } }"""
+      .as[QueueSchema]
+      .right
+      .value
+    schema.validate(json"[1, 2, 3, 4]").isValid shouldBe true
+    schema.validate(json"""["a", "b", "c", "d"]""").isValid shouldBe false
+    schema.validate(json"{}").isValid shouldBe false
+  }
 }
