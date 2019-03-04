@@ -1,12 +1,14 @@
 package org.broadinstitute.transporter
 
+import cats.data.NonEmptyList
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import org.broadinstitute.transporter.web.{InfoRoutes, SwaggerMiddleware, WebConfig}
+import org.broadinstitute.transporter.web.{SwaggerMiddleware, WebConfig}
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaClient
-import org.broadinstitute.transporter.info.InfoController
+import org.broadinstitute.transporter.info.{InfoController, InfoRoutes}
+import org.broadinstitute.transporter.queue.{QueueController, QueueRoutes}
 import org.http4s.HttpApp
 import org.http4s.implicits._
 import org.http4s.rho.swagger.models.Info
@@ -53,10 +55,11 @@ object TransporterManager extends IOApp {
       kafkaResource = KafkaClient.resource(config.kafka, blockingEc)
       (dbClient, kafkaClient) <- (dbResource, kafkaResource).tupled
     } yield {
-      val infoRoutes = new InfoRoutes(
-        new InfoController(appInfo.version, dbClient, kafkaClient)
+      val routes = NonEmptyList.of(
+        new InfoRoutes(new InfoController(appInfo.version, dbClient, kafkaClient)),
+        new QueueRoutes(new QueueController(dbClient, kafkaClient))
       )
-      val appRoutes = SwaggerMiddleware(infoRoutes, appInfo, blockingEc).orNotFound
+      val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
       Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
     }
 

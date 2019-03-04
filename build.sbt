@@ -48,33 +48,38 @@ val pureConfigVersion = "0.10.2"
 // Data types & control flow.
 val catsVersion = "1.6.0"
 val catsEffectVersion = "1.2.0"
-val fs2Version = "1.0.3"
+val fs2Version = "1.0.4"
 
 // DB.
 val doobieVersion = "0.7.0-M3"
+val postgresqlDriverVersion = "42.2.5"
 
 // JSON.
 val circeVersion = "0.11.1"
 val circeDerivationVersion = "0.11.0-M1"
+val everitJsonSchemaVersion = "1.11.0"
 
 // Kafka.
-val fs2KafkaVersion = "0.19.1"
+val fs2KafkaVersion = "0.19.4"
 val kafkaClientsVersion = "2.1.0"
 
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
 
+// Utils.
+val fuuidVersion = "0.2.0-M5"
+
 // Web.
 val http4sVersion = "0.20.0-M6"
 val rhoVersion = "0.19.0-M6"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.20.8"
+val swaggerUiVersion = "3.20.9"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
-val postgresqlDriverVersion = "42.2.5"
-val scalaTestVersion = "3.0.5"
+val scalaMockVersion = "4.1.0"
+val scalaTestVersion = "3.0.6"
 val testcontainersVersion = "1.10.6"
 val testcontainersScalaVersion = "0.23.0"
 
@@ -106,12 +111,16 @@ lazy val `transporter-manager` = project
   .enablePlugins(BuildInfoPlugin)
   .settings(commonSettings)
   .settings(
+    // Needed to resolve JSON schema lib.
+    resolvers += "Jitpack" at "https://jitpack.io",
     // Main dependencies.
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % logbackVersion,
+      "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
+      "io.chrisdavenport" %% "fuuid" % fuuidVersion,
       "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
       "io.circe" %% "circe-core" % circeVersion,
       "io.circe" %% "circe-derivation" % circeDerivationVersion,
@@ -122,14 +131,16 @@ lazy val `transporter-manager` = project
       "org.tpolecat" %% "doobie-core" % doobieVersion,
       "org.tpolecat" %% "doobie-hikari" % doobieVersion,
       "org.tpolecat" %% "doobie-postgres" % doobieVersion,
+      "org.tpolecat" %% "doobie-postgres-circe" % doobieVersion,
       "org.webjars" % swaggerUiModule % swaggerUiVersion
     ),
 
     // Test dependencies.
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
+      "io.circe" %% "circe-literal" % circeVersion,
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
-      "org.postgresql" % "postgresql" % postgresqlDriverVersion,
+      "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       "org.testcontainers" % "kafka" % testcontainersVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
@@ -140,9 +151,11 @@ lazy val `transporter-manager` = project
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
       "org.apache.kafka" % "kafka-clients" % kafkaClientsVersion,
-      "org.testcontainers" % "testcontainers" % testcontainersVersion,
+      "org.postgresql" % "postgresql" % postgresqlDriverVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
-      "org.typelevel" %% "cats-effect" % catsEffectVersion
+      "org.typelevel" %% "cats-effect" % catsEffectVersion,
+
+      "org.testcontainers" % "testcontainers" % testcontainersVersion % Test
     ),
 
     // Inject version information into the app.

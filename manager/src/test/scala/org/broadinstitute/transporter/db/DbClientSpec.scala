@@ -6,9 +6,11 @@ import java.sql.DriverManager
 import cats.effect.{ContextShift, IO, Resource}
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import doobie.util.transactor.Transactor
+import io.circe.literal._
 import liquibase.{Contexts, Liquibase}
 import liquibase.database.jvm.JdbcConnection
 import liquibase.resource.FileSystemResourceAccessor
+import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.scalatest.{FlatSpec, Matchers}
 
 import scala.concurrent.ExecutionContext
@@ -56,12 +58,60 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   behavior of "DbClient"
 
   it should "report ready on good configuration" in {
-    val client = new DbClient(testTransactor(container.password))
+    val client = new DbClient.Impl(testTransactor(container.password))
     client.checkReady.unsafeRunSync() shouldBe true
   }
 
   it should "report not ready on bad configuration" in {
-    val client = new DbClient(testTransactor("nope"))
+    val client = new DbClient.Impl(testTransactor("nope"))
     client.checkReady.unsafeRunSync() shouldBe false
+  }
+
+  it should "insert, lookup, and delete transfer queues" in {
+    val queue = Queue(
+      "test-queue",
+      "test-queue.requests",
+      "test-queue.responses",
+      json"{}".as[QueueSchema].right.get
+    )
+
+    val client = new DbClient.Impl(testTransactor(container.password))
+
+    val check = for {
+      res <- client.lookupQueue(queue.name)
+      _ <- client.insertQueue(queue)
+      res2 <- client.lookupQueue(queue.name)
+      _ <- client.deleteQueue(queue.name)
+      res3 <- client.lookupQueue(queue.name)
+    } yield {
+      res shouldBe None
+      res2 shouldBe Some(queue)
+      res3 shouldBe None
+    }
+
+    check.unsafeRunSync()
+  }
+
+  it should "fail to double-insert a queue by name" in {
+    val queue = Queue(
+      "test-queue",
+      "test-queue.requests",
+      "test-queue.responses",
+      json"{}".as[QueueSchema].right.get
+    )
+
+    val client = new DbClient.Impl(testTransactor(container.password))
+
+    val tryInsert = for {
+      _ <- client.insertQueue(queue)
+      _ <- client.insertQueue(queue)
+    } yield ()
+
+    tryInsert.attempt.unsafeRunSync().isLeft shouldBe true
+  }
+
+  it should "no-op when deleting a nonexistent queue" in {
+    val client = new DbClient.Impl(testTransactor(container.password))
+    client.deleteQueue("nope").unsafeRunSync()
   }
 }

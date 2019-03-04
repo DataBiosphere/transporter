@@ -18,6 +18,11 @@
         <appender-ref ref="DOCKER-STDOUT" />
     </logger>
 
+    <!-- Use debug level for our own messages so we can eyeball logs during testing. -->
+    <logger name="org.broadinstitute" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+
     <root level="INFO">
         <appender-ref ref="STDOUT" />
     </root>

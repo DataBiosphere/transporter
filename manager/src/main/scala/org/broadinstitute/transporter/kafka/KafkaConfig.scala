@@ -7,6 +7,7 @@ import pureconfig.generic.semiauto._
 case class KafkaConfig(
   bootstrapServers: List[String],
   clientId: String,
+  topicDefaults: TopicConfig,
   timeouts: TimeoutConfig
 )
 

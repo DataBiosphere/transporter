@@ -5,41 +5,38 @@ import cats.implicits._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
 import doobie.util.ExecutionContexts
+import doobie.util.log.LogHandler
 import doobie.util.transactor.Transactor
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import org.broadinstitute.transporter.queue.Queue
 
 import scala.concurrent.ExecutionContext
 
 /**
   * Client responsible for sending requests to / parsing responses from
   * Transporter's backing DB.
-  *
-  * @param transactor wrapper around a source of DB connections which can
-  *                   actually run SQL
-  * @param cs proof of the ability to shift IO-wrapped computations
-  *           onto other threads
-  * @see https://tpolecat.github.io/doobie/docs/01-Introduction.html for
-  *      documentation on `doobie`, the library used for DB access
   */
-class DbClient private[db] (transactor: Transactor[IO])(
-  implicit cs: ContextShift[IO]
-) {
-
-  private val logger = Slf4jLogger.getLogger[IO]
+trait DbClient {
 
   /** Check if the client can interact with the backing DB. */
-  def checkReady: IO[Boolean] = {
-    val check = for {
-      _ <- logger.info("Running status check against DB...")
-      isValid <- doobie.free.connection.isValid(0).transact(transactor)
-    } yield {
-      isValid
-    }
+  def checkReady: IO[Boolean]
 
-    check.handleErrorWith { err =>
-      logger.error(err)("DB status check hit error").as(false)
-    }
-  }
+  /**
+    * Record a new queue resource in the DB.
+    *
+    * Will fail if a queue already exists with the input's name.
+    */
+  def insertQueue(queue: Queue): IO[Unit]
+
+  /**
+    * Remove the queue resource with the given name from the DB.
+    *
+    * No-ops if no such queue exists in the DB.
+    */
+  def deleteQueue(name: String): IO[Unit]
+
+  /** Pull the queue resource with the given name from the DB, if it exists. */
+  def lookupQueue(name: String): IO[Option[Queue]]
 }
 
 object DbClient {
@@ -63,11 +60,14 @@ object DbClient {
   ): Resource[IO, DbClient] =
     for {
       // Recommended by doobie docs: use a fixed-size thread pool to avoid flooding the DB.
-      transactionContext <- ExecutionContexts.fixedThreadPool[IO](MaxDbConnections)
+      connectionContext <- ExecutionContexts.fixedThreadPool[IO](MaxDbConnections)
       // NOTE: Lines beneath here are from doobie's implementation of `HikariTransactor.newHikariTransactor`.
       // Have to open up the guts to set detailed configuration.
       _ <- Resource.liftF(IO.delay(Class.forName(config.driverClassname)))
-      transactor <- HikariTransactor.initial[IO](blockingEc, transactionContext)
+      transactor <- HikariTransactor.initial[IO](
+        connectEC = connectionContext,
+        transactEC = blockingEc
+      )
       _ <- Resource.liftF {
         transactor.configure { dataSource =>
           IO.delay {
@@ -90,6 +90,64 @@ object DbClient {
         }
       }
     } yield {
-      new DbClient(transactor)
+      new Impl(transactor)
     }
+
+  /**
+    * Concrete implementation of our DB client used by mainline code.
+    *
+    * @param transactor wrapper around a source of DB connections which can
+    *                   actually run SQL
+    * @param cs proof of the ability to shift IO-wrapped computations
+    *           onto other threads
+    * @see https://tpolecat.github.io/doobie/docs/01-Introduction.html for
+    *      documentation on `doobie`, the library used for DB access
+    */
+  private[db] class Impl(transactor: Transactor[IO])(
+    implicit cs: ContextShift[IO]
+  ) extends DbClient {
+
+    private val logger = Slf4jLogger.getLogger[IO]
+    private implicit val logHandler: LogHandler = DbLogHandler(logger)
+
+    /** Check if the client can interact with the backing DB. */
+    override def checkReady: IO[Boolean] = {
+      val check = for {
+        _ <- logger.info("Running status check against DB...")
+        isValid <- doobie.free.connection.isValid(0).transact(transactor)
+      } yield {
+        isValid
+      }
+
+      check.handleErrorWith { err =>
+        logger.error(err)("DB status check hit error").as(false)
+      }
+    }
+
+    /**
+      * Record a new queue resource in the DB.
+      *
+      * Will fail if a queue already exists with the input's name.
+      */
+    override def insertQueue(queue: Queue): IO[Unit] =
+      sql"""insert into queues (name, request_topic, response_topic, request_schema)
+          values (${queue.name}, ${queue.requestTopic}, ${queue.responseTopic}, ${queue.schema})""".update.run.void
+        .transact(transactor)
+
+    /**
+      * Remove the queue resource with the given name from the DB.
+      *
+      * No-ops if no such queue exists in the DB.
+      */
+    override def deleteQueue(name: String): IO[Unit] =
+      sql"""delete from queues where name = $name""".update.run.void.transact(transactor)
+
+    /** Pull the queue resource with the given name from the DB, if it exists. */
+    override def lookupQueue(name: String): IO[Option[Queue]] =
+      sql"""select name, request_topic, response_topic, request_schema
+          from queues where name = $name"""
+        .query[Queue]
+        .option
+        .transact(transactor)
+  }
 }
