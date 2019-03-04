@@ -78,6 +78,7 @@ val swaggerUiVersion = "3.20.9"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
+val scalaMockVersion = "4.1.0"
 val scalaTestVersion = "3.0.6"
 val testcontainersVersion = "1.10.6"
 val testcontainersScalaVersion = "0.23.0"
@@ -139,6 +140,7 @@ lazy val `transporter-manager` = project
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
       "io.circe" %% "circe-literal" % circeVersion,
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
+      "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       "org.testcontainers" % "kafka" % testcontainersVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion

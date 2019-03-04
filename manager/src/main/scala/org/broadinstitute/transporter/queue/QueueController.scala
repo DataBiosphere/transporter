@@ -110,11 +110,10 @@ class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
     val prepQueue = for {
       _ <- logger.info(s"Initializing resources for queue ${request.name}")
       uuid <- FUUID.randomFUUID[IO]
-      topicPrefix = s"${request.name}.$uuid"
       queue = Queue(
         name = request.name,
-        requestTopic = s"$topicPrefix.requests",
-        responseTopic = s"$topicPrefix.responses",
+        requestTopic = s"$uuid.requests",
+        responseTopic = s"$uuid.responses",
         schema = request.schema
       )
       _ <- dbClient.insertQueue(queue)
