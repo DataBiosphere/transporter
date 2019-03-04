@@ -58,12 +58,12 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   behavior of "DbClient"
 
   it should "report ready on good configuration" in {
-    val client = new DbClient(testTransactor(container.password))
+    val client = new DbClient.Impl(testTransactor(container.password))
     client.checkReady.unsafeRunSync() shouldBe true
   }
 
   it should "report not ready on bad configuration" in {
-    val client = new DbClient(testTransactor("nope"))
+    val client = new DbClient.Impl(testTransactor("nope"))
     client.checkReady.unsafeRunSync() shouldBe false
   }
 
@@ -75,7 +75,7 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
       json"{}".as[QueueSchema].right.get
     )
 
-    val client = new DbClient(testTransactor(container.password))
+    val client = new DbClient.Impl(testTransactor(container.password))
 
     val check = for {
       res <- client.lookupQueue(queue.name)
@@ -100,7 +100,7 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
       json"{}".as[QueueSchema].right.get
     )
 
-    val client = new DbClient(testTransactor(container.password))
+    val client = new DbClient.Impl(testTransactor(container.password))
 
     val tryInsert = for {
       _ <- client.insertQueue(queue)
@@ -111,7 +111,7 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   }
 
   it should "no-op when deleting a nonexistent queue" in {
-    val client = new DbClient(testTransactor(container.password))
+    val client = new DbClient.Impl(testTransactor(container.password))
     client.deleteQueue("nope").unsafeRunSync()
   }
 }
