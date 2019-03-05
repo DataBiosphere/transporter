@@ -2,8 +2,6 @@ package org.broadinstitute.transporter.queue
 
 import cats.data.Validated
 import cats.implicits._
-import doobie.postgres.circe.Instances
-import doobie.util.{Get, Put}
 import io.circe.Decoder.Result
 import io.circe._
 import io.circe.syntax._
@@ -49,7 +47,7 @@ class QueueSchema private (
   }
 }
 
-object QueueSchema extends Instances.JsonInstances {
+object QueueSchema {
 
   /** Get the reference URL for the meta-schema of a JSON schema version. */
   private[queue] def schemaUrl(v: Int): Json =
@@ -115,8 +113,4 @@ object QueueSchema extends Instances.JsonInstances {
         new QueueSchema(obj.asJson, schema)
       }
   }
-
-  implicit val get: Get[QueueSchema] = pgDecoderGet
-
-  implicit val put: Put[QueueSchema] = pgEncoderPut
 }

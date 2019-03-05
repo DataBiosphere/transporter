@@ -4,11 +4,12 @@ import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
-import doobie.util.ExecutionContexts
+import doobie.postgres.circe.Instances
+import doobie.util.{ExecutionContexts, Get, Put}
 import doobie.util.log.LogHandler
 import doobie.util.transactor.Transactor
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.broadinstitute.transporter.queue.Queue
+import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 
 import scala.concurrent.ExecutionContext
 
@@ -105,10 +106,22 @@ object DbClient {
     */
   private[db] class Impl(transactor: Transactor[IO])(
     implicit cs: ContextShift[IO]
-  ) extends DbClient {
+  ) extends DbClient
+      with Instances.JsonInstances {
 
     private val logger = Slf4jLogger.getLogger[IO]
     private implicit val logHandler: LogHandler = DbLogHandler(logger)
+
+    /*
+     * "Orphan" instances describing how to get/put our custom JSON schema
+     * type from/into the DB.
+     *
+     * We define them here instead of in the schema class' companion object
+     * because the schema class lives in our "common" subproject, which doesn't
+     * need to depend on anything doobie-related.
+     */
+    implicit val schemaGet: Get[QueueSchema] = pgDecoderGet
+    implicit val schemaPut: Put[QueueSchema] = pgEncoderPut
 
     /** Check if the client can interact with the backing DB. */
     override def checkReady: IO[Boolean] = {
