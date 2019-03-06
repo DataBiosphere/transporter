@@ -14,14 +14,28 @@ import pureconfig.module.catseffect._
 
 import scala.concurrent.ExecutionContext
 
+/**
+  * Main entry-point for Transporter agent programs.
+  *
+  * Extending this base class should provide concrete agent programs with
+  * the full framework needed to hook into Transporter's Kafka infrastructure
+  * and run data transfers.
+  */
 abstract class TransporterAgent[Req](implicit val decoder: Decoder[Req])
     extends IOApp
     with CirceEntityDecoder {
 
   private val logger = Slf4jLogger.getLogger[IO]
 
+  /**
+    * Construct the agent component which can actually run data transfers.
+    *
+    * Modeled as a `Resource` so agent programs can hook in setup / teardown
+    * logic for config, thread pools, etc.
+    */
   def runnerResource: Resource[IO, TransferRunner[Req]]
 
+  /** [[IOApp]] equivalent of `main`. */
   final override def run(args: List[String]): IO[ExitCode] =
     loadConfigF[IO, AgentConfig]("org.broadinstitute.transporter").flatMap { config =>
       for {
@@ -36,6 +50,7 @@ abstract class TransporterAgent[Req](implicit val decoder: Decoder[Req])
       }
     }
 
+  /** Query the configured Transporter manager for information about a queue. */
   private def lookupQueue(config: QueueConfig): IO[Option[Queue]] =
     BlazeClientBuilder[IO](ExecutionContext.global).resource.use { client =>
       val request = Request[IO](uri = config.managerUri / "queues" / config.queueName)
@@ -46,6 +61,13 @@ abstract class TransporterAgent[Req](implicit val decoder: Decoder[Req])
         .flatMap(_ => client.expectOption[Queue](request))
     }
 
+  /**
+    * Build and launch the Kafka stream which receives, processes, and reports
+    * on data transfer requests.
+    *
+    * This method should only return if the underlying stream is interrupted
+    * (i.e. by a Ctrl-C).
+    */
   private def runStream(config: KStreamsConfig, queue: Queue): IO[ExitCode] =
     runnerResource.use { runner =>
       for {
