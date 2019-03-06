@@ -57,6 +57,7 @@ val postgresqlDriverVersion = "42.2.5"
 // JSON.
 val circeVersion = "0.11.1"
 val circeDerivationVersion = "0.11.0-M1"
+val enumeratumCirceVersion = "1.5.20"
 val everitJsonSchemaVersion = "1.11.0"
 
 // Kafka.
@@ -68,6 +69,7 @@ val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
 
 // Utils.
+val enumeratumVersion = "1.5.13"
 val fuuidVersion = "0.2.0-M5"
 
 // Web.
@@ -114,16 +116,18 @@ lazy val `transporter-common` = project
   .settings(
     // Needed to resolve JSON schema lib.
     resolvers += "Jitpack" at "https://jitpack.io",
-    // Main dependencies.
+
     libraryDependencies ++= Seq(
+      "com.beachape" %% "enumeratum" % enumeratumVersion,
+      "com.beachape" %% "enumeratum-circe" % enumeratumCirceVersion,
       "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
       "io.circe" %% "circe-core" % circeVersion,
-      "io.circe" %% "circe-derivation" % circeDerivationVersion
+      "io.circe" %% "circe-derivation" % circeDerivationVersion,
+      "io.circe" %% "circe-parser" % circeVersion
     ),
-    // Test dependencies.
+
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
-      "io.circe" %% "circe-parser" % circeVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test)
   )
@@ -152,6 +156,7 @@ lazy val `transporter-manager` = project
       "org.tpolecat" %% "doobie-postgres-circe" % doobieVersion,
       "org.webjars" % swaggerUiModule % swaggerUiVersion
     ),
+
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
       "io.circe" %% "circe-literal" % circeVersion,
@@ -161,6 +166,7 @@ lazy val `transporter-manager` = project
       "org.testcontainers" % "kafka" % testcontainersVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
     ).map(_ % Test),
+
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
@@ -186,3 +192,31 @@ lazy val `transporter-agent-template` = project
   .in(file("./agents/template"))
   .dependsOn(`transporter-common`)
   .settings(commonSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "ch.qos.logback" % "logback-classic" % logbackVersion,
+      "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
+      "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
+      "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
+      "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
+      "org.http4s" %% "http4s-blaze-client" % http4sVersion
+    ),
+
+    libraryDependencies ++= Seq(
+      "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
+      "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
+      "io.circe" %% "circe-literal" % circeVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion,
+      "org.testcontainers" % "kafka" % testcontainersVersion
+    ).map(_ % Test),
+
+    dependencyOverrides := Seq(
+      "co.fs2" %% "fs2-core" % fs2Version,
+      "co.fs2" %% "fs2-io" % fs2Version,
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
+      "org.typelevel" %% "cats-core" % catsVersion,
+      "org.typelevel" %% "cats-effect" % catsEffectVersion,
+
+      "org.testcontainers" % "testcontainers" % testcontainersVersion % Test
+    )
+  )
