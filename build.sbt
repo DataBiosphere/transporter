@@ -197,9 +197,11 @@ lazy val `transporter-agent-template` = project
       "ch.qos.logback" % "logback-classic" % logbackVersion,
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
+      "com.github.pureconfig" %% "pureconfig-http4s" % pureConfigVersion,
       "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
-      "org.http4s" %% "http4s-blaze-client" % http4sVersion
+      "org.http4s" %% "http4s-blaze-client" % http4sVersion,
+      "org.http4s" %% "http4s-circe" % http4sVersion
     ),
 
     libraryDependencies ++= Seq(
