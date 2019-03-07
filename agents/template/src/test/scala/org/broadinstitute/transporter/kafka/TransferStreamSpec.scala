@@ -119,7 +119,7 @@ class TransferStreamSpec
     val expected = List(
       "no-info" -> TransferResult(TransferStatus.Success, None),
       "with-info" -> TransferResult(
-        TransferStatus.RetriableFailure,
+        TransferStatus.TransientFailure,
         Some(JsonObject("foo" -> "bar".asJson))
       )
     )

@@ -25,10 +25,10 @@ object TransferStatus
     * Signal for transfers that failed with a transient error and
     * are likely to succeed if resubmitted.
     *
-    * Whether or not a failure should be considered retriable is
+    * Whether or not a failure should be considered transient is
     * left up to the individual agent implementations.
     */
-  case object RetriableFailure extends TransferStatus
+  case object TransientFailure extends TransferStatus
 
   /**
     * Signal for transfers that failed and are likely / guaranteed
