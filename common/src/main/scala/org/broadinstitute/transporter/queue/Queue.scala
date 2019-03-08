@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.queue
 
-import io.circe.Encoder
+import io.circe.{Decoder, Encoder}
+import io.circe.derivation.{deriveDecoder, deriveEncoder}
 
 /**
   * Model of a distinct stream of transfer requests which can be submitted
@@ -23,5 +24,6 @@ case class Queue(
 )
 
 object Queue {
-  implicit val encoder: Encoder[Queue] = io.circe.derivation.deriveEncoder
+  implicit val encoder: Encoder[Queue] = deriveEncoder
+  implicit val decoder: Decoder[Queue] = deriveDecoder
 }

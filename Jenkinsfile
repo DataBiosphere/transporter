@@ -1,5 +1,7 @@
 pipeline {
-    agent any
+    // Docker needed to run tests.
+    agent { label 'docker' }
+
     options {
         timestamps()
         ansiColor('xterm')

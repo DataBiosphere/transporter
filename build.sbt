@@ -57,17 +57,19 @@ val postgresqlDriverVersion = "42.2.5"
 // JSON.
 val circeVersion = "0.11.1"
 val circeDerivationVersion = "0.11.0-M1"
+val enumeratumCirceVersion = "1.5.20"
 val everitJsonSchemaVersion = "1.11.0"
 
 // Kafka.
 val fs2KafkaVersion = "0.19.4"
-val kafkaClientsVersion = "2.1.0"
+val kafkaVersion = "2.1.1"
 
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
 
 // Utils.
+val enumeratumVersion = "1.5.13"
 val fuuidVersion = "0.2.0-M5"
 
 // Web.
@@ -96,34 +98,61 @@ val commonSettings = Seq(
     )
   ),
   Compile / doc / scalacOptions += "-no-link-warnings",
-  Test / fork := true
+  Test / fork := true,
+  Test / javaOptions ++= Seq(
+    // Limit threads in global pool to make sure we're not
+    // accidentally avoiding deadlocks on our laptops.
+    "-Dscala.concurrent.context.numThreads=1",
+    "-Dscala.concurrent.context.maxThreads=1",
+    "-Dscala.concurrent.context.maxExtraThreads=0"
+  )
 )
 
 lazy val transporter = project
   .in(file("."))
   .aggregate(
+    `transporter-common`,
     `transporter-manager`,
     `transporter-agent-template`
   )
 
-lazy val `transporter-manager` = project
-  .in(file("./manager"))
-  .enablePlugins(BuildInfoPlugin)
+/** Definitions used by both the manager and agents. */
+lazy val `transporter-common` = project
+  .in(file("./common"))
   .settings(commonSettings)
   .settings(
     // Needed to resolve JSON schema lib.
     resolvers += "Jitpack" at "https://jitpack.io",
-    // Main dependencies.
+
+    libraryDependencies ++= Seq(
+      "com.beachape" %% "enumeratum" % enumeratumVersion,
+      "com.beachape" %% "enumeratum-circe" % enumeratumCirceVersion,
+      "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
+      "io.circe" %% "circe-core" % circeVersion,
+      "io.circe" %% "circe-derivation" % circeDerivationVersion,
+      "io.circe" %% "circe-parser" % circeVersion
+    ),
+
+    libraryDependencies ++= Seq(
+      "io.circe" %% "circe-literal" % circeVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion
+    ).map(_ % Test)
+  )
+
+/** Web service which receives, distributes, and tracks transfer requests. */
+lazy val `transporter-manager` = project
+  .in(file("./manager"))
+  .enablePlugins(BuildInfoPlugin)
+  .dependsOn(`transporter-common`)
+  .settings(commonSettings)
+  .settings(
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % logbackVersion,
-      "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
       "io.chrisdavenport" %% "fuuid" % fuuidVersion,
       "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
-      "io.circe" %% "circe-core" % circeVersion,
-      "io.circe" %% "circe-derivation" % circeDerivationVersion,
       "org.http4s" %% "http4s-blaze-server" % http4sVersion,
       "org.http4s" %% "http4s-circe" % http4sVersion,
       "org.http4s" %% "http4s-dsl" % http4sVersion,
@@ -135,22 +164,20 @@ lazy val `transporter-manager` = project
       "org.webjars" % swaggerUiModule % swaggerUiVersion
     ),
 
-    // Test dependencies.
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
       "io.circe" %% "circe-literal" % circeVersion,
+      "io.github.embeddedkafka" %% "embedded-kafka" % kafkaVersion,
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
       "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
-      "org.testcontainers" % "kafka" % testcontainersVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
     ).map(_ % Test),
 
-    // Pin transitive dependencies to avoid chaos.
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
-      "org.apache.kafka" % "kafka-clients" % kafkaClientsVersion,
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
       "org.postgresql" % "postgresql" % postgresqlDriverVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
@@ -167,6 +194,34 @@ lazy val `transporter-manager` = project
     buildInfoPackage := "org.broadinstitute.transporter"
   )
 
+/** Common framework for transfer-executing agents. */
 lazy val `transporter-agent-template` = project
   .in(file("./agents/template"))
+  .dependsOn(`transporter-common`)
   .settings(commonSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "ch.qos.logback" % "logback-classic" % logbackVersion,
+      "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
+      "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
+      "com.github.pureconfig" %% "pureconfig-http4s" % pureConfigVersion,
+      "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
+      "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
+      "org.http4s" %% "http4s-blaze-client" % http4sVersion,
+      "org.http4s" %% "http4s-circe" % http4sVersion
+    ),
+
+    libraryDependencies ++= Seq(
+      "io.circe" %% "circe-literal" % circeVersion,
+      "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion
+    ).map(_ % Test),
+
+    dependencyOverrides := Seq(
+      "co.fs2" %% "fs2-core" % fs2Version,
+      "co.fs2" %% "fs2-io" % fs2Version,
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
+      "org.typelevel" %% "cats-core" % catsVersion,
+      "org.typelevel" %% "cats-effect" % catsEffectVersion,
+    )
+  )
