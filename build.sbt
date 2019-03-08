@@ -98,7 +98,13 @@ val commonSettings = Seq(
     )
   ),
   Compile / doc / scalacOptions += "-no-link-warnings",
-  Test / fork := true
+  Test / fork := true,
+  Test / javaOptions ++= Seq(
+    // Limit threads in global pool to make sure we're not
+    // accidentally avoiding deadlocks on our beefy laptops.
+    "-Dscala.concurrent.context.numThreads=1",
+    "-Dscala.concurrent.context.maxThreads=1"
+  )
 )
 
 lazy val transporter = project

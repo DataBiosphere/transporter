@@ -4,7 +4,7 @@ import java.util.concurrent.{ExecutorService, Executors}
 
 import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
-import com.dimafeng.testcontainers.{Container, ForEachTestContainer, TestContainerProxy}
+import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
 import fs2.kafka._
 import io.circe.{Decoder, Encoder, JsonObject}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
@@ -25,8 +25,8 @@ import scala.concurrent.ExecutionContext
 
 class TransferStreamSpec
     extends FlatSpec
-    with ForEachTestContainer
     with Matchers
+    with ForAllTestContainer
     with EitherValues {
 
   import TransferStreamSpec._
@@ -47,9 +47,21 @@ class TransferStreamSpec
     json"{}".as[QueueSchema].right.value
   )
 
-  private def adminConfig =
-    AdminClientSettings.Default
+  // Initialize queue topics to use across all test cases.
+  override def afterStart(): Unit = {
+    val adminConfig = AdminClientSettings.Default
       .withBootstrapServers(baseContainer.getBootstrapServers)
+
+    fs2.kafka
+      .adminClientResource[IO](adminConfig)
+      .use { admin =>
+        val topics = List(queue.requestTopic, queue.responseTopic).map { name =>
+          new NewTopic(name, 1, 1)
+        }
+        admin.createTopics(topics)
+      }
+      .unsafeRunSync()
+  }
 
   private def agentConfig =
     KStreamsConfig("test-app", baseContainer.getBootstrapServers.split(',').toList)
@@ -67,14 +79,6 @@ class TransferStreamSpec
     override def transfer(request: EchoRequest): TransferResult =
       request.result.getOrElse(throw new RuntimeException("OH NO"))
   }
-
-  private def createTopics: IO[Unit] =
-    fs2.kafka.adminClientResource[IO](adminConfig).use { admin =>
-      val topics = List(queue.requestTopic, queue.responseTopic).map { name =>
-        new NewTopic(name, 1, 1)
-      }
-      admin.createTopics(topics)
-    }
 
   private def produceRequests(messages: List[(String, String)]) =
     fs2.kafka.producerResource[IO].using(producerConfig).use { producer =>
@@ -140,16 +144,11 @@ class TransferStreamSpec
       case (id, res) => id -> EchoRequest(Some(res)).asJson.noSpaces
     }
 
-    val checks = for {
-      _ <- createTopics
-      results <- withRunningAgent {
-        produceRequests(messages).flatMap(_ => consumeResponses(expected.length.toLong))
-      }
-    } yield {
-      results shouldBe expected
-    }
+    val results = withRunningAgent {
+      produceRequests(messages).flatMap(_ => consumeResponses(expected.length.toLong))
+    }.unsafeRunSync()
 
-    checks.unsafeRunSync()
+    results shouldBe expected
   }
 
   it should "push error results if non-JSON values end up on the request topic" in {
@@ -159,21 +158,16 @@ class TransferStreamSpec
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
     )
 
-    val checks = for {
-      _ <- createTopics
-      List((key1, result1), (key2, result2)) <- withRunningAgent {
-        produceRequests(messages).flatMap(_ => consumeResponses(2))
-      }
-    } yield {
-      key1 shouldBe "not-json"
-      result1.status shouldBe TransferStatus.FatalFailure
-      result1.info should not be empty
+    val List((key1, result1), (key2, result2)) = withRunningAgent {
+      produceRequests(messages).flatMap(_ => consumeResponses(2))
+    }.unsafeRunSync()
 
-      key2 shouldBe "ok"
-      result2 shouldBe goodResult
-    }
+    key1 shouldBe "not-json"
+    result1.status shouldBe TransferStatus.FatalFailure
+    result1.info should not be empty
 
-    checks.unsafeRunSync()
+    key2 shouldBe "ok"
+    result2 shouldBe goodResult
   }
 
   it should "push error results if JSON with a bad schema ends up on the request topic" in {
@@ -183,21 +177,16 @@ class TransferStreamSpec
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
     )
 
-    val checks = for {
-      _ <- createTopics
-      List((key1, result1), (key2, result2)) <- withRunningAgent {
-        produceRequests(messages).flatMap(_ => consumeResponses(2))
-      }
-    } yield {
-      key1 shouldBe "wrong-json"
-      result1.status shouldBe TransferStatus.FatalFailure
-      result1.info should not be empty
+    val List((key1, result1), (key2, result2)) = withRunningAgent {
+      produceRequests(messages).flatMap(_ => consumeResponses(2))
+    }.unsafeRunSync()
 
-      key2 shouldBe "ok"
-      result2 shouldBe goodResult
-    }
+    key1 shouldBe "wrong-json"
+    result1.status shouldBe TransferStatus.FatalFailure
+    result1.info should not be empty
 
-    checks.unsafeRunSync()
+    key2 shouldBe "ok"
+    result2 shouldBe goodResult
   }
 
   it should "push error results if processing a transfer fails" in {
@@ -206,21 +195,16 @@ class TransferStreamSpec
       "boom" -> "{}",
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
     )
-    val checks = for {
-      _ <- createTopics
-      List((key1, result1), (key2, result2)) <- withRunningAgent {
-        produceRequests(messages).flatMap(_ => consumeResponses(2))
-      }
-    } yield {
-      key1 shouldBe "boom"
-      result1.status shouldBe TransferStatus.FatalFailure
-      result1.info should not be empty
+    val List((key1, result1), (key2, result2)) = withRunningAgent {
+      produceRequests(messages).flatMap(_ => consumeResponses(2))
+    }.unsafeRunSync()
 
-      key2 shouldBe "ok"
-      result2 shouldBe goodResult
-    }
+    key1 shouldBe "boom"
+    result1.status shouldBe TransferStatus.FatalFailure
+    result1.info should not be empty
 
-    checks.unsafeRunSync()
+    key2 shouldBe "ok"
+    result2 shouldBe goodResult
   }
 }
 
