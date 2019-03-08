@@ -86,28 +86,28 @@ class TransferStreamSpec
     val consumerResource = for {
       actorEc <- fs2.kafka.consumerExecutionContextResource[IO]
       consumer <- fs2.kafka.consumerResource[IO].using(consumerConfig(actorEc))
-      testEc <- fs2.kafka.consumerExecutionContextResource[IO]
     } yield {
-      (testEc, consumer)
+      consumer
     }
 
-    consumerResource.use {
-      case (ec, consumer) =>
-        cs.evalOn(ec) {
-          for {
-            _ <- consumer.subscribeTo(queue.responseTopic)
-            messages <- consumer.stream.take(n).compile.toList
-            parsedMessages <- messages.traverse { m =>
-              io.circe.parser
-                .parse(m.record.value())
-                .flatMap(_.as[TransferResult])
-                .map(m.record.key() -> _)
-                .liftTo[IO]
-            }
-          } yield {
-            parsedMessages
-          }
+    consumerResource.use { consumer =>
+      for {
+        _ <- consumer.subscribeTo(queue.responseTopic)
+        _ <- IO.delay(println("Substribed!"))
+        messages <- consumer.stream.evalTap { thing =>
+          IO.delay(println(s"Got thing: $thing"))
+        }.take(n).compile.toList
+        _ <- IO.delay(println("Parsing gathered things"))
+        parsedMessages <- messages.traverse { m =>
+          io.circe.parser
+            .parse(m.record.value())
+            .flatMap(_.as[TransferResult])
+            .map(m.record.key() -> _)
+            .liftTo[IO]
         }
+      } yield {
+        parsedMessages
+      }
     }
   }
 
