@@ -96,11 +96,7 @@ class TransferStreamSpec
     consumerResource.use { consumer =>
       for {
         _ <- consumer.subscribeTo(queue.responseTopic)
-        _ <- IO.delay(println("Subscribed!"))
-        messages <- consumer.stream.evalTap { thing =>
-          IO.delay(println(s"Got thing: $thing"))
-        }.take(n).compile.toList
-        _ <- IO.delay(println("Parsing gathered things"))
+        messages <- consumer.stream.take(n).compile.toList
         parsedMessages <- messages.traverse { m =>
           io.circe.parser
             .parse(m.record.value())
