@@ -1,8 +1,6 @@
 package org.broadinstitute.transporter.kafka
 
-import java.util.concurrent.{ExecutorService, Executors}
-
-import cats.effect.{ContextShift, IO, Resource, Timer}
+import cats.effect.{ContextShift, IO, Timer}
 import cats.implicits._
 import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
 import fs2.kafka._
@@ -11,7 +9,6 @@ import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import io.circe.literal._
 import io.circe.syntax._
 import org.apache.kafka.clients.admin.NewTopic
-import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.broadinstitute.transporter.transfer.{
   TransferResult,
@@ -62,37 +59,27 @@ class TransferStreamSpec
       }
       .unsafeRunSync()
   }
-
-  private def agentConfig =
-    KStreamsConfig("test-app", baseContainer.getBootstrapServers.split(',').toList)
-
-  private def producerConfig =
-    ProducerSettings[String, String]
+  
+  private def produceRequests(messages: List[(String, String)]): IO[Unit] = {
+    val config = ProducerSettings[String, String]
       .withBootstrapServers(baseContainer.getBootstrapServers)
 
-  private def consumerConfig(ec: ExecutionContext) =
-    ConsumerSettings[String, String](ec)
-      .withBootstrapServers(baseContainer.getBootstrapServers)
-      .withGroupId("test-consumer")
-
-  private def runner = new TransferRunner[EchoRequest] {
-    override def transfer(request: EchoRequest): TransferResult =
-      request.result.getOrElse(throw new RuntimeException("OH NO"))
-  }
-
-  private def produceRequests(messages: List[(String, String)]) =
-    fs2.kafka.producerResource[IO].using(producerConfig).use { producer =>
+    fs2.kafka.producerResource[IO].using(config).use { producer =>
       val records = messages.map {
         case (id, message) =>
           ProducerRecord(queue.requestTopic, id, message)
       }
       producer.producePassthrough(ProducerMessage(records)).flatten
     }
+  }
 
   private def consumeResponses(n: Long): IO[List[(String, TransferResult)]] = {
     val consumerResource = for {
-      actorEc <- fs2.kafka.consumerExecutionContextResource[IO]
-      consumer <- fs2.kafka.consumerResource[IO].using(consumerConfig(actorEc))
+      ec <- fs2.kafka.consumerExecutionContextResource[IO]
+      config = ConsumerSettings[String, String](ec)
+        .withBootstrapServers(baseContainer.getBootstrapServers)
+        .withGroupId("test-consumer")
+      consumer <- fs2.kafka.consumerResource[IO].using(config)
     } yield {
       consumer
     }
@@ -115,18 +102,17 @@ class TransferStreamSpec
   }
 
   private def withRunningAgent[A](run: IO[A]): IO[A] = {
-    val runEc = {
-      val allocate = IO.delay(Executors.newCachedThreadPool)
-      val free = (es: ExecutorService) => IO.delay(es.shutdown())
-      Resource.make(allocate)(free).map(ExecutionContext.fromExecutor)
+    val config =
+      KStreamsConfig("test-app", baseContainer.getBootstrapServers.split(',').toList)
+
+    val runner = new TransferRunner[EchoRequest] {
+      override def transfer(request: EchoRequest): TransferResult =
+        request.result.getOrElse(throw new RuntimeException("OH NO"))
     }
 
-    val useStream = (s: KafkaStreams) =>
-      IO.delay(s.start()).flatMap(_ => runEc.use(cs.evalOn(_)(run)))
-
     TransferStream
-      .build(agentConfig, queue, runner)
-      .bracket(useStream)(s => IO.delay(s.close()))
+      .build(config, queue, runner)
+      .bracket(s => IO.delay(s.start()).flatMap(_ => run))(s => IO.delay(s.close()))
   }
 
   behavior of "TransferStream"
