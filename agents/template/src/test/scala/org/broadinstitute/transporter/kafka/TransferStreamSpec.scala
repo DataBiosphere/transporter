@@ -1,6 +1,8 @@
 package org.broadinstitute.transporter.kafka
 
-import cats.effect.{ContextShift, IO, Timer}
+import java.util.concurrent.{ExecutorService, Executors}
+
+import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import com.dimafeng.testcontainers.{Container, ForEachTestContainer, TestContainerProxy}
 import fs2.kafka._
@@ -9,6 +11,7 @@ import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import io.circe.literal._
 import io.circe.syntax._
 import org.apache.kafka.clients.admin.NewTopic
+import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.broadinstitute.transporter.transfer.{
   TransferResult,
@@ -93,7 +96,7 @@ class TransferStreamSpec
     consumerResource.use { consumer =>
       for {
         _ <- consumer.subscribeTo(queue.responseTopic)
-        _ <- IO.delay(println("Substribed!"))
+        _ <- IO.delay(println("Subscribed!"))
         messages <- consumer.stream.evalTap { thing =>
           IO.delay(println(s"Got thing: $thing"))
         }.take(n).compile.toList
@@ -112,9 +115,18 @@ class TransferStreamSpec
   }
 
   private def withRunningAgent[A](run: IO[A]): IO[A] = {
+    val runEc = {
+      val allocate = IO.delay(Executors.newCachedThreadPool)
+      val free = (es: ExecutorService) => IO.delay(es.shutdown())
+      Resource.make(allocate)(free).map(ExecutionContext.fromExecutor)
+    }
+
+    val useStream = (s: KafkaStreams) =>
+      IO.delay(s.start()).flatMap(_ => runEc.use(cs.evalOn(_)(run)))
+
     TransferStream
       .build(agentConfig, queue, runner)
-      .bracket(s => IO.delay(s.start()).flatMap(_ => run))(s => IO.delay(s.close()))
+      .bracket(useStream)(s => IO.delay(s.close()))
   }
 
   behavior of "TransferStream"
