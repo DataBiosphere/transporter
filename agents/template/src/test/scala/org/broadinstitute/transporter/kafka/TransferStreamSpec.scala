@@ -1,14 +1,16 @@
 package org.broadinstitute.transporter.kafka
 
-import cats.effect.{ContextShift, IO, Timer}
 import cats.implicits._
-import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
-import fs2.kafka._
-import io.circe.{Decoder, Encoder, JsonObject}
+import io.circe.{Decoder, Encoder}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import io.circe.literal._
+import io.circe.parser.parse
 import io.circe.syntax._
-import org.apache.kafka.clients.admin.NewTopic
+import net.manub.embeddedkafka.Codecs._
+import net.manub.embeddedkafka.ConsumerExtensions._
+import net.manub.embeddedkafka.EmbeddedKafkaConfig
+import net.manub.embeddedkafka.streams.EmbeddedKafkaStreamsAllInOne
+import org.broadinstitute.transporter.kafka.TransferStream.UnhandledErrorInfo
 import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.broadinstitute.transporter.transfer.{
   TransferResult,
@@ -16,26 +18,14 @@ import org.broadinstitute.transporter.transfer.{
   TransferStatus
 }
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
-import org.testcontainers.containers.KafkaContainer
-
-import scala.concurrent.ExecutionContext
 
 class TransferStreamSpec
     extends FlatSpec
     with Matchers
-    with ForAllTestContainer
+    with EmbeddedKafkaStreamsAllInOne
     with EitherValues {
 
   import TransferStreamSpec._
-
-  private val baseContainer = new KafkaContainer("5.1.1")
-
-  override val container: Container = new TestContainerProxy[KafkaContainer] {
-    override val container: KafkaContainer = baseContainer
-  }
-
-  private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
-  private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
 
   private val queue = Queue(
     "test-queue",
@@ -44,75 +34,44 @@ class TransferStreamSpec
     json"{}".as[QueueSchema].right.value
   )
 
-  // Initialize queue topics to use across all test cases.
-  override def afterStart(): Unit = {
-    val adminConfig = AdminClientSettings.Default
-      .withBootstrapServers(baseContainer.getBootstrapServers)
+  private val UnhandledError = new RuntimeException("OH NO")
 
-    fs2.kafka
-      .adminClientResource[IO](adminConfig)
-      .use { admin =>
-        val topics = List(queue.requestTopic, queue.responseTopic).map { name =>
-          new NewTopic(name, 1, 1)
-        }
-        admin.createTopics(topics)
-      }
-      .unsafeRunSync()
-  }
-  
-  private def produceRequests(messages: List[(String, String)]): IO[Unit] = {
-    val config = ProducerSettings[String, String]
-      .withBootstrapServers(baseContainer.getBootstrapServers)
-
-    fs2.kafka.producerResource[IO].using(config).use { producer =>
-      val records = messages.map {
-        case (id, message) =>
-          ProducerRecord(queue.requestTopic, id, message)
-      }
-      producer.producePassthrough(ProducerMessage(records)).flatten
-    }
+  private val runner = new TransferRunner[EchoRequest] {
+    override def transfer(request: EchoRequest): TransferResult =
+      request.result.getOrElse(throw UnhandledError)
   }
 
-  private def consumeResponses(n: Long): IO[List[(String, TransferResult)]] = {
-    val consumerResource = for {
-      ec <- fs2.kafka.consumerExecutionContextResource[IO]
-      config = ConsumerSettings[String, String](ec)
-        .withBootstrapServers(baseContainer.getBootstrapServers)
-        .withGroupId("test-consumer")
-      consumer <- fs2.kafka.consumerResource[IO].using(config)
-    } yield {
-      consumer
+  private implicit val baseConfig: EmbeddedKafkaConfig =
+    EmbeddedKafkaConfig(
+      customBrokerProperties = Map(
+        // Needed to make exactly-once processing work in Kafka Streams.
+        "transaction.state.log.replication.factor" -> "1",
+        "transaction.state.log.min.isr" -> "1"
+      )
+    )
+
+  private def roundTripTransfers(
+    requests: List[(String, String)]
+  ): List[(String, TransferResult)] = {
+    val topology = TransferStream.build(queue, runner)
+    val config = KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"))
+
+    runStreams(List(queue.requestTopic, queue.responseTopic), topology, config.asMap) {
+      publishToKafka(queue.requestTopic, requests)
+
+      val consumer = newConsumer[String, String]
+      val results =
+        consumer
+          .consumeLazily[(String, String)](queue.responseTopic)
+          .take(requests.length)
+          .toList
+      consumer.close()
+
+      results.traverse {
+        case (k, v) =>
+          parse(v).flatMap(_.as[TransferResult]).map(k -> _)
+      }.right.value
     }
-
-    consumerResource.use { consumer =>
-      for {
-        _ <- consumer.subscribeTo(queue.responseTopic)
-        messages <- consumer.stream.take(n).compile.toList
-        parsedMessages <- messages.traverse { m =>
-          io.circe.parser
-            .parse(m.record.value())
-            .flatMap(_.as[TransferResult])
-            .map(m.record.key() -> _)
-            .liftTo[IO]
-        }
-      } yield {
-        parsedMessages
-      }
-    }
-  }
-
-  private def withRunningAgent[A](run: IO[A]): IO[A] = {
-    val config =
-      KStreamsConfig("test-app", baseContainer.getBootstrapServers.split(',').toList)
-
-    val runner = new TransferRunner[EchoRequest] {
-      override def transfer(request: EchoRequest): TransferResult =
-        request.result.getOrElse(throw new RuntimeException("OH NO"))
-    }
-
-    TransferStream
-      .build(config, queue, runner)
-      .bracket(s => IO.delay(s.start()).flatMap(_ => run))(s => IO.delay(s.close()))
   }
 
   behavior of "TransferStream"
@@ -122,18 +81,13 @@ class TransferStreamSpec
       "no-info" -> TransferResult(TransferStatus.Success, None),
       "with-info" -> TransferResult(
         TransferStatus.TransientFailure,
-        Some(JsonObject("foo" -> "bar".asJson))
+        Some(json"""{"foo": "bar"}""")
       )
     )
-
     val messages = expected.map {
       case (id, res) => id -> EchoRequest(Some(res)).asJson.noSpaces
     }
-
-    val results = withRunningAgent {
-      produceRequests(messages).flatMap(_ => consumeResponses(expected.length.toLong))
-    }.unsafeRunSync()
-
+    val results = roundTripTransfers(messages)
     results shouldBe expected
   }
 
@@ -144,13 +98,17 @@ class TransferStreamSpec
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
     )
 
-    val List((key1, result1), (key2, result2)) = withRunningAgent {
-      produceRequests(messages).flatMap(_ => consumeResponses(2))
-    }.unsafeRunSync()
+    val List((key1, result1), (key2, result2)) = roundTripTransfers(messages)
 
     key1 shouldBe "not-json"
     result1.status shouldBe TransferStatus.FatalFailure
-    result1.info should not be empty
+    val info = for {
+      json <- result1.info.toRight("Received unexpected empty info")
+      decoded <- json.as[TransferStream.UnhandledErrorInfo]
+    } yield {
+      decoded
+    }
+    info.right.value.message should include(TransferStream.ParseFailureMsg)
 
     key2 shouldBe "ok"
     result2 shouldBe goodResult
@@ -163,13 +121,17 @@ class TransferStreamSpec
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
     )
 
-    val List((key1, result1), (key2, result2)) = withRunningAgent {
-      produceRequests(messages).flatMap(_ => consumeResponses(2))
-    }.unsafeRunSync()
+    val List((key1, result1), (key2, result2)) = roundTripTransfers(messages)
 
     key1 shouldBe "wrong-json"
     result1.status shouldBe TransferStatus.FatalFailure
-    result1.info should not be empty
+    val info = for {
+      json <- result1.info.toRight("Received unexpected empty info")
+      decoded <- json.as[TransferStream.UnhandledErrorInfo]
+    } yield {
+      decoded
+    }
+    info.right.value.message should include(TransferStream.DecodeFailureMsg)
 
     key2 shouldBe "ok"
     result2 shouldBe goodResult
@@ -178,16 +140,20 @@ class TransferStreamSpec
   it should "push error results if processing a transfer fails" in {
     val goodResult = TransferResult(TransferStatus.Success, None)
     val messages = List(
-      "boom" -> "{}",
+      "boom" -> json"""{"placeholder": 1}""".noSpaces,
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
     )
-    val List((key1, result1), (key2, result2)) = withRunningAgent {
-      produceRequests(messages).flatMap(_ => consumeResponses(2))
-    }.unsafeRunSync()
+    val List((key1, result1), (key2, result2)) = roundTripTransfers(messages)
 
     key1 shouldBe "boom"
     result1.status shouldBe TransferStatus.FatalFailure
-    result1.info should not be empty
+    val info = for {
+      json <- result1.info.toRight("Received unexpected empty info")
+      decoded <- json.as[TransferStream.UnhandledErrorInfo]
+    } yield {
+      decoded
+    }
+    info.right.value.message should include(TransferStream.UnhandledErrMsg)
 
     key2 shouldBe "ok"
     result2 shouldBe goodResult
@@ -195,7 +161,9 @@ class TransferStreamSpec
 }
 
 object TransferStreamSpec {
-  case class EchoRequest(result: Option[TransferResult])
+  case class EchoRequest(result: Option[TransferResult], placeholder: Int = 1)
   implicit val decoder: Decoder[EchoRequest] = deriveDecoder
   implicit val encoder: Encoder[EchoRequest] = deriveEncoder
+
+  implicit val resDecoder: Decoder[UnhandledErrorInfo] = deriveDecoder
 }

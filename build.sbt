@@ -101,9 +101,10 @@ val commonSettings = Seq(
   Test / fork := true,
   Test / javaOptions ++= Seq(
     // Limit threads in global pool to make sure we're not
-    // accidentally avoiding deadlocks on our beefy laptops.
+    // accidentally avoiding deadlocks on our laptops.
     "-Dscala.concurrent.context.numThreads=1",
-    "-Dscala.concurrent.context.maxThreads=1"
+    "-Dscala.concurrent.context.maxThreads=1",
+    "-Dscala.concurrent.context.maxExtraThreads=0"
   )
 )
 
@@ -166,10 +167,10 @@ lazy val `transporter-manager` = project
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
       "io.circe" %% "circe-literal" % circeVersion,
+      "io.github.embeddedkafka" %% "embedded-kafka" % kafkaVersion,
       "org.liquibase" % "liquibase-core" % liquibaseVersion,
       "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
-      "org.testcontainers" % "kafka" % testcontainersVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
     ).map(_ % Test),
 
@@ -211,11 +212,9 @@ lazy val `transporter-agent-template` = project
     ),
 
     libraryDependencies ++= Seq(
-      "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
-      "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
       "io.circe" %% "circe-literal" % circeVersion,
-      "org.scalatest" %% "scalatest" % scalaTestVersion,
-      "org.testcontainers" % "kafka" % testcontainersVersion
+      "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test),
 
     dependencyOverrides := Seq(
@@ -224,7 +223,5 @@ lazy val `transporter-agent-template` = project
       "org.apache.kafka" % "kafka-clients" % kafkaVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
-
-      "org.testcontainers" % "testcontainers" % testcontainersVersion % Test
     )
   )

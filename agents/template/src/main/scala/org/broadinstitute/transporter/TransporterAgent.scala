@@ -4,6 +4,7 @@ import cats.effect.{ExitCode, IO, IOApp, Resource}
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Decoder
+import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.kafka.{KStreamsConfig, TransferStream}
 import org.broadinstitute.transporter.queue.{Queue, QueueConfig}
 import org.broadinstitute.transporter.transfer.TransferRunner
@@ -68,14 +69,17 @@ abstract class TransporterAgent[Req](implicit val decoder: Decoder[Req])
     * This method should only return if the underlying stream is interrupted
     * (i.e. by a Ctrl-C).
     */
-  private def runStream(config: KStreamsConfig, queue: Queue): IO[ExitCode] =
+  private def runStream(config: KStreamsConfig, queue: Queue): IO[ExitCode] = {
     runnerResource.use { runner =>
+      val topology = TransferStream.build(queue, runner)
+
       for {
-        stream <- TransferStream.build(config, queue, runner)
+        stream <- IO.delay(new KafkaStreams(topology, config.asProperties))
         _ <- IO.delay(stream.start())
         _ <- IO.cancelable[Unit](_ => IO.delay(stream.close()))
       } yield {
         ExitCode.Success
       }
     }
+  }
 }

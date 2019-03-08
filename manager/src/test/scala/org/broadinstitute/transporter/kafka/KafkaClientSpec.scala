@@ -1,22 +1,14 @@
 package org.broadinstitute.transporter.kafka
 
 import cats.effect.{ContextShift, IO, Resource}
-import cats.implicits._
-import com.dimafeng.testcontainers.{Container, ForAllTestContainer, TestContainerProxy}
 import doobie.util.ExecutionContexts
+import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.scalatest.{FlatSpec, Matchers}
-import org.testcontainers.containers.KafkaContainer
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
-class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
-
-  private val baseContainer = new KafkaContainer("5.1.1")
-
-  override val container: Container = new TestContainerProxy[KafkaContainer] {
-    override val container: KafkaContainer = baseContainer
-  }
+class KafkaClientSpec extends FlatSpec with Matchers with EmbeddedKafka {
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
@@ -30,8 +22,10 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
     requestTimeout = 2.seconds,
     closeTimeout = 1.seconds
   )
-  private def config = KafkaConfig(
-    baseContainer.getBootstrapServers.split(',').toList,
+
+  private val baseConfig = EmbeddedKafkaConfig(kafkaPort = 0, zooKeeperPort = 0)
+  private def config(embeddedConfig: EmbeddedKafkaConfig) = KafkaConfig(
+    List(s"localhost:${embeddedConfig.kafkaPort}"),
     "test-admin",
     topicConfig,
     timeouts
@@ -46,42 +40,46 @@ class KafkaClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
   behavior of "KafkaClient"
 
   it should "report ready on good configuration" in {
-    clientResource(config).use(_.checkReady).unsafeRunSync() shouldBe true
+    withRunningKafkaOnFoundPort(baseConfig) { actualConfig =>
+      clientResource(config(actualConfig)).use(_.checkReady).unsafeRunSync() shouldBe true
+    }
   }
 
   it should "report not ready on bad configuration" in {
-    val settings = config.copy(
-      bootstrapServers = List(config.bootstrapServers.head.dropRight(1))
-    )
-
-    clientResource(settings).use(_.checkReady).unsafeRunSync() shouldBe false
+    withRunningKafkaOnFoundPort(baseConfig) { _ =>
+      clientResource(config(baseConfig)).use(_.checkReady).unsafeRunSync() shouldBe false
+    }
   }
 
   it should "create and list topics" in {
     val topics = List("foo", "bar")
 
-    clientResource(config).use { client =>
-      for {
-        originalTopics <- client.listTopics
-        _ <- client.createTopics(topics)
-        newTopics <- client.listTopics
-      } yield {
-        newTopics.diff(originalTopics) shouldBe topics.toSet
-      }
-    }.unsafeRunSync()
+    withRunningKafkaOnFoundPort(baseConfig) { actualConfig =>
+      clientResource(config(actualConfig)).use { client =>
+        for {
+          originalTopics <- client.listTopics
+          _ <- client.createTopics(topics)
+          newTopics <- client.listTopics
+        } yield {
+          newTopics.diff(originalTopics) shouldBe topics.toSet
+        }
+      }.unsafeRunSync()
+    }
   }
 
   it should "roll back successfully created topics when other topics in the request fail" in {
     val topics = List("baz", "qux", "$$$")
 
-    clientResource(config).use { client =>
-      for {
-        err <- client.createTopics(topics).attempt
-        existingTopics <- client.listTopics
-      } yield {
-        err.isLeft shouldBe true
-        existingTopics.diff(topics.toSet) shouldBe existingTopics
-      }
-    }.unsafeRunSync()
+    withRunningKafkaOnFoundPort(baseConfig) { actualConfig =>
+      clientResource(config(actualConfig)).use { client =>
+        for {
+          err <- client.createTopics(topics).attempt
+          existingTopics <- client.listTopics
+        } yield {
+          err.isLeft shouldBe true
+          existingTopics.diff(topics.toSet) shouldBe existingTopics
+        }
+      }.unsafeRunSync()
+    }
   }
 }
