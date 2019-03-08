@@ -1,7 +1,7 @@
 package org.broadinstitute.transporter.kafka
 
 import cats.implicits._
-import io.circe.{Decoder, Encoder}
+import io.circe.{Decoder, Encoder, Json}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import io.circe.literal._
 import io.circe.parser.parse
@@ -31,29 +31,34 @@ class TransferStreamSpec
     "test-queue",
     "request-topic",
     "response-topic",
-    json"{}".as[QueueSchema].right.value
+    EchoSchema.as[QueueSchema].right.value
   )
 
   private val UnhandledError = new RuntimeException("OH NO")
 
-  private val runner = new TransferRunner[EchoRequest] {
-    override def transfer(request: EchoRequest): TransferResult =
-      request.result.getOrElse(throw UnhandledError)
+  private val echoRunner = new TransferRunner {
+    override def transfer(request: Json): TransferResult =
+      request.as[EchoRequest].flatMap(_.result.toRight(UnhandledError)).valueOr(throw _)
   }
 
   private implicit val baseConfig: EmbeddedKafkaConfig =
     EmbeddedKafkaConfig(
       customBrokerProperties = Map(
-        // Needed to make exactly-once processing work in Kafka Streams.
+        // Needed to make exactly-once processing work in Kafka Streams
+        // when there's only 1 broker in the cluster.
         "transaction.state.log.replication.factor" -> "1",
         "transaction.state.log.min.isr" -> "1"
       )
     )
 
+  /**
+    * Run a set of requests through an instance of the "echo" stream,
+    * and return the decoded results.
+    */
   private def roundTripTransfers(
     requests: List[(String, String)]
   ): List[(String, TransferResult)] = {
-    val topology = TransferStream.build(queue, runner)
+    val topology = TransferStream.build(queue, echoRunner)
     val config = KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"))
 
     runStreams(List(queue.requestTopic, queue.responseTopic), topology, config.asMap) {
@@ -131,7 +136,7 @@ class TransferStreamSpec
     } yield {
       decoded
     }
-    info.right.value.message should include(TransferStream.DecodeFailureMsg)
+    info.right.value.message should include(TransferStream.ValidationFailureMsg)
 
     key2 shouldBe "ok"
     result2 shouldBe goodResult
@@ -140,7 +145,7 @@ class TransferStreamSpec
   it should "push error results if processing a transfer fails" in {
     val goodResult = TransferResult(TransferStatus.Success, None)
     val messages = List(
-      "boom" -> json"""{"placeholder": 1}""".noSpaces,
+      "boom" -> json"""{}""".noSpaces,
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
     )
     val List((key1, result1), (key2, result2)) = roundTripTransfers(messages)
@@ -161,7 +166,14 @@ class TransferStreamSpec
 }
 
 object TransferStreamSpec {
-  case class EchoRequest(result: Option[TransferResult], placeholder: Int = 1)
+  case class EchoRequest(result: Option[TransferResult])
+
+  val EchoSchema = json"""{
+    "type": "object",
+    "properties": { "result": { "type": "object" } },
+    "additionalProperties": false
+  }"""
+
   implicit val decoder: Decoder[EchoRequest] = deriveDecoder
   implicit val encoder: Encoder[EchoRequest] = deriveEncoder
 

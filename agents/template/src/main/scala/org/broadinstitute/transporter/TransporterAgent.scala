@@ -3,7 +3,6 @@ package org.broadinstitute.transporter
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import io.circe.Decoder
 import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.kafka.{KStreamsConfig, TransferStream}
 import org.broadinstitute.transporter.queue.{Queue, QueueConfig}
@@ -22,9 +21,7 @@ import scala.concurrent.ExecutionContext
   * the full framework needed to hook into Transporter's Kafka infrastructure
   * and run data transfers.
   */
-abstract class TransporterAgent[Req](implicit val decoder: Decoder[Req])
-    extends IOApp
-    with CirceEntityDecoder {
+abstract class TransporterAgent extends IOApp with CirceEntityDecoder {
 
   private val logger = Slf4jLogger.getLogger[IO]
 
@@ -34,7 +31,7 @@ abstract class TransporterAgent[Req](implicit val decoder: Decoder[Req])
     * Modeled as a `Resource` so agent programs can hook in setup / teardown
     * logic for config, thread pools, etc.
     */
-  def runnerResource: Resource[IO, TransferRunner[Req]]
+  def runnerResource: Resource[IO, TransferRunner]
 
   /** [[IOApp]] equivalent of `main`. */
   final override def run(args: List[String]): IO[ExitCode] =
