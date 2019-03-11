@@ -1,7 +1,7 @@
 package org.broadinstitute.transporter
 
 import cats.data.NonEmptyList
-import cats.effect.{ExitCode, IO, IOApp, Resource}
+import cats.effect._
 import cats.implicits._
 import doobie.util.ExecutionContexts
 import org.broadinstitute.transporter.web.{SwaggerMiddleware, WebConfig}
@@ -16,6 +16,8 @@ import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.Logger
 import pureconfig.module.catseffect._
 
+import scala.concurrent.ExecutionContext
+
 /**
   * Main entry-point for the Transporter web service.
   *
@@ -23,7 +25,11 @@ import pureconfig.module.catseffect._
   * things like a global [[scala.concurrent.ExecutionContext]] with corresponding
   * [[cats.effect.ContextShift]] and [[cats.effect.Timer]].
   */
-object TransporterManager extends IOApp {
+object TransporterManager extends IOApp.WithContext {
+
+  // Use a fixed-size thread pool w/ one thread per core for CPU-bound and non-blocking I/O.
+  override val executionContextResource: Resource[SyncIO, ExecutionContext] =
+    ExecutionContexts.fixedThreadPool[SyncIO](Runtime.getRuntime.availableProcessors)
 
   /** Top-level info to report about the app in its auto-generated documentation. */
   private val appInfo = Info(

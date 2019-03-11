@@ -91,31 +91,14 @@ object KafkaClient {
     *
     * @param config settings for the underlying Kafka clients powering
     *               our client
-    * @param blockingEc execution context which should run all blocking I/O
-    *                   required by the underlying Kafka clients
+    * @param blockingEc execution context which should run the blocking I/O
+    *                   required to set up / tear down the client
     * @param cs proof of the ability to shift IO-wrapped computations
     *           onto other threads
     */
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, KafkaClient] =
-    clientResource(config, blockingEc)
-      .map(new Impl(_, config.topicDefaults, blockingEc))
-
-  /**
-    * Construct a "raw" Kafka admin client, wrapped in
-    * setup / teardown logic.
-    *
-    * @param config settings for the admin client
-    * @param blockingEc execution context which should run all blocking I/O
-    *                   required by the underlying Kafka clients
-    * @param cs proof of the ability to shift IO-wrapped computations
-    *           onto other threads
-    */
-  private[kafka] def clientResource(
-    config: KafkaConfig,
-    blockingEc: ExecutionContext
-  )(implicit cs: ContextShift[IO]): Resource[IO, AdminClient] = {
+  ): Resource[IO, KafkaClient] = {
     val settings = AdminClientSettings.Default
       .withBootstrapServers(config.bootstrapServers.mkString(","))
       .withClientId(config.clientId)
@@ -131,7 +114,7 @@ object KafkaClient {
         client.close(settings.closeTimeout.length, settings.closeTimeout.unit)
       })
 
-    Resource.make(initClient)(closeClient)
+    Resource.make(initClient)(closeClient).map(new Impl(_, config.topicDefaults))
   }
 
   /**
@@ -141,15 +124,12 @@ object KafkaClient {
     *                    cluster-level information (i.e. existing topics)
     * @param topicConfig configuration to apply to all topics created
     *                    by the client
-    * @param blockingEc execution context which should run all blocking I/O
-    *                   required by the underlying Kafka clients
     * @param cs proof of the ability to shift IO-wrapped computations
     *           onto other threads
     */
   private[kafka] class Impl(
     adminClient: AdminClient,
-    topicConfig: TopicConfig,
-    blockingEc: ExecutionContext
+    topicConfig: TopicConfig
   )(implicit cs: ContextShift[IO])
       extends KafkaClient {
 
@@ -160,9 +140,7 @@ object KafkaClient {
 
       val okCheck = for {
         _ <- logger.info("Running status check against Kafka cluster...")
-        id <- cs.evalOn(blockingEc) {
-          IO.suspend(adminClient.describeCluster().clusterId().cancelable)
-        }
+        id <- IO.suspend(adminClient.describeCluster().clusterId().cancelable)
         _ <- logger.debug(s"Got cluster ID $id")
       } yield {
         true
@@ -199,9 +177,7 @@ object KafkaClient {
 
     /** Get the set of topics that exists in Kafka. */
     override def listTopics: IO[Set[String]] =
-      cs.evalOn(blockingEc) {
-          IO.suspend(adminClient.listTopics().names().cancelable)
-        }
+      IO.suspend(adminClient.listTopics().names().cancelable)
         .map(_.asScala.toSet)
 
     /**
@@ -218,7 +194,7 @@ object KafkaClient {
       val attempts = IO.suspend {
         adminClient
           .createTopics(newTopics.asJava)
-          .values()
+          .values
           .asScala
           .toList
           .parTraverse {
@@ -226,7 +202,7 @@ object KafkaClient {
           }
       }
 
-      cs.evalOn(blockingEc)(attempts).flatMap { results =>
+      attempts.flatMap { results =>
         val failures = results.foldMap {
           case (topic, res) => res.fold(err => List(topic -> err), _ => Nil)
         }
@@ -257,9 +233,7 @@ object KafkaClient {
         _ <- logger.warn(
           s"Rolling back creation of topics: ${successes.mkString(", ")}"
         )
-        _ <- cs.evalOn(blockingEc) {
-          IO.suspend(adminClient.deleteTopics(successes.asJava).all().cancelable)
-        }
+        _ <- IO.suspend(adminClient.deleteTopics(successes.asJava).all.cancelable)
       } yield ()
     }
   }

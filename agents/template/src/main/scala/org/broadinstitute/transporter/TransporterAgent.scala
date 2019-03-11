@@ -1,6 +1,8 @@
 package org.broadinstitute.transporter
 
-import cats.effect.{ExitCode, IO, IOApp, Resource}
+import java.util.concurrent.{ExecutorService, Executors}
+
+import cats.effect._
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.apache.kafka.streams.KafkaStreams
@@ -21,9 +23,18 @@ import scala.concurrent.ExecutionContext
   * the full framework needed to hook into Transporter's Kafka infrastructure
   * and run data transfers.
   */
-abstract class TransporterAgent extends IOApp with CirceEntityDecoder {
+abstract class TransporterAgent extends IOApp.WithContext with CirceEntityDecoder {
 
   private val logger = Slf4jLogger.getLogger[IO]
+
+  // Use a single thread for the streams run loop.
+  // Kafka Streams is an inherently synchronous API, so there's no point in
+  // keeping multiple threads around.
+  override val executionContextResource: Resource[SyncIO, ExecutionContext] = {
+    val allocate = SyncIO(Executors.newFixedThreadPool(1))
+    val free = (es: ExecutorService) => SyncIO(es.shutdown())
+    Resource.make(allocate)(free).map(ExecutionContext.fromExecutor)
+  }
 
   /**
     * Construct the agent component which can actually run data transfers.
