@@ -36,6 +36,7 @@ trait KafkaClient {
   /** Check that the given topics exist in Kafka. */
   def topicsExist(topicNames: String*): IO[Boolean]
 
+  /** Submit a batch of messages to a topic. */
   def submit(topic: String, messages: List[(UUID, Json)]): IO[Unit]
 }
 
@@ -85,6 +86,7 @@ object KafkaClient {
         s"Failed to create topics: ${failures.map(_._1).mkString(", ")}"
       )
 
+  /** Kafka-specific serializer for JSON messages. */
   private val jsonSerializer = Serializer.string.contramap[Json](_.noSpaces)
 
   /**
@@ -108,6 +110,7 @@ object KafkaClient {
       case (admin, producer) => new Impl(admin, producer, config.topicDefaults)
     }
 
+  /** Construct a Kafka admin client, wrapped in setup and teardown logic. */
   private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
   ): Resource[IO, AdminClient] = {
@@ -123,6 +126,7 @@ object KafkaClient {
     Resource.make(initClient)(closeClient)
   }
 
+  /** Construct a Kafka producer, wrapper in setup and teardown logic. */
   private[kafka] def producerResource(config: KafkaConfig)(
     implicit cs: ContextShift[IO]
   ) =
@@ -152,9 +156,7 @@ object KafkaClient {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    /** Check if the client can interact with the backing cluster. */
     override def checkReady: IO[Boolean] = {
-
       val okCheck = for {
         _ <- logger.info("Running status check against Kafka cluster...")
         id <- IO.suspend(adminClient.describeCluster().clusterId().cancelable)
@@ -206,6 +208,11 @@ object KafkaClient {
       }
     }
 
+    /**
+      * Get the list of all non-internal topics in Transporter's backing Kafka cluster.
+      *
+      * Exposed for testing.
+      */
     private[kafka] def listTopics: IO[scala.collection.mutable.Set[String]] =
       IO.suspend(adminClient.listTopics().names().cancelable).map(_.asScala)
 

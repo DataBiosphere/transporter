@@ -50,11 +50,23 @@ trait DbClient {
   /** Pull the queue resource with the given name from the DB, if it exists. */
   def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]]
 
+  /**
+    * Insert a top-level "transfer request" row and corresponding
+    * per-request "transfer" rows into the DB, and return the generated
+    * unique IDs.
+    *
+    * @param queueId ID of the queue to associate with the top-level transfer
+    * @param request top-level description of the batch request to insert
+    */
   def recordTransferRequest(
     queueId: UUID,
     request: TransferRequest
   ): IO[(UUID, List[(UUID, Json)])]
 
+  /**
+    * Delete the top-level description, and individual transfer descriptions,
+    * of a batch transfer request.
+    */
   def deleteTransferRequest(id: UUID): IO[Unit]
 }
 
@@ -199,6 +211,14 @@ object DbClient {
         (requestUuid, transfersById)
       }
 
+    override def deleteTransferRequest(id: UUID): IO[Unit] =
+      sql"""delete from transfer_requests where id = $id""".update.run.void
+        .transact(transactor)
+
+    /**
+      * Build a transaction which will insert all of the rows (top-level and individual)
+      * associated with a batch of transfer requests.
+      */
     private def insertRequest(
       queueId: UUID,
       requestId: UUID,
@@ -219,9 +239,5 @@ object DbClient {
         ()
       }
     }
-
-    override def deleteTransferRequest(id: UUID): IO[Unit] =
-      sql"""delete from transfer_requests where id = $id""".update.run.void
-        .transact(transactor)
   }
 }

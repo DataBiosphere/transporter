@@ -6,7 +6,7 @@ import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaClient
 
-/** Component resonsible for handling all queue-related requests. */
+/** Component responsible for handling all queue-related web requests. */
 trait QueueController {
 
   /**
@@ -19,12 +19,8 @@ trait QueueController {
   def createQueue(request: QueueRequest): IO[Queue]
 
   /**
-    * Fetch the information stored about the queue with the given name,
-    * if one exists and is in a consistent state.
-    *
-    * Checks both the DB and Kafka for the existence of queue resources to avoid
-    * getting into a state where we report existing info from the DB but always
-    * fail to submit transfers because of nonexistent Kafka topics.
+    * Fetch the queue model with the given name, if it exists
+    * and is in a consistent state.
     */
   final def lookupQueue(name: String): IO[Option[Queue]] =
     lookupQueueInfo(name).map(_.map {
@@ -32,6 +28,14 @@ trait QueueController {
         Queue(name, req, res, schema)
     })
 
+  /**
+    * Fetch information stored about the queue with the given name,
+    * if one exists and is in a consistent state.
+    *
+    * Checks both the DB and Kafka for the existence of queue resources to avoid
+    * getting into a state where we report existing info from the DB but always
+    * fail to submit transfers because of nonexistent Kafka topics.
+    */
   def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]]
 }
 

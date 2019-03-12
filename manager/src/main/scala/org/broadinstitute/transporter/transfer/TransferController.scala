@@ -12,26 +12,45 @@ import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaClient
 import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
 
+/** Component responsible for handling all transfer-related web requests. */
 trait TransferController {
+
+  /**
+    * Submit a batch of transfer requests to the given queue resource,
+    * returning a unique ID which can be queried for status updates.
+    *
+    * Submission initializes rows in the DB for tracking, then pushes the individual
+    * transfer descriptions onto the "request" topic for the queue in Kafka.
+    */
   def submitTransfer(queueName: String, request: TransferRequest): IO[TransferAck]
 }
 
 object TransferController {
 
+  // Pseudo-constructor for the Impl subclass.
   def apply(
     queueController: QueueController,
     dbClient: DbClient,
     kafkaClient: KafkaClient
   ): TransferController = new Impl(queueController, dbClient, kafkaClient)
 
+  /** Exception used to mark when a user submits transfers to a nonexistent queue. */
   case class NoSuchQueue(name: String)
       extends IllegalArgumentException(s"Queue '$name' does not exist")
 
+  /** Exception used to mark when a user submits transfers that don't match a queue's expected schema. */
   case class InvalidRequest(failures: NonEmptyList[Throwable])
       extends IllegalArgumentException(
         s"Request includes ${failures.length} invalid transfers"
       )
 
+  /**
+    * Concrete implementation of the controller used by mainline code.
+    *
+    * @param queueController controller to delegate to for performing queue-level operations
+    * @param dbClient client which can interact with Transporter's DB
+    * @param kafkaClient client which can interact with Transporter's Kafka cluster
+    */
   private[transfer] class Impl(
     queueController: QueueController,
     dbClient: DbClient,
@@ -57,6 +76,7 @@ object TransferController {
         TransferAck(requestId)
       }
 
+    /** Validate that every request in a batch matches the expected JSON schema for a queue. */
     private def validateRequests(requests: List[Json], schema: QueueSchema): IO[Unit] =
       for {
         _ <- logger.debug(s"Validating requests against schema: $schema")
@@ -70,6 +90,10 @@ object TransferController {
         }
       } yield ()
 
+    /**
+      * Attempt to submit a batch of messages to Kafka, cleaning up corresponding
+      * DB records on failure.
+      */
     private def submitOrRollback(
       requestId: UUID,
       requestTopic: String,
