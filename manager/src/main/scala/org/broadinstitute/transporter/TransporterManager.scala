@@ -4,11 +4,17 @@ import cats.data.NonEmptyList
 import cats.effect._
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import org.broadinstitute.transporter.web.{SwaggerMiddleware, WebConfig}
+import org.broadinstitute.transporter.web.{
+  InfoRoutes,
+  ApiRoutes,
+  SwaggerMiddleware,
+  WebConfig
+}
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
-import org.broadinstitute.transporter.info.{InfoController, InfoRoutes}
-import org.broadinstitute.transporter.queue.{QueueController, QueueRoutes}
+import org.broadinstitute.transporter.kafka.KafkaAdminClient
+import org.broadinstitute.transporter.info.InfoController
+import org.broadinstitute.transporter.queue.QueueController
+import org.broadinstitute.transporter.transfer.TransferController
 import org.http4s.HttpApp
 import org.http4s.implicits._
 import org.http4s.rho.swagger.models.Info
@@ -58,12 +64,16 @@ object TransporterManager extends IOApp.WithContext {
       // Build clients for interacting with external resources, for use
       // across controllers in the app.
       dbResource = DbClient.resource(config.db, blockingEc)
-      kafkaResource = KafkaClient.resource(config.kafka, blockingEc)
+      kafkaResource = KafkaAdminClient.resource(config.kafka, blockingEc)
       (dbClient, kafkaClient) <- (dbResource, kafkaResource).tupled
     } yield {
+      val queueController = new QueueController(dbClient, kafkaClient)
       val routes = NonEmptyList.of(
         new InfoRoutes(new InfoController(appInfo.version, dbClient, kafkaClient)),
-        new QueueRoutes(new QueueController(dbClient, kafkaClient))
+        new ApiRoutes(
+          queueController,
+          new TransferController(queueController, dbClient)
+        )
       )
       val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
       Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)

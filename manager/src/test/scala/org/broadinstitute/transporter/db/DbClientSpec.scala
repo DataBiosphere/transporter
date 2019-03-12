@@ -10,12 +10,17 @@ import io.circe.literal._
 import liquibase.{Contexts, Liquibase}
 import liquibase.database.jvm.JdbcConnection
 import liquibase.resource.FileSystemResourceAccessor
-import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
-import org.scalatest.{FlatSpec, Matchers}
+import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
+import org.scalatest.{EitherValues, FlatSpec, Matchers, OptionValues}
 
 import scala.concurrent.ExecutionContext
 
-class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
+class DbClientSpec
+    extends FlatSpec
+    with ForAllTestContainer
+    with Matchers
+    with EitherValues
+    with OptionValues {
 
   override val container: PostgreSQLContainer = PostgreSQLContainer("postgres:9.6.10")
 
@@ -55,6 +60,8 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
       password
     )
 
+  private val schema = json"{}".as[QueueSchema].right.value
+
   behavior of "DbClient"
 
   it should "report ready on good configuration" in {
@@ -67,44 +74,35 @@ class DbClientSpec extends FlatSpec with ForAllTestContainer with Matchers {
     client.checkReady.unsafeRunSync() shouldBe false
   }
 
-  it should "insert, lookup, and delete transfer queues" in {
-    val queue = Queue(
-      "test-queue",
-      "test-queue.requests",
-      "test-queue.responses",
-      json"{}".as[QueueSchema].right.get
-    )
+  it should "create, lookup, and delete transfer queues" in {
+    val request = QueueRequest("test-queue", schema)
 
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val check = for {
-      res <- client.lookupQueue(queue.name)
-      _ <- client.insertQueue(queue)
-      res2 <- client.lookupQueue(queue.name)
-      _ <- client.deleteQueue(queue.name)
-      res3 <- client.lookupQueue(queue.name)
+      res <- client.lookupQueueInfo(request.name)
+      _ <- client.createQueue(request)
+      res2 <- client.lookupQueueInfo(request.name)
+      _ <- client.deleteQueue(request.name)
+      res3 <- client.lookupQueueInfo(request.name)
     } yield {
       res shouldBe None
-      res2 shouldBe Some(queue)
+      val (_, _, _, schema) = res2.value
+      schema shouldBe request.schema
       res3 shouldBe None
     }
 
     check.unsafeRunSync()
   }
 
-  it should "fail to double-insert a queue by name" in {
-    val queue = Queue(
-      "test-queue",
-      "test-queue.requests",
-      "test-queue.responses",
-      json"{}".as[QueueSchema].right.get
-    )
+  it should "fail to double-create a queue by name" in {
+    val request = QueueRequest("test-queue2", schema)
 
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val tryInsert = for {
-      _ <- client.insertQueue(queue)
-      _ <- client.insertQueue(queue)
+      _ <- client.createQueue(request)
+      _ <- client.createQueue(request)
     } yield ()
 
     tryInsert.attempt.unsafeRunSync().isLeft shouldBe true

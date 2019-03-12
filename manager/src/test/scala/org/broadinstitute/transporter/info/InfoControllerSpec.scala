@@ -2,7 +2,7 @@ package org.broadinstitute.transporter.info
 
 import cats.effect.{ContextShift, IO}
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.KafkaAdminClient
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{FlatSpec, Matchers}
 
@@ -13,7 +13,7 @@ class InfoControllerSpec extends FlatSpec with Matchers with MockFactory {
   private val version = "0.0.0-TEST"
 
   private val db = mock[DbClient]
-  private val kafka = mock[KafkaClient]
+  private val kafka = mock[KafkaAdminClient]
 
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 

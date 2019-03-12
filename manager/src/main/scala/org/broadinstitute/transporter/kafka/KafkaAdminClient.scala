@@ -13,16 +13,19 @@ import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
 
 /**
-  * Client responsible for sending requests to / parsing responses from
-  * Transporter's backing Kafka cluster.
+  * Client responsible for managing topics / cluster state in Transporter's
+  * backing Kafka cluster.
+  *
+  * Partly a copy-paste from fs2-kafka's version, which doesn't support all
+  * the functionality we need.
   */
-trait KafkaClient {
+trait KafkaAdminClient {
 
   /** Check if the client can interact with the backing cluster. */
   def checkReady: IO[Boolean]
 
   /**
-    * Create new topics with the given names in Kafka, using global config
+    * Create new Kafka topics with the given name, using global config
     * for partition counts and replication factors.
     *
     * Kafka supports requesting multiple new topics within a single request,
@@ -30,13 +33,13 @@ trait KafkaClient {
     * created but others fail, we delete the successful topics before returning
     * the error.
     */
-  def createTopics(topicNames: List[String]): IO[Unit]
+  def createTopics(topicNames: String*): IO[Unit]
 
-  /** Get the set of topics that exists in Kafka. */
-  def listTopics: IO[Set[String]]
+  /** Check that the given topics exist in Kafka. */
+  def topicsExist(topicNames: String*): IO[Boolean]
 }
 
-object KafkaClient {
+object KafkaAdminClient {
 
   /**
     * Extension methods for Kafka's bespoke Future implementation.
@@ -98,7 +101,12 @@ object KafkaClient {
     */
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, KafkaClient] = {
+  ): Resource[IO, KafkaAdminClient] =
+    adminResource(config, blockingEc).map(new Impl(_, config.topicDefaults))
+
+  private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
+    implicit cs: ContextShift[IO]
+  ): Resource[IO, AdminClient] = {
     val settings = AdminClientSettings.Default
       .withBootstrapServers(config.bootstrapServers.mkString(","))
       .withClientId(config.clientId)
@@ -114,14 +122,14 @@ object KafkaClient {
         client.close(settings.closeTimeout.length, settings.closeTimeout.unit)
       })
 
-    Resource.make(initClient)(closeClient).map(new Impl(_, config.topicDefaults))
+    Resource.make(initClient)(closeClient)
   }
 
   /**
-    * Concrete implementation of our Kafka client used by mainline code.
+    * Concrete implementation of our Kafka admin client used by mainline code.
     *
-    * @param adminClient Kafka client which can query and modify
-    *                    cluster-level information (i.e. existing topics)
+    * @param adminClient "raw" Kafka client which actually knows how to
+    *                    interact with the backing cluster
     * @param topicConfig configuration to apply to all topics created
     *                    by the client
     * @param cs proof of the ability to shift IO-wrapped computations
@@ -131,7 +139,7 @@ object KafkaClient {
     adminClient: AdminClient,
     topicConfig: TopicConfig
   )(implicit cs: ContextShift[IO])
-      extends KafkaClient {
+      extends KafkaAdminClient {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
@@ -151,34 +159,31 @@ object KafkaClient {
       }
     }
 
-    /**
-      * Create new topics with the given names in Kafka, using global config
-      * for partition counts and replication factors.
-      *
-      * Kafka supports requesting multiple new topics within a single request,
-      * but the result isn't transactional. In the case that some topics get
-      * created but others fail, we delete the successful topics before returning
-      * the error.
-      */
-    override def createTopics(topicNames: List[String]): IO[Unit] = {
+    override def createTopics(topicNames: String*): IO[Unit] = {
       val topics = topicNames.mkString(", ")
       for {
         _ <- logger.info(s"Creating Kafka topics: $topics")
-        _ <- attemptCreateTopics(topicNames).guaranteeCase {
+        _ <- attemptCreateTopics(topicNames.toList).guaranteeCase {
           case ExitCase.Completed => logger.debug(s"Successfully created topics: $topics")
           case ExitCase.Canceled  => logger.warn(s"Topic creation canceled: $topics")
           case ExitCase.Error(TopicCreationFailed(failures)) =>
-            reportAndRollback(topicNames, failures)
+            reportAndRollback(topicNames.toList, failures)
           case ExitCase.Error(err) =>
             logger.error(err)(s"Failed to create topics: $topics")
         }
       } yield ()
     }
 
-    /** Get the set of topics that exists in Kafka. */
-    override def listTopics: IO[Set[String]] =
-      IO.suspend(adminClient.listTopics().names().cancelable)
-        .map(_.asScala.toSet)
+    override def topicsExist(topicNames: String*): IO[Boolean] =
+      for {
+        _ <- logger.info(s"Checking for existence of topics: ${topicNames.mkString(",")}")
+        existingTopics <- listTopics
+      } yield {
+        topicNames.toSet.subsetOf(existingTopics)
+      }
+
+    private[kafka] def listTopics: IO[scala.collection.mutable.Set[String]] =
+      IO.suspend(adminClient.listTopics().names().cancelable).map(_.asScala)
 
     /**
       * Attempt to create new topics with the given names in Kafka, and summarize the results.

@@ -1,9 +1,9 @@
-package org.broadinstitute.transporter.info
+package org.broadinstitute.transporter.web
 
 import cats.effect.IO
+import org.broadinstitute.transporter.info.{InfoController, ManagerStatus, ManagerVersion}
 import org.http4s._
 import org.http4s.rho.RhoRoutes
-import org.http4s.rho.swagger.{syntax => swaggerSyntax}
 
 /**
   * Container for Transporter's "info" (unversioned, non-API) routes.
@@ -13,13 +13,12 @@ import org.http4s.rho.swagger.{syntax => swaggerSyntax}
   * workarounds.
   */
 class InfoRoutes(infoController: InfoController) extends RhoRoutes[IO] {
-  import swaggerSyntax.io._
 
-  private val statusRoute =
-    "Query operational status of the system" ** GET / "status"
+  private val statusRoute = (GET / "status")
+    .withDescription("Query operational status of the system")
 
-  private val versionRoute =
-    "Query version of the system" ** GET / "version"
+  private val versionRoute = (GET / "version")
+    .withDescription("Query version of the system")
 
   /*
    * NOTES on weirdness discovered in Rho that you'll see below:

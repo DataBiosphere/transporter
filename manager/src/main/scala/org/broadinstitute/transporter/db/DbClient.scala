@@ -1,15 +1,19 @@
 package org.broadinstitute.transporter.db
 
+import java.util.UUID
+
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
+import doobie.postgres.implicits._
 import doobie.postgres.circe.Instances
 import doobie.util.{ExecutionContexts, Get, Put}
 import doobie.util.log.LogHandler
 import doobie.util.transactor.Transactor
+import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
+import org.broadinstitute.transporter.queue.{Queue, QueueRequest, QueueSchema}
 
 import scala.concurrent.ExecutionContext
 
@@ -23,11 +27,14 @@ trait DbClient {
   def checkReady: IO[Boolean]
 
   /**
-    * Record a new queue resource in the DB.
+    * Create a new queue resource in the DB.
     *
     * Will fail if a queue already exists with the input's name.
+    *
+    * @param request user-specified information defining pieces of
+    *                the queue to create
     */
-  def insertQueue(queue: Queue): IO[Unit]
+  def createQueue(request: QueueRequest): IO[Queue]
 
   /**
     * Remove the queue resource with the given name from the DB.
@@ -37,10 +44,13 @@ trait DbClient {
   def deleteQueue(name: String): IO[Unit]
 
   /** Pull the queue resource with the given name from the DB, if it exists. */
-  def lookupQueue(name: String): IO[Option[Queue]]
+  def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]]
 }
 
 object DbClient {
+
+  type QueueInfo = (UUID, String, String, QueueSchema)
+
   // Recommendation from Hikari docs:
   // https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing#the-formula
   private val MaxDbConnections = (2 * Runtime.getRuntime.availableProcessors) + 1
@@ -123,6 +133,9 @@ object DbClient {
     implicit val schemaGet: Get[QueueSchema] = pgDecoderGet
     implicit val schemaPut: Put[QueueSchema] = pgEncoderPut
 
+    // Glue for the "safe" UUID type our lib generates.
+    implicit val fuuidPut: Put[FUUID] = Put[UUID].contramap(FUUID.Unsafe.toUUID)
+
     /** Check if the client can interact with the backing DB. */
     override def checkReady: IO[Boolean] = {
       val check = for {
@@ -138,14 +151,37 @@ object DbClient {
     }
 
     /**
-      * Record a new queue resource in the DB.
+      * Create a new queue resource in the DB.
       *
       * Will fail if a queue already exists with the input's name.
+      *
+      * @param request user-specified information defining pieces of
+      *                the queue to create
       */
-    override def insertQueue(queue: Queue): IO[Unit] =
-      sql"""insert into queues (name, request_topic, response_topic, request_schema)
-          values (${queue.name}, ${queue.requestTopic}, ${queue.responseTopic}, ${queue.schema})""".update.run.void
-        .transact(transactor)
+    override def createQueue(request: QueueRequest): IO[Queue] =
+      for {
+        // Build a unique ID for the new resource.
+        _ <- logger.debug(s"Generating UUID for ${request.name}")
+        uuid <- FUUID.randomFUUID[IO]
+
+        // Use the ID to fill in Kafka information
+        requestTopic = s"transporter.requests.$uuid"
+        responseTopic = s"transporter.responses.$uuid"
+        insertStatement = sql"""insert into queues (id, name, request_topic, response_topic, request_schema)
+            values ($uuid, ${request.name}, $requestTopic, $responseTopic, ${request.schema})"""
+
+        // Run the insert statement, returning fields which should be passed back to the user.
+        queue <- insertStatement.update
+          .withUniqueGeneratedKeys[Queue](
+            "name",
+            "request_topic",
+            "response_topic",
+            "request_schema"
+          )
+          .transact(transactor)
+      } yield {
+        queue
+      }
 
     /**
       * Remove the queue resource with the given name from the DB.
@@ -156,10 +192,10 @@ object DbClient {
       sql"""delete from queues where name = $name""".update.run.void.transact(transactor)
 
     /** Pull the queue resource with the given name from the DB, if it exists. */
-    override def lookupQueue(name: String): IO[Option[Queue]] =
-      sql"""select name, request_topic, response_topic, request_schema
+    override def lookupQueueInfo(name: String): IO[Option[QueueInfo]] =
+      sql"""select id, request_topic, response_topic, request_schema
           from queues where name = $name"""
-        .query[Queue]
+        .query[(UUID, String, String, QueueSchema)]
         .option
         .transact(transactor)
   }

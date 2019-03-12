@@ -2,10 +2,9 @@ package org.broadinstitute.transporter.queue
 
 import cats.effect.{ExitCase, IO}
 import cats.implicits._
-import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.KafkaAdminClient
 
 /**
   * Component responsible for handling all queue-related requests.
@@ -13,7 +12,7 @@ import org.broadinstitute.transporter.kafka.KafkaClient
   * @param dbClient client which can interact with Transporter's DB
   * @param kafkaClient client which can interact with Transporter's Kafka cluster
   */
-class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
+class QueueController(dbClient: DbClient, kafkaClient: KafkaAdminClient) {
   import QueueController._
 
   private val logger = Slf4jLogger.getLogger[IO]
@@ -31,14 +30,20 @@ class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
       (preexisting, topicsExist) <- checkDbAndKafkaForQueue(name)
       queue <- (preexisting, topicsExist) match {
         case (Some(_), true) => IO.raiseError(QueueAlreadyExists(name))
-        case (Some(existing), false) =>
+        case (Some(info), false) =>
           for {
             _ <- logger.warn(s"Attempting to correct inconsistent state for queue: $name")
-            _ <- createTopics(existing)
+            queue <- createTopics(infoToQueue(name, info))
           } yield {
-            existing
+            queue
           }
-        case (None, _) => initializeQueue(request)
+        case (None, _) =>
+          for {
+            _ <- logger.info(s"Initializing resources for queue ${request.name}")
+            queue <- initializeQueue(request)
+          } yield {
+            queue
+          }
       }
     } yield {
       queue
@@ -54,9 +59,17 @@ class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
     * fail to submit transfers because of nonexistent Kafka topics.
     */
   def lookupQueue(name: String): IO[Option[Queue]] =
-    checkDbAndKafkaForQueue(name).map {
-      case (maybeQueue, topicsExist) => maybeQueue.filter(_ => topicsExist)
+    for {
+      _ <- logger.info(s"Looking up info for queue with name '$name'")
+      (maybeInfo, topicsExist) <- checkDbAndKafkaForQueue(name)
+    } yield {
+      maybeInfo.filter(_ => topicsExist).map(infoToQueue(name, _))
     }
+
+  private def infoToQueue(name: String, info: DbClient.QueueInfo): Queue = {
+    val (_, reqTopic, resTopic, schema) = info
+    Queue(name, reqTopic, resTopic, schema)
+  }
 
   /**
     * Check if the DB contains a record for a queue with the given name. If so,
@@ -66,19 +79,15 @@ class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
     * occurred between writing to the DB and topic creation (or between a failure in
     * topic creation and the follow-up DB rollback).
     */
-  private def checkDbAndKafkaForQueue(name: String): IO[(Option[Queue], Boolean)] =
+  private[transporter] def checkDbAndKafkaForQueue(
+    name: String
+  ): IO[(Option[DbClient.QueueInfo], Boolean)] =
     for {
-      dbQueue <- dbClient.lookupQueue(name)
-      topicsExist <- dbQueue.fold(IO.pure(false)) { queue =>
-        val expectedTopics = List(queue.requestTopic, queue.responseTopic)
-        for {
-          _ <- logger.debug(s"Checking for topics: ${expectedTopics.mkString(", ")}")
-          existingTopics <- kafkaClient.listTopics
-        } yield {
-          expectedTopics.forall(existingTopics.contains)
-        }
+      queueInfo <- dbClient.lookupQueueInfo(name)
+      topicsExist <- queueInfo.fold(IO.pure(false)) {
+        case (_, reqTopic, resTopic, _) => kafkaClient.topicsExist(reqTopic, resTopic)
       }
-      _ <- if (dbQueue.isDefined && !topicsExist) {
+      _ <- if (queueInfo.isDefined && !topicsExist) {
         logger.warn(
           s"Inconsistent state detected: $name is registered in DB, but has no resources in Kafka"
         )
@@ -86,7 +95,7 @@ class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
         IO.unit
       }
     } yield {
-      (dbQueue, topicsExist)
+      (queueInfo, topicsExist)
     }
 
   /**
@@ -105,24 +114,11 @@ class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
     * by having our queue-lookup functionality check for both a row
     * in the DB _and_ the corresponding Kafka topics.
     */
-  private def initializeQueue(request: QueueRequest): IO[Queue] = {
-
-    val prepQueue = for {
-      _ <- logger.info(s"Initializing resources for queue ${request.name}")
-      uuid <- FUUID.randomFUUID[IO]
-      queue = Queue(
-        name = request.name,
-        requestTopic = s"$uuid.requests",
-        responseTopic = s"$uuid.responses",
-        schema = request.schema
-      )
-      _ <- dbClient.insertQueue(queue)
-    } yield queue
-
+  private def initializeQueue(request: QueueRequest): IO[Queue] =
     // `bracketCase` is like try-catch-finally for the FP libs.
     // It schedules cleanup code in a way that prevents it from
     // being skipped by cancellation.
-    prepQueue.bracketCase(createTopics) { (queue, status) =>
+    dbClient.createQueue(request).bracketCase(createTopics) { (queue, status) =>
       val name = queue.name
       status match {
         case ExitCase.Completed =>
@@ -136,16 +132,16 @@ class QueueController(dbClient: DbClient, kafkaClient: KafkaClient) {
 
         case ExitCase.Error(e) =>
           for {
-            _ <- logger.error(e)(s"Failed to create topics for queue $name, rolling back")
+            _ <- logger
+              .error(e)(s"Failed to create topics for queue $name, rolling back")
             _ <- dbClient.deleteQueue(name)
           } yield ()
       }
     }
-  }
 
   /** Create all Kafka topics backing the given queue resource. */
   private def createTopics(queue: Queue): IO[Queue] =
-    kafkaClient.createTopics(List(queue.requestTopic, queue.responseTopic)).as(queue)
+    kafkaClient.createTopics(queue.requestTopic, queue.responseTopic).as(queue)
 }
 
 object QueueController {
