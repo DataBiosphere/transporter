@@ -11,7 +11,7 @@ import org.broadinstitute.transporter.web.{
   WebConfig
 }
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaAdminClient
+import org.broadinstitute.transporter.kafka.KafkaClient
 import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.TransferController
@@ -64,18 +64,16 @@ object TransporterManager extends IOApp.WithContext {
       // Build clients for interacting with external resources, for use
       // across controllers in the app.
       dbResource = DbClient.resource(config.db, blockingEc)
-      kafkaResource = KafkaAdminClient.resource(config.kafka, blockingEc)
+      kafkaResource = KafkaClient.resource(config.kafka, blockingEc)
       (dbClient, kafkaClient) <- (dbResource, kafkaResource).tupled
-      queueController = new QueueController(dbClient, kafkaClient)
-      transferController <- TransferController.resource(
-        queueController,
-        dbClient,
-        config.kafka
-      )
     } yield {
+      val queueController = QueueController(dbClient, kafkaClient)
       val routes = NonEmptyList.of(
         new InfoRoutes(new InfoController(appInfo.version, dbClient, kafkaClient)),
-        new ApiRoutes(queueController, transferController)
+        new ApiRoutes(
+          queueController,
+          TransferController(queueController, dbClient, kafkaClient)
+        )
       )
       val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
       Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)

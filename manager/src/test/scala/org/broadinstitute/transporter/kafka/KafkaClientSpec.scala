@@ -1,15 +1,20 @@
 package org.broadinstitute.transporter.kafka
 
+import java.util.UUID
+
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import doobie.util.ExecutionContexts
+import fs2.kafka.Deserializer
+import io.circe.Json
+import io.circe.literal._
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
-class KafkaAdminClientSpec
+class KafkaClientSpec
     extends FlatSpec
     with Matchers
     with EmbeddedKafka
@@ -36,12 +41,13 @@ class KafkaAdminClientSpec
     timeouts
   )
 
-  private def clientResource(config: KafkaConfig): Resource[IO, KafkaAdminClient.Impl] =
+  private def clientResource(config: KafkaConfig): Resource[IO, KafkaClient.Impl] =
     for {
       ec <- blockingEc
-      client <- KafkaAdminClient.adminResource(config, ec)
+      adminClient <- KafkaClient.adminResource(config, ec)
+      producer <- KafkaClient.producerResource(config)
     } yield {
-      new KafkaAdminClient.Impl(client, topicConfig)
+      new KafkaClient.Impl(adminClient, producer, topicConfig)
     }
 
   behavior of "KafkaClient"
@@ -105,5 +111,35 @@ class KafkaAdminClientSpec
         }
       }
     }
+  }
+
+  private implicit val keyDeserializer: Deserializer[UUID] =
+    Deserializer.string.map(UUID.fromString)
+  private implicit val valDeserializer: Deserializer[Json] =
+    Deserializer.string.map(io.circe.parser.parse(_).valueOr(throw _))
+
+  it should "submit messages" in {
+    val topic = "the-topic"
+
+    val messages = List(
+      UUID.randomUUID() -> json"""{ "foo": "bar" }""",
+      UUID.randomUUID() -> json"""{ "baz": "qux" }"""
+    )
+
+    val published = withRunningKafkaOnFoundPort(baseConfig) { implicit actualConfig =>
+      clientResource(config(actualConfig)).use { client =>
+        for {
+          _ <- IO.delay(createCustomTopic(topic))
+          _ <- client.submit(topic, messages)
+          consumed <- IO.delay(
+            consumeNumberKeyedMessagesFrom[UUID, Json](topic, messages.length)
+          )
+        } yield {
+          consumed
+        }
+      }.unsafeRunSync()
+    }
+
+    published shouldBe messages
   }
 }

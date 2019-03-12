@@ -3,7 +3,7 @@ package org.broadinstitute.transporter.info
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaAdminClient
+import org.broadinstitute.transporter.kafka.KafkaClient
 
 /**
   * Component responsible for handling status and version requests.
@@ -18,7 +18,7 @@ import org.broadinstitute.transporter.kafka.KafkaAdminClient
 class InfoController(
   appVersion: String,
   dbClient: DbClient,
-  kafkaClient: KafkaAdminClient
+  kafkaClient: KafkaClient
 )(
   implicit cs: ContextShift[IO]
 ) {

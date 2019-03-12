@@ -1,10 +1,13 @@
 package org.broadinstitute.transporter.kafka
 
+import java.util.UUID
 import java.util.concurrent.{CancellationException, CompletionException}
 
 import cats.effect._
 import cats.implicits._
+import fs2.kafka.{KafkaProducer, ProducerMessage, ProducerRecord, Serializer}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import io.circe.Json
 import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
 import org.apache.kafka.common.KafkaFuture
 
@@ -12,13 +15,9 @@ import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
 
 /**
-  * Client responsible for managing topics / cluster state in Transporter's
-  * backing Kafka cluster.
-  *
-  * Partly a copy-paste from fs2-kafka's version, which doesn't support all
-  * the functionality we need.
+  * Client responsible for managing communication with Transporter's backing Kafka cluster.
   */
-trait KafkaAdminClient {
+trait KafkaClient {
 
   /** Check if the client can interact with the backing cluster. */
   def checkReady: IO[Boolean]
@@ -36,9 +35,11 @@ trait KafkaAdminClient {
 
   /** Check that the given topics exist in Kafka. */
   def topicsExist(topicNames: String*): IO[Boolean]
+
+  def submit(topic: String, messages: List[(UUID, Json)]): IO[Unit]
 }
 
-object KafkaAdminClient {
+object KafkaClient {
 
   /**
     * Extension methods for Kafka's bespoke Future implementation.
@@ -84,6 +85,8 @@ object KafkaAdminClient {
         s"Failed to create topics: ${failures.map(_._1).mkString(", ")}"
       )
 
+  private val jsonSerializer = Serializer.string.contramap[Json](_.noSpaces)
+
   /**
     * Construct a Kafka client, wrapped in logic which will:
     *   1. Automatically set up underlying Kafka client instances
@@ -100,8 +103,10 @@ object KafkaAdminClient {
     */
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, KafkaAdminClient] =
-    adminResource(config, blockingEc).map(new Impl(_, config.topicDefaults))
+  ): Resource[IO, KafkaClient] =
+    (adminResource(config, blockingEc), producerResource(config)).tupled.map {
+      case (admin, producer) => new Impl(admin, producer, config.topicDefaults)
+    }
 
   private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
@@ -118,8 +123,18 @@ object KafkaAdminClient {
     Resource.make(initClient)(closeClient)
   }
 
+  private[kafka] def producerResource(config: KafkaConfig)(
+    implicit cs: ContextShift[IO]
+  ) =
+    fs2.kafka
+      .producerResource[IO]
+      .using(config.producerSettings(Serializer.uuid, jsonSerializer))
+
   /**
     * Concrete implementation of our Kafka admin client used by mainline code.
+    *
+    * Partly a copy-paste of fs2-kafka's AdminClient, which doesn't support all
+    * the functionality we need.
     *
     * @param adminClient "raw" Kafka client which actually knows how to
     *                    interact with the backing cluster
@@ -130,9 +145,10 @@ object KafkaAdminClient {
     */
   private[kafka] class Impl(
     adminClient: AdminClient,
+    producer: KafkaProducer[IO, UUID, Json],
     topicConfig: TopicConfig
   )(implicit cs: ContextShift[IO])
-      extends KafkaAdminClient {
+      extends KafkaClient {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
@@ -174,6 +190,21 @@ object KafkaAdminClient {
       } yield {
         topicNames.toSet.subsetOf(existingTopics)
       }
+
+    override def submit(topic: String, messages: List[(UUID, Json)]): IO[Unit] = {
+      val records = messages.map {
+        case (id, value) => ProducerRecord(topic, id, value)
+      }
+
+      for {
+        _ <- logger.debug(s"Submitting ${messages.length} records to Kafka topic $topic")
+        ackIO <- producer.producePassthrough(ProducerMessage(records))
+        _ <- logger.debug(s"Waiting for Kafka to acknowledge submission...")
+        _ <- ackIO
+      } yield {
+        ()
+      }
+    }
 
     private[kafka] def listTopics: IO[scala.collection.mutable.Set[String]] =
       IO.suspend(adminClient.listTopics().names().cancelable).map(_.asScala)

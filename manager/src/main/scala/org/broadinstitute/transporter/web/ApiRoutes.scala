@@ -2,19 +2,27 @@ package org.broadinstitute.transporter.web
 
 import cats.effect.IO
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.broadinstitute.transporter.queue.{QueueController, QueueRequest}
-import org.broadinstitute.transporter.transfer.{TransferController, TransferRequest}
-import org.http4s.circe.{CirceEntityDecoder, CirceEntityEncoder}
-import org.http4s.{EntityDecoder, Method}
+import org.broadinstitute.transporter.queue.{Queue, QueueController, QueueRequest}
+import org.broadinstitute.transporter.transfer.{
+  TransferAck,
+  TransferController,
+  TransferRequest
+}
+import org.http4s.circe.{CirceEntityDecoder, CirceInstances}
+import org.http4s.{EntityDecoder, EntityEncoder, Method}
 import org.http4s.rho.RhoRoutes
 
 /** Container for Transporter's API (eventually auth-protected) routes. */
 class ApiRoutes(queueController: QueueController, transferController: TransferController)
     extends RhoRoutes[IO]
-    with CirceEntityEncoder
-    with CirceEntityDecoder {
+    with CirceEntityDecoder
+    with CirceInstances {
 
   private val log = Slf4jLogger.getLogger[IO]
+
+  private implicit val ackEncoder: EntityEncoder[IO, TransferAck] = jsonEncoderOf
+  private implicit val errEncoder: EntityEncoder[IO, ErrorResponse] = jsonEncoderOf
+  private implicit val queueEncoder: EntityEncoder[IO, Queue] = jsonEncoderOf
 
   /** Build an API route prefix beginning with the given HTTP method. */
   private def api(m: Method) = m / "api" / "transporter" / "v1"
@@ -57,9 +65,9 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
 
   lookupQueue |>> { name: String =>
     queueController.lookupQueue(name).attempt.map {
-      case Right(Some(queue)) => Ok(queue)
-      case Right(None)        => NotFound(s"Queue $name does not exist")
-      case Left(err)          => ISE(s"Failed to lookup queue $name", err)
+      case Right(Some((_, req, res, schema))) => Ok(Queue(name, req, res, schema))
+      case Right(None)                        => NotFound(ErrorResponse(s"Queue $name does not exist"))
+      case Left(err)                          => ISE(s"Failed to lookup queue $name", err)
     }
   }
 
@@ -68,7 +76,11 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
       transferController.submitTransfer(name, request).attempt.map {
         case Right(ack) => Ok(ack)
         case Left(TransferController.NoSuchQueue(_)) =>
-          NotFound(s"Queue $name does not exist")
+          NotFound(ErrorResponse(s"Queue $name does not exist"))
+        case Left(TransferController.InvalidRequest(_)) =>
+          BadRequest(
+            ErrorResponse(s"Submission does not match expected schema for queue $name")
+          )
         case Left(err) => ISE(s"Failed to submit request to $name", err)
       }
   }
