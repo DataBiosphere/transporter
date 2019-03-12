@@ -66,14 +66,16 @@ object TransporterManager extends IOApp.WithContext {
       dbResource = DbClient.resource(config.db, blockingEc)
       kafkaResource = KafkaAdminClient.resource(config.kafka, blockingEc)
       (dbClient, kafkaClient) <- (dbResource, kafkaResource).tupled
+      queueController = new QueueController(dbClient, kafkaClient)
+      transferController <- TransferController.resource(
+        queueController,
+        dbClient,
+        config.kafka
+      )
     } yield {
-      val queueController = new QueueController(dbClient, kafkaClient)
       val routes = NonEmptyList.of(
         new InfoRoutes(new InfoController(appInfo.version, dbClient, kafkaClient)),
-        new ApiRoutes(
-          queueController,
-          new TransferController(queueController, dbClient)
-        )
+        new ApiRoutes(queueController, transferController)
       )
       val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
       Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
