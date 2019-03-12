@@ -4,7 +4,6 @@ import java.util.concurrent.{CancellationException, CompletionException}
 
 import cats.effect._
 import cats.implicits._
-import fs2.kafka.AdminClientSettings
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
 import org.apache.kafka.common.KafkaFuture
@@ -52,7 +51,7 @@ object KafkaAdminClient {
   ) extends AnyVal {
 
     /**
-      * Cancel the Future and return an IO-wrapped token.
+      * Build an IO that will cancel the wrapped Future.
       *
       * Can't be named 'cancel' because there's already a method
       * on the Future type with that name.
@@ -107,16 +106,10 @@ object KafkaAdminClient {
   private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
   ): Resource[IO, AdminClient] = {
-    val settings = AdminClientSettings.Default
-      .withBootstrapServers(config.bootstrapServers.mkString(","))
-      .withClientId(config.clientId)
-      .withRequestTimeout(config.timeouts.requestTimeout)
-      .withCloseTimeout(config.timeouts.closeTimeout)
-
+    val settings = config.adminSettings
     val initClient = cs.evalOn(blockingEc) {
       settings.adminClientFactory.create[IO](settings)
     }
-
     val closeClient = (client: AdminClient) =>
       cs.evalOn(blockingEc)(IO.delay {
         client.close(settings.closeTimeout.length, settings.closeTimeout.unit)

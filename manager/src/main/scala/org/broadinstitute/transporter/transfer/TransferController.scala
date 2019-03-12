@@ -18,10 +18,11 @@ class TransferController(queueController: QueueController, dbClient: DbClient) {
     for {
       (dbInfo, topicsExist) <- queueController.checkDbAndKafkaForQueue(queueName)
       canSubmit = dbInfo.filter(_ => topicsExist)
-      (id, requestTopic, _, schema) <- canSubmit.liftTo[IO](NoSuchQueue(queueName))
+      (queueId, requestTopic, _, schema) <- canSubmit.liftTo[IO](NoSuchQueue(queueName))
       _ <- validateRequests(request.transfers, schema)
+      (requestId, transfersById) <- dbClient.recordTransferRequest(queueId, request)
     } yield {
-      val _ = (dbClient, id, requestTopic)
+      val _ = (requestId, transfersById, requestTopic)
       ???
     }
 
