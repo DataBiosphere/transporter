@@ -38,7 +38,9 @@ class TransferControllerSpec
   behavior of "TransferController"
 
   it should "submit transfer requests to existing queues" in {
-    (queueController.lookupQueue _).expects(queueName).returning(IO.pure(Some(queueInfo)))
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
     (db.recordTransferRequest _)
       .expects(queueId, goodRequest)
       .returning(IO.pure((requestId, transfersWithIds)))
@@ -50,7 +52,7 @@ class TransferControllerSpec
   }
 
   it should "raise errors on submissions to nonexistent queues" in {
-    (queueController.lookupQueue _).expects(queueName).returning(IO.pure(None))
+    (queueController.lookupQueueInfo _).expects(queueName).returning(IO.pure(None))
 
     a[TransferController.NoSuchQueue] shouldBe thrownBy {
       controller.submitTransfer(queueName, goodRequest).unsafeRunSync()
@@ -58,7 +60,9 @@ class TransferControllerSpec
   }
 
   it should "validate the schemas of submitted requests" in {
-    (queueController.lookupQueue _).expects(queueName).returning(IO.pure(Some(queueInfo)))
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
 
     val badRequest = TransferRequest(List(json"[1, 2, 3]", json""""hello world!""""))
     a[TransferController.InvalidRequest] shouldBe thrownBy {
@@ -69,7 +73,9 @@ class TransferControllerSpec
   it should "roll back the DB if submitting to Kafka fails" in {
     val err = new RuntimeException("OH NO")
 
-    (queueController.lookupQueue _).expects(queueName).returning(IO.pure(Some(queueInfo)))
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
     (db.recordTransferRequest _)
       .expects(queueId, goodRequest)
       .returning(IO.pure((requestId, transfersWithIds)))

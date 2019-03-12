@@ -26,7 +26,13 @@ trait QueueController {
     * getting into a state where we report existing info from the DB but always
     * fail to submit transfers because of nonexistent Kafka topics.
     */
-  def lookupQueue(name: String): IO[Option[DbClient.QueueInfo]]
+  final def lookupQueue(name: String): IO[Option[Queue]] =
+    lookupQueueInfo(name).map(_.map {
+      case (_, req, res, schema) =>
+        Queue(name, req, res, schema)
+    })
+
+  def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]]
 }
 
 object QueueController {
@@ -75,7 +81,7 @@ object QueueController {
       }
     }
 
-    override def lookupQueue(name: String): IO[Option[DbClient.QueueInfo]] =
+    override def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]] =
       for {
         _ <- logger.info(s"Looking up info for queue with name '$name'")
         (maybeInfo, topicsExist) <- checkDbAndKafkaForQueue(name)

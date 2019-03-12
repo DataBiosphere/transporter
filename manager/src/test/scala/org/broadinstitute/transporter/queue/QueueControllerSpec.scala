@@ -52,9 +52,7 @@ class QueueControllerSpec
       .expects(List(queue.requestTopic, queue.responseTopic))
       .returning(IO.pure(true))
 
-    controller
-      .lookupQueue(queue.name)
-      .unsafeRunSync() shouldBe Some(dbInfo)
+    controller.lookupQueue(queue.name).unsafeRunSync() shouldBe Some(queue)
   }
 
   it should "create new queues" in {

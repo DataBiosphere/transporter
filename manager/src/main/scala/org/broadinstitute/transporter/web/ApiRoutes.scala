@@ -65,9 +65,9 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
 
   lookupQueue |>> { name: String =>
     queueController.lookupQueue(name).attempt.map {
-      case Right(Some((_, req, res, schema))) => Ok(Queue(name, req, res, schema))
-      case Right(None)                        => NotFound(ErrorResponse(s"Queue $name does not exist"))
-      case Left(err)                          => ISE(s"Failed to lookup queue $name", err)
+      case Right(Some(queue)) => Ok(queue)
+      case Right(None)        => NotFound(ErrorResponse(s"Queue $name does not exist"))
+      case Left(err)          => ISE(s"Failed to lookup queue $name", err)
     }
   }
 

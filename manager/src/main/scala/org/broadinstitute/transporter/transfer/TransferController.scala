@@ -45,7 +45,7 @@ object TransferController {
       request: TransferRequest
     ): IO[TransferAck] =
       for {
-        info <- queueController.lookupQueue(queueName)
+        info <- queueController.lookupQueueInfo(queueName)
         (queueId, requestTopic, _, schema) <- info.liftTo[IO](NoSuchQueue(queueName))
         _ <- logger.info(
           s"Submitting ${request.transfers.length} transfers to queue $queueName"
