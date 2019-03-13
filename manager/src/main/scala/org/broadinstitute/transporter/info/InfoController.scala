@@ -15,11 +15,7 @@ import org.broadinstitute.transporter.kafka.KafkaClient
   * @param cs proof of the ability to shift IO-wrapped computations
   *           onto other threads
   */
-class InfoController(
-  appVersion: String,
-  dbClient: DbClient,
-  kafkaClient: KafkaClient
-)(
+class InfoController(appVersion: String, dbClient: DbClient, kafkaClient: KafkaClient)(
   implicit cs: ContextShift[IO]
 ) {
 

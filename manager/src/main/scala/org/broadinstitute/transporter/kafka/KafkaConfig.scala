@@ -12,6 +12,7 @@ case class KafkaConfig(
   timeouts: TimeoutConfig
 ) {
 
+  /** Convert this config into settings for a [[org.apache.kafka.clients.admin.AdminClient]]. */
   def adminSettings: AdminClientSettings =
     AdminClientSettings.Default
       .withBootstrapServers(bootstrapServers.mkString(","))
@@ -19,6 +20,12 @@ case class KafkaConfig(
       .withRequestTimeout(timeouts.requestTimeout)
       .withCloseTimeout(timeouts.closeTimeout)
 
+  /**
+    * Convert this config into settings for a [[org.apache.kafka.clients.producer.Producer]].
+    *
+    * Some settings in the output are hard-coded to prevent silent data loss in the producer,
+    * which isn't acceptable for our use-case.
+    */
   def producerSettings[K, V](
     keySerializer: Serializer[K],
     valueSerializer: Serializer[V]

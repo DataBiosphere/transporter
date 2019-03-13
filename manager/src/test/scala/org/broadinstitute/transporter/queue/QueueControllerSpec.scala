@@ -100,6 +100,7 @@ class QueueControllerSpec
     (kafka.topicsExist _)
       .expects(List(queue.requestTopic, queue.responseTopic))
       .returning(IO.pure(false))
+    (db.patchQueueSchema _).expects(id, queue.schema).returning(IO.unit)
     (kafka.createTopics _)
       .expects(List(queue.requestTopic, queue.responseTopic))
       .returning(IO.unit)

@@ -40,6 +40,9 @@ trait DbClient {
     */
   def createQueue(request: QueueRequest): IO[Queue]
 
+  /** Update the expected JSON schema for the queue with the given ID. */
+  def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit]
+
   /**
     * Remove the queue resource with the given name from the DB.
     *
@@ -184,6 +187,10 @@ object DbClient {
       } yield {
         Queue(request.name, requestTopic, responseTopic, request.schema)
       }
+
+    override def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit] =
+      sql"""update queues set request_schema = $schema where id = $id""".update.run.void
+        .transact(transactor)
 
     override def deleteQueue(name: String): IO[Unit] =
       sql"""delete from queues where name = $name""".update.run.void.transact(transactor)

@@ -67,14 +67,16 @@ object QueueController {
         queue <- (preexisting, topicsExist) match {
           case (Some(_), true) =>
             IO.raiseError(QueueAlreadyExists(name))
-          case (Some((_, req, res, _)), false) =>
-            logger
-              .warn(s"Attempting to correct inconsistent state for queue: $name")
-              .flatMap { _ =>
-                kafkaClient
-                  .createTopics(req, res)
-                  .as(Queue(name, req, res, request.schema))
-              }
+          case (Some((id, req, res, _)), false) =>
+            for {
+              _ <- logger.warn(
+                s"Attempting to correct inconsistent state for queue: $name"
+              )
+              _ <- dbClient.patchQueueSchema(id, request.schema)
+              _ <- kafkaClient.createTopics(req, res)
+            } yield {
+              Queue(name, req, res, request.schema)
+            }
           case (None, _) =>
             logger
               .info(s"Initializing resources for queue ${request.name}")
