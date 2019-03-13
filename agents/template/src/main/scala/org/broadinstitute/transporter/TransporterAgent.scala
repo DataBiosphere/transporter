@@ -31,7 +31,7 @@ abstract class TransporterAgent extends IOApp.WithContext with CirceEntityDecode
   // Kafka Streams is an inherently synchronous API, so there's no point in
   // keeping multiple threads around.
   override val executionContextResource: Resource[SyncIO, ExecutionContext] = {
-    val allocate = SyncIO(Executors.newFixedThreadPool(1))
+    val allocate = SyncIO(Executors.newSingleThreadExecutor())
     val free = (es: ExecutorService) => SyncIO(es.shutdown())
     Resource.make(allocate)(free).map(ExecutionContext.fromExecutor)
   }

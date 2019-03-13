@@ -10,13 +10,19 @@
             <column name="id" type="uuid">
                 <constraints primaryKey="true" />
             </column>
-            <column name="name" type="varchar(250)">
+            <column name="name" type="text">
                 <constraints nullable="false" unique="true" />
             </column>
-            <column name="request_topic" type="varchar(250)">
+            <!--
+              Match Kafka's internally-enforced limit on topic name length.
+
+              Transporter generates all of the topic names it uses, so if
+              this limit ever gets tripped it should be considered an ISE.
+            -->
+            <column name="request_topic" type="varchar(249)">
                 <constraints nullable="false" />
             </column>
-            <column name="response_topic" type="varchar(250)">
+            <column name="response_topic" type="varchar(249)">
                 <constraints nullable="false" />
             </column>
             <column name="request_schema" type="json">
@@ -25,7 +31,7 @@
         </createTable>
 
         <createIndex tableName="queues" indexName="queue-name">
-            <column name="name" type="varchar(250)" />
+            <column name="name" type="text" />
         </createIndex>
 
         <rollback>
