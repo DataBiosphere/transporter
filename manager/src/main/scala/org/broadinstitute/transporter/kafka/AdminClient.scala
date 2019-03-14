@@ -1,23 +1,23 @@
 package org.broadinstitute.transporter.kafka
 
-import java.util.UUID
 import java.util.concurrent.{CancellationException, CompletionException}
 
 import cats.effect._
 import cats.implicits._
-import fs2.kafka.{KafkaProducer, ProducerMessage, ProducerRecord, Serializer}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import io.circe.Json
-import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
+import org.apache.kafka.clients.admin.{AdminClient => JAdminClient, NewTopic}
 import org.apache.kafka.common.KafkaFuture
 
 import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
 
 /**
-  * Client responsible for managing communication with Transporter's backing Kafka cluster.
+  * Client responsible for managing "admin" operations in Transporter's Kafka cluster.
+  *
+  * Admin ops include querying cluster-level state, creating/modifying/deleting topics,
+  * and settings ACLs (though we don't handle that yet).
   */
-trait KafkaClient {
+trait AdminClient {
 
   /** Check if the client can interact with the backing cluster. */
   def checkReady: IO[Boolean]
@@ -35,12 +35,9 @@ trait KafkaClient {
 
   /** Check that the given topics exist in Kafka. */
   def topicsExist(topicNames: String*): IO[Boolean]
-
-  /** Submit a batch of messages to a topic. */
-  def submit(topic: String, messages: List[(UUID, Json)]): IO[Unit]
 }
 
-object KafkaClient {
+object AdminClient {
 
   /**
     * Extension methods for Kafka's bespoke Future implementation.
@@ -86,9 +83,6 @@ object KafkaClient {
         s"Failed to create topics: ${failures.map(_._1).mkString(", ")}"
       )
 
-  /** Kafka-specific serializer for JSON messages. */
-  private val jsonSerializer = Serializer.string.contramap[Json](_.noSpaces)
-
   /**
     * Construct a Kafka client, wrapped in logic which will:
     *   1. Automatically set up underlying Kafka client instances
@@ -96,8 +90,7 @@ object KafkaClient {
     *   2. Automatically clean up the underlying clients and their
     *      pools on shutdown
     *
-    * @param config settings for the underlying Kafka clients powering
-    *               our client
+    * @param config settings for the underlying Kafka client
     * @param blockingEc execution context which should run the blocking I/O
     *                   required to set up / tear down the client
     * @param cs proof of the ability to shift IO-wrapped computations
@@ -105,20 +98,18 @@ object KafkaClient {
     */
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, KafkaClient] =
-    (adminResource(config, blockingEc), producerResource(config)).tupled.map {
-      case (admin, producer) => new Impl(admin, producer, config.topicDefaults)
-    }
+  ): Resource[IO, AdminClient] =
+    adminResource(config, blockingEc).map(new Impl(_, config.topicDefaults))
 
   /** Construct a Kafka admin client, wrapped in setup and teardown logic. */
   private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, AdminClient] = {
+  ): Resource[IO, JAdminClient] = {
     val settings = config.adminSettings
     val initClient = cs.evalOn(blockingEc) {
       settings.adminClientFactory.create[IO](settings)
     }
-    val closeClient = (client: AdminClient) =>
+    val closeClient = (client: JAdminClient) =>
       cs.evalOn(blockingEc)(IO.delay {
         client.close(settings.closeTimeout.length, settings.closeTimeout.unit)
       })
@@ -126,33 +117,23 @@ object KafkaClient {
     Resource.make(initClient)(closeClient)
   }
 
-  /** Construct a Kafka producer, wrapper in setup and teardown logic. */
-  private[kafka] def producerResource(config: KafkaConfig)(
-    implicit cs: ContextShift[IO]
-  ) =
-    fs2.kafka
-      .producerResource[IO]
-      .using(config.producerSettings(Serializer.uuid, jsonSerializer))
-
   /**
-    * Concrete implementation of our Kafka admin client used by mainline code.
+    * Concrete implementation of our admin client used by mainline code.
     *
     * Partly a copy-paste of fs2-kafka's AdminClient, which doesn't support all
     * the functionality we need.
     *
-    * @param adminClient "raw" Kafka client which actually knows how to
-    *                    interact with the backing cluster
+    * @param adminClient client which can execute "raw" Kafka requests
     * @param topicConfig configuration to apply to all topics created
     *                    by the client
     * @param cs proof of the ability to shift IO-wrapped computations
     *           onto other threads
     */
   private[kafka] class Impl(
-    adminClient: AdminClient,
-    producer: KafkaProducer[IO, UUID, Json],
+    adminClient: JAdminClient,
     topicConfig: TopicConfig
   )(implicit cs: ContextShift[IO])
-      extends KafkaClient {
+      extends AdminClient {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
@@ -192,21 +173,6 @@ object KafkaClient {
       } yield {
         topicNames.toSet.subsetOf(existingTopics)
       }
-
-    override def submit(topic: String, messages: List[(UUID, Json)]): IO[Unit] = {
-      val records = messages.map {
-        case (id, value) => ProducerRecord(topic, id, value)
-      }
-
-      for {
-        _ <- logger.debug(s"Submitting ${messages.length} records to Kafka topic $topic")
-        ackIO <- producer.producePassthrough(ProducerMessage(records))
-        _ <- logger.debug(s"Waiting for Kafka to acknowledge submission...")
-        _ <- ackIO
-      } yield {
-        ()
-      }
-    }
 
     /**
       * Get the list of all non-internal topics in Transporter's backing Kafka cluster.

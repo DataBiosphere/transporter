@@ -3,7 +3,7 @@ package org.broadinstitute.transporter.info
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.AdminClient
 
 /**
   * Component responsible for handling status and version requests.
@@ -15,7 +15,7 @@ import org.broadinstitute.transporter.kafka.KafkaClient
   * @param cs proof of the ability to shift IO-wrapped computations
   *           onto other threads
   */
-class InfoController(appVersion: String, dbClient: DbClient, kafkaClient: KafkaClient)(
+class InfoController(appVersion: String, dbClient: DbClient, kafkaClient: AdminClient)(
   implicit cs: ContextShift[IO]
 ) {
 

@@ -9,7 +9,7 @@ import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
 
 /** Component responsible for handling all transfer-related web requests. */
@@ -31,8 +31,8 @@ object TransferController {
   def apply(
     queueController: QueueController,
     dbClient: DbClient,
-    kafkaClient: KafkaClient
-  ): TransferController = new Impl(queueController, dbClient, kafkaClient)
+    producer: KafkaProducer[UUID, Json]
+  ): TransferController = new Impl(queueController, dbClient, producer)
 
   /** Exception used to mark when a user submits transfers to a nonexistent queue. */
   case class NoSuchQueue(name: String)
@@ -49,12 +49,12 @@ object TransferController {
     *
     * @param queueController controller to delegate to for performing queue-level operations
     * @param dbClient client which can interact with Transporter's DB
-    * @param kafkaClient client which can interact with Transporter's Kafka cluster
+    * @param producer client which can push messages into Kafka
     */
   private[transfer] class Impl(
     queueController: QueueController,
     dbClient: DbClient,
-    kafkaClient: KafkaClient
+    producer: KafkaProducer[UUID, Json]
   ) extends TransferController {
 
     private val logger = Slf4jLogger.getLogger[IO]
@@ -99,7 +99,7 @@ object TransferController {
       requestTopic: String,
       messages: List[(UUID, Json)]
     ): IO[Unit] =
-      kafkaClient.submit(requestTopic, messages).guaranteeCase {
+      producer.submit(requestTopic, messages).guaranteeCase {
         case ExitCase.Completed =>
           logger.info(s"Successfully submitted request $requestId")
         case ExitCase.Canceled =>

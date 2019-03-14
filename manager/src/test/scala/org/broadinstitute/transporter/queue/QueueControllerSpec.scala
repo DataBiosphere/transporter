@@ -5,7 +5,7 @@ import java.util.UUID
 import cats.effect.IO
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.AdminClient
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
@@ -16,7 +16,7 @@ class QueueControllerSpec
     with EitherValues {
 
   private val db = mock[DbClient]
-  private val kafka = mock[KafkaClient]
+  private val kafka = mock[AdminClient]
 
   private def controller = new QueueController.Impl(db, kafka)
 

@@ -4,7 +4,7 @@ import cats.effect.{ExitCase, IO}
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.AdminClient
 
 /** Component responsible for handling all queue-related web requests. */
 trait QueueController {
@@ -42,7 +42,7 @@ trait QueueController {
 object QueueController {
 
   // Pseudo-constructor for the Impl subclass.
-  def apply(dbClient: DbClient, kafkaClient: KafkaClient): QueueController =
+  def apply(dbClient: DbClient, kafkaClient: AdminClient): QueueController =
     new Impl(dbClient, kafkaClient)
 
   /** Exception used to mark when a user attempts to create a queue that already exists. */
@@ -55,7 +55,7 @@ object QueueController {
     * @param dbClient client which can interact with Transporter's DB
     * @param kafkaClient client which can interact with Transporter's Kafka cluster
     */
-  private[queue] class Impl(dbClient: DbClient, kafkaClient: KafkaClient)
+  private[queue] class Impl(dbClient: DbClient, kafkaClient: AdminClient)
       extends QueueController {
 
     private val logger = Slf4jLogger.getLogger[IO]
