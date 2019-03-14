@@ -45,6 +45,8 @@ class QueueSchema private (
     case qs: QueueSchema => json.equals(qs.json)
     case _               => false
   }
+
+  override def toString: String = json.spaces2
 }
 
 object QueueSchema {

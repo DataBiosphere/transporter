@@ -1,15 +1,23 @@
 package org.broadinstitute.transporter.db
 
+import java.util.UUID
+
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
+import doobie.hi._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
+import doobie.postgres.implicits._
 import doobie.postgres.circe.Instances
 import doobie.util.{ExecutionContexts, Get, Put}
 import doobie.util.log.LogHandler
 import doobie.util.transactor.Transactor
+import doobie.util.update.Update
+import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
+import io.circe.Json
+import org.broadinstitute.transporter.queue.{Queue, QueueRequest, QueueSchema}
+import org.broadinstitute.transporter.transfer.TransferRequest
 
 import scala.concurrent.ExecutionContext
 
@@ -23,11 +31,17 @@ trait DbClient {
   def checkReady: IO[Boolean]
 
   /**
-    * Record a new queue resource in the DB.
+    * Create a new queue resource in the DB.
     *
     * Will fail if a queue already exists with the input's name.
+    *
+    * @param request user-specified information defining pieces of
+    *                the queue to create
     */
-  def insertQueue(queue: Queue): IO[Unit]
+  def createQueue(request: QueueRequest): IO[Queue]
+
+  /** Update the expected JSON schema for the queue with the given ID. */
+  def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit]
 
   /**
     * Remove the queue resource with the given name from the DB.
@@ -37,10 +51,32 @@ trait DbClient {
   def deleteQueue(name: String): IO[Unit]
 
   /** Pull the queue resource with the given name from the DB, if it exists. */
-  def lookupQueue(name: String): IO[Option[Queue]]
+  def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]]
+
+  /**
+    * Insert a top-level "transfer request" row and corresponding
+    * per-request "transfer" rows into the DB, and return the generated
+    * unique IDs.
+    *
+    * @param queueId ID of the queue to associate with the top-level transfer
+    * @param request top-level description of the batch request to insert
+    */
+  def recordTransferRequest(
+    queueId: UUID,
+    request: TransferRequest
+  ): IO[(UUID, List[(UUID, Json)])]
+
+  /**
+    * Delete the top-level description, and individual transfer descriptions,
+    * of a batch transfer request.
+    */
+  def deleteTransferRequest(id: UUID): IO[Unit]
 }
 
 object DbClient {
+
+  type QueueInfo = (UUID, String, String, QueueSchema)
+
   // Recommendation from Hikari docs:
   // https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing#the-formula
   private val MaxDbConnections = (2 * Runtime.getRuntime.availableProcessors) + 1
@@ -123,7 +159,9 @@ object DbClient {
     implicit val schemaGet: Get[QueueSchema] = pgDecoderGet
     implicit val schemaPut: Put[QueueSchema] = pgEncoderPut
 
-    /** Check if the client can interact with the backing DB. */
+    // Glue for the "safe" UUID type our lib generates.
+    implicit val fuuidPut: Put[FUUID] = Put[UUID].contramap(FUUID.Unsafe.toUUID)
+
     override def checkReady: IO[Boolean] = {
       val check = for {
         _ <- logger.info("Running status check against DB...")
@@ -137,30 +175,76 @@ object DbClient {
       }
     }
 
-    /**
-      * Record a new queue resource in the DB.
-      *
-      * Will fail if a queue already exists with the input's name.
-      */
-    override def insertQueue(queue: Queue): IO[Unit] =
-      sql"""insert into queues (name, request_topic, response_topic, request_schema)
-          values (${queue.name}, ${queue.requestTopic}, ${queue.responseTopic}, ${queue.schema})""".update.run.void
+    override def createQueue(request: QueueRequest): IO[Queue] =
+      for {
+        uuid <- FUUID.randomFUUID[IO]
+        requestTopic = s"transporter.requests.$uuid"
+        responseTopic = s"transporter.responses.$uuid"
+
+        insertStatement = sql"""insert into queues (id, name, request_topic, response_topic, request_schema)
+            values ($uuid, ${request.name}, $requestTopic, $responseTopic, ${request.schema})"""
+        _ <- insertStatement.update.run.transact(transactor)
+      } yield {
+        Queue(request.name, requestTopic, responseTopic, request.schema)
+      }
+
+    override def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit] =
+      sql"""update queues set request_schema = $schema where id = $id""".update.run.void
         .transact(transactor)
 
-    /**
-      * Remove the queue resource with the given name from the DB.
-      *
-      * No-ops if no such queue exists in the DB.
-      */
     override def deleteQueue(name: String): IO[Unit] =
       sql"""delete from queues where name = $name""".update.run.void.transact(transactor)
 
-    /** Pull the queue resource with the given name from the DB, if it exists. */
-    override def lookupQueue(name: String): IO[Option[Queue]] =
-      sql"""select name, request_topic, response_topic, request_schema
+    override def lookupQueueInfo(name: String): IO[Option[QueueInfo]] =
+      sql"""select id, request_topic, response_topic, request_schema
           from queues where name = $name"""
-        .query[Queue]
+        .query[(UUID, String, String, QueueSchema)]
         .option
         .transact(transactor)
+
+    override def recordTransferRequest(
+      queueId: UUID,
+      request: TransferRequest
+    ): IO[(UUID, List[(UUID, Json)])] =
+      for {
+        requestId <- FUUID.randomFUUID[IO]
+        requestUuid = FUUID.Unsafe.toUUID(requestId)
+        transfersById <- request.transfers.traverse { transfer =>
+          FUUID.randomFUUID[IO].map(id => FUUID.Unsafe.toUUID(id) -> transfer)
+        }
+        _ <- insertRequest(queueId, requestUuid, transfersById.map(_._1))
+          .transact(transactor)
+      } yield {
+        (requestUuid, transfersById)
+      }
+
+    override def deleteTransferRequest(id: UUID): IO[Unit] =
+      sql"""delete from transfer_requests where id = $id""".update.run.void
+        .transact(transactor)
+
+    /**
+      * Build a transaction which will insert all of the rows (top-level and individual)
+      * associated with a batch of transfer requests.
+      */
+    private def insertRequest(
+      queueId: UUID,
+      requestId: UUID,
+      transferIds: List[UUID]
+    ): ConnectionIO[Unit] = {
+      val insertRequest =
+        sql"""insert into transfer_requests (id, queue_id, transfer_count)
+              values($requestId, $queueId, ${transferIds.length})""".update.run.void
+
+      val insertTransfers = Update[UUID](
+        s"insert into transfers (id, request_id, status) values (?, '$requestId', 'submitted')"
+      ).updateMany(transferIds).void
+
+      for {
+        _ <- insertRequest
+        _ <- insertTransfers
+      } yield {
+        ()
+      }
+    }
   }
 }

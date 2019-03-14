@@ -64,12 +64,15 @@ class TransferStreamSpec
     runStreams(List(queue.requestTopic, queue.responseTopic), topology, config.asMap) {
       publishToKafka(queue.requestTopic, requests)
 
+      // The default max attempts of 3 sometimes isn't enough on Jenkins.
+      implicit val consumerConfig: ConsumerRetryConfig =
+        ConsumerRetryConfig(maximumAttempts = 10)
+
       val consumer = newConsumer[String, String]
-      val results =
-        consumer
-          .consumeLazily[(String, String)](queue.responseTopic)
-          .take(requests.length)
-          .toList
+      val results = consumer
+        .consumeLazily[(String, String)](queue.responseTopic)
+        .take(requests.length)
+        .toList
       consumer.close()
 
       results.traverse {

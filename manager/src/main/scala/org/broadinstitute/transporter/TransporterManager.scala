@@ -1,20 +1,28 @@
 package org.broadinstitute.transporter
 
 import cats.data.NonEmptyList
-import cats.effect.{ExitCode, IO, IOApp, Resource}
+import cats.effect._
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import org.broadinstitute.transporter.web.{SwaggerMiddleware, WebConfig}
+import org.broadinstitute.transporter.web.{
+  InfoRoutes,
+  ApiRoutes,
+  SwaggerMiddleware,
+  WebConfig
+}
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaClient
-import org.broadinstitute.transporter.info.{InfoController, InfoRoutes}
-import org.broadinstitute.transporter.queue.{QueueController, QueueRoutes}
+import org.broadinstitute.transporter.info.InfoController
+import org.broadinstitute.transporter.queue.QueueController
+import org.broadinstitute.transporter.transfer.TransferController
 import org.http4s.HttpApp
 import org.http4s.implicits._
 import org.http4s.rho.swagger.models.Info
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.middleware.Logger
 import pureconfig.module.catseffect._
+
+import scala.concurrent.ExecutionContext
 
 /**
   * Main entry-point for the Transporter web service.
@@ -23,7 +31,11 @@ import pureconfig.module.catseffect._
   * things like a global [[scala.concurrent.ExecutionContext]] with corresponding
   * [[cats.effect.ContextShift]] and [[cats.effect.Timer]].
   */
-object TransporterManager extends IOApp {
+object TransporterManager extends IOApp.WithContext {
+
+  // Use a fixed-size thread pool w/ one thread per core for CPU-bound and non-blocking I/O.
+  override val executionContextResource: Resource[SyncIO, ExecutionContext] =
+    ExecutionContexts.fixedThreadPool[SyncIO](Runtime.getRuntime.availableProcessors)
 
   /** Top-level info to report about the app in its auto-generated documentation. */
   private val appInfo = Info(
@@ -55,9 +67,13 @@ object TransporterManager extends IOApp {
       kafkaResource = KafkaClient.resource(config.kafka, blockingEc)
       (dbClient, kafkaClient) <- (dbResource, kafkaResource).tupled
     } yield {
+      val queueController = QueueController(dbClient, kafkaClient)
       val routes = NonEmptyList.of(
         new InfoRoutes(new InfoController(appInfo.version, dbClient, kafkaClient)),
-        new QueueRoutes(new QueueController(dbClient, kafkaClient))
+        new ApiRoutes(
+          queueController,
+          TransferController(queueController, dbClient, kafkaClient)
+        )
       )
       val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
       Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)

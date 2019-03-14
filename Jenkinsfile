@@ -22,6 +22,9 @@ pipeline {
         }
     }
     post {
+        always {
+            junit '**/target/test-reports/*'
+        }
         cleanup {
             cleanWs()
         }

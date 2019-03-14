@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="2" author="danmoran">
+
+        <createTable tableName="transfer_requests">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" />
+            </column>
+            <column name="queue_id" type="uuid">
+                <constraints nullable="false"
+                             foreignKeyName="fk_queue_id"
+                             references="queues(id)" />
+            </column>
+            <column name="transfer_count" type="bigint">
+                <constraints nullable="false" />
+            </column>
+        </createTable>
+
+        <sql>
+            CREATE TYPE transfer_status AS ENUM ('submitted', 'retrying', 'failed', 'succeeded')
+        </sql>
+
+        <createTable tableName="transfers">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" />
+            </column>
+            <column name="request_id" type="uuid">
+                <constraints nullable="false"
+                             foreignKeyName="fk_request_id"
+                             references="transfer_requests(id)"
+                             deleteCascade="true" />
+            </column>
+            <column name="status" type="transfer_status">
+                <constraints nullable="false" />
+            </column>
+        </createTable>
+
+        <rollback>
+            <dropTable tableName="transfers" />
+            <sql>DROP TYPE transfer_status</sql>
+            <dropTable tableName="transfer_requests" />
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
