@@ -12,8 +12,10 @@ import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
 
 /**
-  * Client responsible for managing topic-level operations in
-  * Transporter's backing Kafka cluster.
+  * Client responsible for managing "admin" operations in Transporter's Kafka cluster.
+  *
+  * Admin ops include querying cluster-level state, creating/modifying/deleting topics,
+  * and settings ACLs (though we don't handle that yet).
   */
 trait AdminClient {
 
@@ -88,8 +90,7 @@ object AdminClient {
     *   2. Automatically clean up the underlying clients and their
     *      pools on shutdown
     *
-    * @param config settings for the underlying Kafka clients powering
-    *               our client
+    * @param config settings for the underlying Kafka client
     * @param blockingEc execution context which should run the blocking I/O
     *                   required to set up / tear down the client
     * @param cs proof of the ability to shift IO-wrapped computations
@@ -117,13 +118,12 @@ object AdminClient {
   }
 
   /**
-    * Concrete implementation of our Kafka admin client used by mainline code.
+    * Concrete implementation of our admin client used by mainline code.
     *
     * Partly a copy-paste of fs2-kafka's AdminClient, which doesn't support all
     * the functionality we need.
     *
-    * @param adminClient "raw" Java client which actually knows how to
-    *                    interact with Kafka
+    * @param adminClient client which can execute "raw" Kafka requests
     * @param topicConfig configuration to apply to all topics created
     *                    by the client
     * @param cs proof of the ability to shift IO-wrapped computations
