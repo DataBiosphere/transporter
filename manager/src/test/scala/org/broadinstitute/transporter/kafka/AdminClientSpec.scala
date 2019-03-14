@@ -3,16 +3,17 @@ package org.broadinstitute.transporter.kafka
 import cats.effect.IO
 import cats.implicits._
 import doobie.util.ExecutionContexts
+import net.manub.embeddedkafka.EmbeddedKafkaConfig
 
 class AdminClientSpec extends BaseKafkaSpec {
 
-  private def withClient[T](body: AdminClient.Impl => IO[T]): T =
+  private def withClient[T](body: (AdminClient.Impl, EmbeddedKafkaConfig) => IO[T]): T =
     withClient(identity, body)
 
   private def withClient[T](
     mapConfig: KafkaConfig => KafkaConfig,
-    body: AdminClient.Impl => IO[T]
-  ): T = withKafka[T] { config =>
+    body: (AdminClient.Impl, EmbeddedKafkaConfig) => IO[T]
+  ): T = withKafka[T] { (config, embeddedConfig) =>
     val resource = for {
       ec <- ExecutionContexts.cachedThreadPool[IO]
       adminClient <- AdminClient.adminResource(mapConfig(config), ec)
@@ -20,23 +21,26 @@ class AdminClientSpec extends BaseKafkaSpec {
       new AdminClient.Impl(adminClient, topicConfig)
     }
 
-    resource.use(body).unsafeRunSync()
+    resource.use(body(_, embeddedConfig)).unsafeRunSync()
   }
 
   behavior of "KafkaClient"
 
   it should "report ready on good configuration" in {
-    withClient(_.checkReady) shouldBe true
+    withClient((client, _) => client.checkReady) shouldBe true
   }
 
   it should "report not ready on bad configuration" in {
-    withClient(_.copy(bootstrapServers = Nil), _.checkReady) shouldBe false
+    withClient(
+      _.copy(bootstrapServers = List("localhost:1")),
+      (client, _) => client.checkReady
+    ) shouldBe false
   }
 
   it should "create topics" in {
     val topics = List("foo", "bar")
 
-    val createdTopics = withClient { client =>
+    val createdTopics = withClient { (client, _) =>
       for {
         originalTopics <- client.listTopics
         _ <- client.createTopics(topics: _*)
@@ -52,7 +56,7 @@ class AdminClientSpec extends BaseKafkaSpec {
   it should "roll back successfully created topics when other topics in the request fail" in {
     val topics = List("foo", "bar", "$$$")
 
-    val (errored, createdTopics) = withClient { client =>
+    val (errored, createdTopics) = withClient { (client, _) =>
       for {
         originalTopics <- client.listTopics
         err <- client.createTopics(topics: _*).attempt
@@ -69,10 +73,10 @@ class AdminClientSpec extends BaseKafkaSpec {
   it should "check topic existence" in {
     val topics = List("foo", "bar")
 
-    val (existsBefore, existsAfter) = withClient { client =>
+    val (existsBefore, existsAfter) = withClient { (client, embeddedConfig) =>
       for {
         existsBeforeCreate <- client.topicsExist(topics: _*)
-        _ <- topics.traverse(topic => IO.delay(createCustomTopic(topic)))
+        _ <- topics.traverse(topic => IO.delay(createCustomTopic(topic)(embeddedConfig)))
         existsAfterCreate <- client.topicsExist(topics: _*)
       } yield {
         (existsBeforeCreate, existsAfterCreate)

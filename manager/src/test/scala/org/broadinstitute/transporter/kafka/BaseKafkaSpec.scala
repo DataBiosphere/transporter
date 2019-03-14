@@ -30,8 +30,8 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
     timingConfig
   )
 
-  protected def withKafka[T](body: KafkaConfig => T): T =
+  protected def withKafka[T](body: (KafkaConfig, EmbeddedKafkaConfig) => T): T =
     withRunningKafkaOnFoundPort(baseConfig) { actualConfig =>
-      body(appConfig(actualConfig))
+      body(appConfig(actualConfig), actualConfig)
     }
 }
