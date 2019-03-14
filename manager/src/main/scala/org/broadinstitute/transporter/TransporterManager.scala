@@ -1,17 +1,20 @@
 package org.broadinstitute.transporter
 
+import java.util.UUID
+
 import cats.data.NonEmptyList
 import cats.effect._
-import cats.implicits._
 import doobie.util.ExecutionContexts
+import fs2.kafka.Serializer
+import io.circe.Json
 import org.broadinstitute.transporter.web.{
-  InfoRoutes,
   ApiRoutes,
+  InfoRoutes,
   SwaggerMiddleware,
   WebConfig
 }
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.{AdminClient, KafkaProducer}
 import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.TransferController
@@ -44,6 +47,9 @@ object TransporterManager extends IOApp.WithContext {
     description = Some("Bulk file-transfer system for data ingest / delivery")
   )
 
+  private implicit val jsonSerializer: Serializer[Json] =
+    Serializer.string.contramap[Json](_.noSpaces)
+
   /** [[IOApp]] equivalent of `main`. */
   override def run(args: List[String]): IO[ExitCode] =
     loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter").flatMap { config =>
@@ -63,16 +69,16 @@ object TransporterManager extends IOApp.WithContext {
       blockingEc <- ExecutionContexts.cachedThreadPool[IO]
       // Build clients for interacting with external resources, for use
       // across controllers in the app.
-      dbResource = DbClient.resource(config.db, blockingEc)
-      kafkaResource = KafkaClient.resource(config.kafka, blockingEc)
-      (dbClient, kafkaClient) <- (dbResource, kafkaResource).tupled
+      dbClient <- DbClient.resource(config.db, blockingEc)
+      adminClient <- AdminClient.resource(config.kafka, blockingEc)
+      producer <- KafkaProducer.resource[UUID, Json](config.kafka)
     } yield {
-      val queueController = QueueController(dbClient, kafkaClient)
+      val queueController = QueueController(dbClient, adminClient)
       val routes = NonEmptyList.of(
-        new InfoRoutes(new InfoController(appInfo.version, dbClient, kafkaClient)),
+        new InfoRoutes(new InfoController(appInfo.version, dbClient, adminClient)),
         new ApiRoutes(
           queueController,
-          TransferController(queueController, dbClient, kafkaClient)
+          TransferController(queueController, dbClient, producer)
         )
       )
       val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound

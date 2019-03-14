@@ -3,9 +3,10 @@ package org.broadinstitute.transporter.transfer
 import java.util.UUID
 
 import cats.effect.IO
+import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaClient
+import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
@@ -18,7 +19,7 @@ class TransferControllerSpec
 
   private val db = mock[DbClient]
   private val queueController = mock[QueueController]
-  private val kafka = mock[KafkaClient]
+  private val kafka = mock[KafkaProducer[UUID, Json]]
 
   private val queueName = "queue"
   private val queueId = UUID.randomUUID()

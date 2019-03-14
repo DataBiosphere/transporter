@@ -1,20 +1,15 @@
 package org.broadinstitute.transporter.kafka
 
-import java.util.UUID
-
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import fs2.kafka.Deserializer
-import io.circe.Json
-import io.circe.literal._
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
-class KafkaClientSpec
+class AdminClientSpec
     extends FlatSpec
     with Matchers
     with EmbeddedKafka
@@ -30,7 +25,8 @@ class KafkaClientSpec
   )
   private val timeouts = TimeoutConfig(
     requestTimeout = 2.seconds,
-    closeTimeout = 1.seconds
+    closeTimeout = 1.seconds,
+    metadataTtl = 500.millis
   )
 
   private val baseConfig = EmbeddedKafkaConfig(kafkaPort = 0, zooKeeperPort = 0)
@@ -41,13 +37,12 @@ class KafkaClientSpec
     timeouts
   )
 
-  private def clientResource(config: KafkaConfig): Resource[IO, KafkaClient.Impl] =
+  private def clientResource(config: KafkaConfig): Resource[IO, AdminClient.Impl] =
     for {
       ec <- blockingEc
-      adminClient <- KafkaClient.adminResource(config, ec)
-      producer <- KafkaClient.producerResource(config)
+      adminClient <- AdminClient.adminResource(config, ec)
     } yield {
-      new KafkaClient.Impl(adminClient, producer, topicConfig)
+      new AdminClient.Impl(adminClient, topicConfig)
     }
 
   behavior of "KafkaClient"
@@ -111,35 +106,5 @@ class KafkaClientSpec
         }
       }
     }
-  }
-
-  private implicit val keyDeserializer: Deserializer[UUID] =
-    Deserializer.string.map(UUID.fromString)
-  private implicit val valDeserializer: Deserializer[Json] =
-    Deserializer.string.map(io.circe.parser.parse(_).valueOr(throw _))
-
-  it should "submit messages" in {
-    val topic = "the-topic"
-
-    val messages = List(
-      UUID.randomUUID() -> json"""{ "foo": "bar" }""",
-      UUID.randomUUID() -> json"""{ "baz": "qux" }"""
-    )
-
-    val published = withRunningKafkaOnFoundPort(baseConfig) { implicit actualConfig =>
-      clientResource(config(actualConfig)).use { client =>
-        for {
-          _ <- IO.delay(createCustomTopic(topic))
-          _ <- client.submit(topic, messages)
-          consumed <- IO.delay(
-            consumeNumberKeyedMessagesFrom[UUID, Json](topic, messages.length)
-          )
-        } yield {
-          consumed
-        }
-      }.unsafeRunSync()
-    }
-
-    published shouldBe messages
   }
 }

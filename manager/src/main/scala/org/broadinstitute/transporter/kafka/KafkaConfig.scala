@@ -27,6 +27,7 @@ case class KafkaConfig(
     * which isn't acceptable for our use-case.
     */
   def producerSettings[K, V](
+    implicit
     keySerializer: Serializer[K],
     valueSerializer: Serializer[V]
   ): ProducerSettings[K, V] =
