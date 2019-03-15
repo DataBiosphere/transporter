@@ -11,7 +11,8 @@ import scala.concurrent.duration.FiniteDuration
   */
 case class TimeoutConfig(
   requestTimeout: FiniteDuration,
-  closeTimeout: FiniteDuration
+  closeTimeout: FiniteDuration,
+  topicDiscoveryInterval: FiniteDuration
 )
 
 object TimeoutConfig {

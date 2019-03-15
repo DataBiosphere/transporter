@@ -18,7 +18,8 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
 
   protected val timingConfig = TimeoutConfig(
     requestTimeout = 2.seconds,
-    closeTimeout = 1.second
+    closeTimeout = 1.second,
+    topicDiscoveryInterval = 500.millis
   )
 
   private val baseConfig = EmbeddedKafkaConfig(kafkaPort = 0, zooKeeperPort = 0)
