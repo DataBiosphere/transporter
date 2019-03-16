@@ -4,6 +4,7 @@ import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import fs2.kafka.{ProducerMessage, ProducerRecord, Serializer, KafkaProducer => KProducer}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 
 /**
   * Client responsible for pushing messages into Kafka topics.

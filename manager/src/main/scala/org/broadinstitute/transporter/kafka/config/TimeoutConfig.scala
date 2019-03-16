@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.kafka
+package org.broadinstitute.transporter.kafka.config
 
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto._

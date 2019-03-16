@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.kafka
+package org.broadinstitute.transporter.kafka.config
 
 import fs2.kafka._
 import pureconfig.ConfigReader
@@ -10,6 +10,7 @@ import scala.concurrent.ExecutionContext
 case class KafkaConfig(
   bootstrapServers: List[String],
   clientId: String,
+  batchParams: ConsumerBatchConfig,
   topicDefaults: TopicConfig,
   timeouts: TimeoutConfig
 ) {

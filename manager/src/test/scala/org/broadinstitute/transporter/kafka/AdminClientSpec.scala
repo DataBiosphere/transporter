@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.implicits._
 import doobie.util.ExecutionContexts
 import net.manub.embeddedkafka.EmbeddedKafkaConfig
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 
 class AdminClientSpec extends BaseKafkaSpec {
 

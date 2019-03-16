@@ -3,6 +3,7 @@ package org.broadinstitute.transporter.kafka
 import java.util.UUID
 
 import cats.effect.{IO, Timer}
+import fs2.Stream
 import fs2.concurrent.Queue
 import fs2.kafka.Serializer
 
@@ -32,9 +33,8 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           )
         }
         out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach {
-            case Right(out) => q.enqueue1(out)
-            case Left(err)  => IO.raiseError(err)
+          val fiber = consumer.runForeach { batch =>
+            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
           }.start
 
           fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
@@ -57,9 +57,8 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
         q <- Queue.unbounded[IO, (Int, UUID)]
         _ <- IO.delay(createCustomTopic("the-topic")(embeddedConfig))
         out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach {
-            case Right(out) => q.enqueue1(out)
-            case Left(err)  => IO.raiseError(err)
+          val fiber = consumer.runForeach { batch =>
+            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
           }.start
 
           fiber.bracket({ _ =>
@@ -97,9 +96,8 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           )
         }
         out1 <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach {
-            case Right(out) => q.enqueue1(out)
-            case Left(err)  => IO.raiseError(err)
+          val fiber = consumer.runForeach { batch =>
+            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
           }.start
 
           fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
@@ -136,11 +134,14 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           )
         )
         out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach {
-            case Right(out) =>
-              IO.raiseError(new IllegalStateException(s"Decoding of $out failed to fail"))
-            case Left(err) =>
-              q.enqueue1(err)
+          val fiber = consumer.runForeach { batch =>
+            Stream
+              .emits(batch)
+              .covary[IO]
+              .collect { case Left(err) => err }
+              .through(q.enqueue)
+              .compile
+              .drain
           }.start
 
           fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
@@ -170,11 +171,14 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           )
         )
         out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach {
-            case Right(out) =>
-              IO.raiseError(new IllegalStateException(s"Decoding of $out failed to fail"))
-            case Left(err) =>
-              q.enqueue1(err)
+          val fiber = consumer.runForeach { batch =>
+            Stream
+              .emits(batch)
+              .covary[IO]
+              .collect { case Left(err) => err }
+              .through(q.enqueue)
+              .compile
+              .drain
           }.start
 
           fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
@@ -206,9 +210,8 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           )
         }
         out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach {
-            case Right(out) => q.enqueue1(out)
-            case Left(err)  => IO.raiseError(err)
+          val fiber = consumer.runForeach { batch =>
+            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
           }.start
 
           fiber.bracket({ _ =>

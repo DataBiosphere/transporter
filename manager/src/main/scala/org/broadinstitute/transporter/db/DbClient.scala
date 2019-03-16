@@ -16,6 +16,7 @@ import doobie.util.update.Update
 import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
+import org.broadinstitute.transporter.db.config.DbConfig
 import org.broadinstitute.transporter.queue.{Queue, QueueRequest, QueueSchema}
 import org.broadinstitute.transporter.transfer.TransferRequest
 

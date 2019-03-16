@@ -1,7 +1,6 @@
 package org.broadinstitute.transporter
-
-import org.broadinstitute.transporter.db.DbConfig
-import org.broadinstitute.transporter.kafka.KafkaConfig
+import org.broadinstitute.transporter.db.config.DbConfig
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 import org.broadinstitute.transporter.web.WebConfig
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto._
