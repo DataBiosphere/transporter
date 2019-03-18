@@ -1,7 +1,14 @@
 package org.broadinstitute.transporter.kafka
 
+import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
+import org.broadinstitute.transporter.kafka.config.{
+  ConsumerBatchConfig,
+  KafkaConfig,
+  TimeoutConfig,
+  TopicConfig
+}
 import org.scalatest.{FlatSpec, Matchers}
 
 import scala.concurrent.ExecutionContext
@@ -18,14 +25,21 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
 
   protected val timingConfig = TimeoutConfig(
     requestTimeout = 2.seconds,
-    closeTimeout = 1.second
+    closeTimeout = 1.second,
+    topicDiscoveryInterval = 500.millis
+  )
+
+  protected val batchConfig = ConsumerBatchConfig(
+    maxRecords = 2,
+    waitTime = 500.millis
   )
 
   private val baseConfig = EmbeddedKafkaConfig(kafkaPort = 0, zooKeeperPort = 0)
 
   protected def appConfig(embeddedConfig: EmbeddedKafkaConfig) = KafkaConfig(
-    List(s"localhost:${embeddedConfig.kafkaPort}"),
+    NonEmptyList.of(s"localhost:${embeddedConfig.kafkaPort}"),
     "kafka-test",
+    batchConfig,
     topicConfig,
     timingConfig
   )

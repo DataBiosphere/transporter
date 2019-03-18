@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.db
+package org.broadinstitute.transporter.db.config
 
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto._

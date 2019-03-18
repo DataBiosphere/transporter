@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.kafka
+package org.broadinstitute.transporter.kafka.config
 
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto._
@@ -11,7 +11,8 @@ import scala.concurrent.duration.FiniteDuration
   */
 case class TimeoutConfig(
   requestTimeout: FiniteDuration,
-  closeTimeout: FiniteDuration
+  closeTimeout: FiniteDuration,
+  topicDiscoveryInterval: FiniteDuration
 )
 
 object TimeoutConfig {

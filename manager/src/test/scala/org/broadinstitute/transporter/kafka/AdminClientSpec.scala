@@ -1,9 +1,11 @@
 package org.broadinstitute.transporter.kafka
 
+import cats.data.NonEmptyList
 import cats.effect.IO
 import cats.implicits._
 import doobie.util.ExecutionContexts
 import net.manub.embeddedkafka.EmbeddedKafkaConfig
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 
 class AdminClientSpec extends BaseKafkaSpec {
 
@@ -32,7 +34,7 @@ class AdminClientSpec extends BaseKafkaSpec {
 
   it should "report not ready on bad configuration" in {
     withClient(
-      _.copy(bootstrapServers = List("localhost:1")),
+      _.copy(bootstrapServers = NonEmptyList.of("localhost:1")),
       (client, _) => client.checkReady
     ) shouldBe false
   }

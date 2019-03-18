@@ -5,8 +5,9 @@ import java.util.concurrent.{CancellationException, CompletionException}
 import cats.effect._
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.apache.kafka.clients.admin.{AdminClient => JAdminClient, NewTopic}
+import org.apache.kafka.clients.admin.{NewTopic, AdminClient => JAdminClient}
 import org.apache.kafka.common.KafkaFuture
+import org.broadinstitute.transporter.kafka.config.{KafkaConfig, TopicConfig}
 
 import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
