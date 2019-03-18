@@ -1,5 +1,7 @@
 package org.broadinstitute.transporter.kafka.config
 
+import cats.data.NonEmptyList
+import cats.implicits._
 import fs2.kafka._
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto._
@@ -8,18 +10,21 @@ import scala.concurrent.ExecutionContext
 
 /** Configuration determining how Transporter should interact with its backing Kafka cluster. */
 case class KafkaConfig(
-  bootstrapServers: List[String],
+  bootstrapServers: NonEmptyList[String],
   clientId: String,
   batchParams: ConsumerBatchConfig,
   topicDefaults: TopicConfig,
   timeouts: TimeoutConfig
 ) {
 
+  // Underlying Kafka libs want everything as a string...
+  private lazy val bootstrapString = bootstrapServers.mkString_(",")
+
   /** Convert this config into settings for a [[org.apache.kafka.clients.admin.AdminClient]]. */
   def adminSettings: AdminClientSettings =
     AdminClientSettings.Default
     // Required to connect to Kafka at all.
-      .withBootstrapServers(bootstrapServers.mkString(","))
+      .withBootstrapServers(bootstrapString)
       // For debugging on the Kafka server; adds an ID to the logs.
       .withClientId(clientId)
       // No "official" recommendation on these values, we can tweak as we see fit.
@@ -39,7 +44,7 @@ case class KafkaConfig(
   ): ProducerSettings[K, V] =
     ProducerSettings(keySerializer, valueSerializer)
     // Required to connect to Kafka at all.
-      .withBootstrapServers(bootstrapServers.mkString(","))
+      .withBootstrapServers(bootstrapString)
       // For debugging on the Kafka server; adds an ID to the logs.
       .withClientId(clientId)
       // Recommended for apps where it's not acceptable to lose messages.
@@ -68,7 +73,7 @@ case class KafkaConfig(
   ): ConsumerSettings[K, V] =
     ConsumerSettings[K, V](keyDeserializer, valueDeserializer, actorEc)
     // Required to connect to Kafka at all.
-      .withBootstrapServers(bootstrapServers.mkString(","))
+      .withBootstrapServers(bootstrapString)
       /*
        * Required to be the same across:
        *   1. All running instances of the Transporter manager, to avoid processing a single
@@ -98,6 +103,8 @@ case class KafkaConfig(
 }
 
 object KafkaConfig {
+  // Don't listen to IntelliJ; needed for deriving the NonEmptyList reader.
+  import pureconfig.module.cats._
 
   /**
     * Consumer group ID to use in every instance of the Transporter manager.

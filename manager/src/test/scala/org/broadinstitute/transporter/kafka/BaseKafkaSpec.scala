@@ -1,5 +1,6 @@
 package org.broadinstitute.transporter.kafka
 
+import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.broadinstitute.transporter.kafka.config.{
@@ -36,7 +37,7 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
   private val baseConfig = EmbeddedKafkaConfig(kafkaPort = 0, zooKeeperPort = 0)
 
   protected def appConfig(embeddedConfig: EmbeddedKafkaConfig) = KafkaConfig(
-    List(s"localhost:${embeddedConfig.kafkaPort}"),
+    NonEmptyList.of(s"localhost:${embeddedConfig.kafkaPort}"),
     "kafka-test",
     batchConfig,
     topicConfig,
