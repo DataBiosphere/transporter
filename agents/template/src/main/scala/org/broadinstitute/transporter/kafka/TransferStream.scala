@@ -11,9 +11,9 @@ import org.apache.kafka.streams.Topology
 import org.apache.kafka.streams.scala.StreamsBuilder
 import org.broadinstitute.transporter.queue.Queue
 import org.broadinstitute.transporter.transfer.{
-  TransferResult,
+  TransferSummary,
   TransferRunner,
-  TransferStatus
+  TransferResult
 }
 import org.everit.json.schema.ValidationException
 
@@ -98,7 +98,7 @@ object TransferStream {
 
           logger
             .error(err)(log)
-            .as(TransferResult(TransferStatus.FatalFailure, Some(resultInfo.asJson)))
+            .as(TransferSummary(TransferResult.FatalFailure, Some(resultInfo.asJson)))
         }
 
         id -> recovered.map(_.asJson.noSpaces.getBytes).unsafeRunSync()

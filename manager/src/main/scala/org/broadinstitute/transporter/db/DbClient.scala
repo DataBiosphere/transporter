@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.db
 
 import java.util.UUID
 
+import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import doobie.hi._
@@ -17,8 +18,13 @@ import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.config.DbConfig
-import org.broadinstitute.transporter.queue.{Queue, QueueRequest, QueueSchema}
-import org.broadinstitute.transporter.transfer.TransferRequest
+import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
+import org.broadinstitute.transporter.transfer.{
+  TransferRequest,
+  TransferResult,
+  TransferStatus,
+  TransferSummary
+}
 
 import scala.concurrent.ExecutionContext
 
@@ -39,7 +45,7 @@ trait DbClient {
     * @param request user-specified information defining pieces of
     *                the queue to create
     */
-  def createQueue(request: QueueRequest): IO[Queue]
+  def createQueue(request: QueueRequest): IO[DbClient.QueueInfo]
 
   /** Update the expected JSON schema for the queue with the given ID. */
   def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit]
@@ -72,11 +78,29 @@ trait DbClient {
     * of a batch transfer request.
     */
   def deleteTransferRequest(id: UUID): IO[Unit]
+
+  /**
+    * Update the current view of the status of a set of in-flight transfers
+    * based on a batch of results returned by some number of agents.
+    *
+    * @param results batch of ID -> result pairs pulled from Kafka which
+    *                should be pushed into the DB
+    */
+  def updateTransfers(results: List[(UUID, TransferSummary)]): IO[Unit]
+
+  /** Get info needed to resubmit a batch of transfers to Kafka. */
+  def getResubmitInfoForTransfers(
+    transferIds: NonEmptyList[UUID]
+  ): IO[List[DbClient.ResubmitInfo]]
 }
 
 object DbClient {
 
+  /** ID, request-topic, result-topic, schema. */
   type QueueInfo = (UUID, String, String, QueueSchema)
+
+  /** ID, request-topic, request-body. */
+  type ResubmitInfo = (UUID, String, Json)
 
   // Recommendation from Hikari docs:
   // https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing#the-formula
@@ -176,7 +200,7 @@ object DbClient {
       }
     }
 
-    override def createQueue(request: QueueRequest): IO[Queue] =
+    override def createQueue(request: QueueRequest): IO[QueueInfo] =
       for {
         uuid <- FUUID.randomFUUID[IO]
         requestTopic = s"transporter.requests.$uuid"
@@ -186,7 +210,7 @@ object DbClient {
             values ($uuid, ${request.name}, $requestTopic, $responseTopic, ${request.schema})"""
         _ <- insertStatement.update.run.transact(transactor)
       } yield {
-        Queue(request.name, requestTopic, responseTopic, request.schema)
+        (FUUID.Unsafe.toUUID(uuid), requestTopic, responseTopic, request.schema)
       }
 
     override def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit] =
@@ -213,8 +237,7 @@ object DbClient {
         transfersById <- request.transfers.traverse { transfer =>
           FUUID.randomFUUID[IO].map(id => FUUID.Unsafe.toUUID(id) -> transfer)
         }
-        _ <- insertRequest(queueId, requestUuid, transfersById.map(_._1))
-          .transact(transactor)
+        _ <- insertRequest(queueId, requestUuid, transfersById).transact(transactor)
       } yield {
         (requestUuid, transfersById)
       }
@@ -223,6 +246,36 @@ object DbClient {
       sql"""delete from transfer_requests where id = $id""".update.run.void
         .transact(transactor)
 
+    override def updateTransfers(summary: List[(UUID, TransferSummary)]): IO[Unit] = {
+      val newStatuses = summary.map {
+        case (id, s) =>
+          val status = s.result match {
+            case TransferResult.Success          => TransferStatus.Succeeded
+            case TransferResult.TransientFailure => TransferStatus.Retrying
+            case TransferResult.FatalFailure     => TransferStatus.Failed
+          }
+          (status, s.info, id)
+      }
+
+      Update[(TransferStatus, Option[Json], UUID)](
+        "update transfers set status = ?, info = ? where id = ?"
+      ).updateMany(newStatuses)
+        .void
+        .transact(transactor)
+    }
+
+    override def getResubmitInfoForTransfers(
+      transferIds: NonEmptyList[UUID]
+    ): IO[List[DbClient.ResubmitInfo]] = {
+      val query = fr"""select t.id, q.request_topic, t.body from
+            transfers t
+            left join transfer_requests r on t.request_id = r.id
+            left join queues q on r.queue_id = q.id
+            where""" ++ doobie.Fragments.in(fr"t.id", transferIds)
+
+      query.query[(UUID, String, Json)].to[List].transact(transactor)
+    }
+
     /**
       * Build a transaction which will insert all of the rows (top-level and individual)
       * associated with a batch of transfer requests.
@@ -230,22 +283,17 @@ object DbClient {
     private def insertRequest(
       queueId: UUID,
       requestId: UUID,
-      transferIds: List[UUID]
+      transfersById: List[(UUID, Json)]
     ): ConnectionIO[Unit] = {
       val insertRequest =
-        sql"""insert into transfer_requests (id, queue_id, transfer_count)
-              values($requestId, $queueId, ${transferIds.length})""".update.run.void
+        sql"""insert into transfer_requests (id, queue_id) values ($requestId, $queueId)""".update.run.void
 
-      val insertTransfers = Update[UUID](
-        s"insert into transfers (id, request_id, status) values (?, '$requestId', 'submitted')"
-      ).updateMany(transferIds).void
+      val insertTransfers = Update[(UUID, Json)](
+        s"""insert into transfers (id, request_id, status, body, info)
+            values (?, '$requestId', '${TransferStatus.Submitted.entryName}', ?, NULL)"""
+      ).updateMany(transfersById).void
 
-      for {
-        _ <- insertRequest
-        _ <- insertTransfers
-      } yield {
-        ()
-      }
+      insertRequest.flatMap(_ => insertTransfers)
     }
   }
 }

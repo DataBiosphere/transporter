@@ -1,17 +1,42 @@
 package org.broadinstitute.transporter.transfer
 
-import io.circe.{Decoder, Encoder, Json}
-import io.circe.derivation.{deriveDecoder, deriveEncoder}
+import enumeratum.EnumEntry.UpperSnakecase
+import enumeratum.{CirceEnum, Enum, EnumEntry}
+
+import scala.collection.immutable.IndexedSeq
 
 /**
-  * Description of an attempt to run a transfer.
-  *
-  * @param status signal describing the success/failure of the attempt
-  * @param info optional extra information describing the status signal in more detail
+  * Signal sent from Transporter agents to the manager describing the
+  * result of an attempt to run a transfer request.
   */
-case class TransferResult(status: TransferStatus, info: Option[Json])
+sealed trait TransferResult extends EnumEntry with Product with Serializable
 
-object TransferResult {
-  implicit val decoder: Decoder[TransferResult] = deriveDecoder
-  implicit val encoder: Encoder[TransferResult] = deriveEncoder
+object TransferResult
+    extends Enum[TransferResult]
+    with CirceEnum[TransferResult]
+    with UpperSnakecase {
+
+  override val values: IndexedSeq[TransferResult] = findValues
+
+  /** Signal for transfers that completed successfully. */
+  case object Success extends TransferResult
+
+  /**
+    * Signal for transfers that failed with a transient error and
+    * are likely to succeed if resubmitted.
+    *
+    * Whether or not a failure should be considered transient is
+    * left up to the individual agent implementations.
+    */
+  case object TransientFailure extends TransferResult
+
+  /**
+    * Signal for transfers that failed and are likely / guaranteed
+    * to fail again if resubmitted.
+    *
+    * Agents can choose to manually return this error with descriptive
+    * info. Uncaught exceptions during transfer processing also result
+    * in this status being sent.
+    */
+  case object FatalFailure extends TransferResult
 }
