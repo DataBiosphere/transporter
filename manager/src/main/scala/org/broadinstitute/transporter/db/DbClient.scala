@@ -18,13 +18,9 @@ import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.config.DbConfig
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
-import org.broadinstitute.transporter.transfer.{
-  TransferRequest,
-  TransferResult,
-  TransferStatus,
-  TransferSummary
-}
+import org.broadinstitute.transporter.transfer._
 
 import scala.concurrent.ExecutionContext
 
@@ -72,6 +68,18 @@ trait DbClient {
     queueId: UUID,
     request: TransferRequest
   ): IO[(UUID, List[(UUID, Json)])]
+
+  /**
+    * Compute and return the count of transfers in each possible "transfer status"
+    * registered under a queue/request pair.
+    *
+    * @param queueId ID of the queue to count statuses under
+    * @param requestId ID of the request to count statuses under
+    */
+  def lookupTransferStatuses(
+    queueId: UUID,
+    requestId: UUID
+  ): IO[Map[TransferStatus, Long]]
 
   /**
     * Delete the top-level description, and individual transfer descriptions,
@@ -203,8 +211,8 @@ object DbClient {
     override def createQueue(request: QueueRequest): IO[QueueInfo] =
       for {
         uuid <- FUUID.randomFUUID[IO]
-        requestTopic = s"transporter.requests.$uuid"
-        responseTopic = s"transporter.responses.$uuid"
+        requestTopic = s"${KafkaConfig.RequestTopicPrefix}$uuid"
+        responseTopic = s"${KafkaConfig.ResponseTopicPrefix}$uuid"
 
         insertStatement = sql"""insert into queues (id, name, request_topic, response_topic, request_schema)
             values ($uuid, ${request.name}, $requestTopic, $responseTopic, ${request.schema})"""
@@ -241,6 +249,21 @@ object DbClient {
       } yield {
         (requestUuid, transfersById)
       }
+
+    override def lookupTransferStatuses(
+      queueId: UUID,
+      requestId: UUID
+    ): IO[Map[TransferStatus, Long]] = {
+      sql"""select t.status, count(*) from transfers t
+            left join transfer_requests r on t.request_id = r.id
+            left join queues q on r.queue_id = q.id
+            where q.id = $queueId and r.id = $requestId
+            group by t.status"""
+        .query[(TransferStatus, Long)]
+        .to[List]
+        .map(_.toMap)
+        .transact(transactor)
+    }
 
     override def deleteTransferRequest(id: UUID): IO[Unit] =
       sql"""delete from transfer_requests where id = $id""".update.run.void

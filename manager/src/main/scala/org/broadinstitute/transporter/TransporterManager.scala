@@ -1,12 +1,15 @@
 package org.broadinstitute.transporter
 
+import java.nio.ByteBuffer
 import java.util.UUID
 
 import cats.data.NonEmptyList
 import cats.effect._
+import cats.implicits._
 import doobie.util.ExecutionContexts
-import fs2.kafka.Serializer
-import io.circe.Json
+import fs2.kafka.{Deserializer, Serializer}
+import io.circe.{Decoder, Json}
+import io.circe.jawn.JawnParser
 import org.broadinstitute.transporter.web.{
   ApiRoutes,
   InfoRoutes,
@@ -14,10 +17,15 @@ import org.broadinstitute.transporter.web.{
   WebConfig
 }
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.{AdminClient, KafkaProducer}
+import org.broadinstitute.transporter.kafka.{AdminClient, KafkaConsumer, KafkaProducer}
 import org.broadinstitute.transporter.info.InfoController
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 import org.broadinstitute.transporter.queue.QueueController
-import org.broadinstitute.transporter.transfer.TransferController
+import org.broadinstitute.transporter.transfer.{
+  ResultListener,
+  TransferController,
+  TransferSummary
+}
 import org.http4s.HttpApp
 import org.http4s.implicits._
 import org.http4s.rho.swagger.models.Info
@@ -47,14 +55,39 @@ object TransporterManager extends IOApp.WithContext {
     description = Some("Bulk file-transfer system for data ingest / delivery")
   )
 
+  /** [[IOApp]] equivalent of `main`. */
+  override def run(args: List[String]): IO[ExitCode] =
+    for {
+      config <- loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter")
+      manager = new TransporterManager(config, appInfo)
+      retcode <- manager.run
+    } yield {
+      retcode
+    }
+}
+
+class TransporterManager private[transporter] (config: ManagerConfig, info: Info)(
+  implicit cs: ContextShift[IO],
+  t: Timer[IO]
+) {
+
   private implicit val jsonSerializer: Serializer[Json] =
     Serializer.string.contramap[Json](_.noSpaces)
 
-  /** [[IOApp]] equivalent of `main`. */
-  override def run(args: List[String]): IO[ExitCode] =
-    loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter").flatMap { config =>
-      appResource(config).use(bindAndRun(_, config.web))
-    }
+  private implicit val jsonDeserializer: Deserializer.Attempt[Json] = {
+    val parser = new JawnParser()
+    Deserializer.bytes.map(bytes => parser.parseByteBuffer(ByteBuffer.wrap(bytes.get)))
+  }
+
+  private implicit def decodingDeserializer[A: Decoder]: Deserializer.Attempt[A] =
+    jsonDeserializer.map(_.flatMap(_.as[A]))
+
+  def run: IO[ExitCode] = appResource(config).use {
+    case (httpApp, listener) =>
+      (bindAndRun(httpApp, config.web), listener.processResults).parMapN {
+        case (exit, _) => exit
+      }
+  }
 
   /**
     * Construct a Transporter web service which can be run by http4s.
@@ -63,7 +96,9 @@ object TransporterManager extends IOApp.WithContext {
     * setup / teardown logic for the underlying thread pools & external
     * connections used by the app.
     */
-  private def appResource(config: ManagerConfig): Resource[IO, HttpApp[IO]] =
+  private def appResource(
+    config: ManagerConfig
+  ): Resource[IO, (HttpApp[IO], ResultListener)] =
     for {
       // Set up a thread pool to run all blocking I/O throughout the app.
       blockingEc <- ExecutionContexts.cachedThreadPool[IO]
@@ -72,17 +107,25 @@ object TransporterManager extends IOApp.WithContext {
       dbClient <- DbClient.resource(config.db, blockingEc)
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
       producer <- KafkaProducer.resource[UUID, Json](config.kafka)
+      consumer <- KafkaConsumer
+        .resource[UUID, TransferSummary](
+          s"${KafkaConfig.ResponseTopicPrefix}.+".r,
+          config.kafka
+        )
     } yield {
       val queueController = QueueController(dbClient, adminClient)
       val routes = NonEmptyList.of(
-        new InfoRoutes(new InfoController(appInfo.version, dbClient, adminClient)),
+        new InfoRoutes(new InfoController(info.version, dbClient, adminClient)),
         new ApiRoutes(
           queueController,
           TransferController(queueController, dbClient, producer)
         )
       )
-      val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
-      Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
+      val appRoutes = SwaggerMiddleware(routes, info, blockingEc).orNotFound
+      val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
+      val listener = ResultListener(consumer, producer, dbClient)
+
+      (http, listener)
     }
 
   /**

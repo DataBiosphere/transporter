@@ -22,11 +22,12 @@ trait QueueController {
     * Fetch the queue model with the given name, if it exists
     * and is in a consistent state.
     */
-  final def lookupQueue(name: String): IO[Option[Queue]] =
-    lookupQueueInfo(name).map(_.map {
-      case (_, req, res, schema) =>
-        Queue(name, req, res, schema)
-    })
+  final def lookupQueue(name: String): IO[Queue] =
+    lookupQueueInfo(name).flatMap {
+      case Some((_, req, res, schema)) =>
+        IO.pure(Queue(name, req, res, schema))
+      case None => IO.raiseError(QueueController.NoSuchQueue(name))
+    }
 
   /**
     * Fetch information stored about the queue with the given name,
@@ -44,6 +45,10 @@ object QueueController {
   // Pseudo-constructor for the Impl subclass.
   def apply(dbClient: DbClient, kafkaClient: AdminClient): QueueController =
     new Impl(dbClient, kafkaClient)
+
+  /** Exception used to mark when a user attempts to interact with a nonexistent queue. */
+  case class NoSuchQueue(name: String)
+      extends IllegalArgumentException(s"Queue '$name' does not exist")
 
   /** Exception used to mark when a user attempts to create a queue that already exists. */
   case class QueueAlreadyExists(name: String)

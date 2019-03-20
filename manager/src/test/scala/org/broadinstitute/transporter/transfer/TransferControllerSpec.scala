@@ -55,9 +55,10 @@ class TransferControllerSpec
   it should "raise errors on submissions to nonexistent queues" in {
     (queueController.lookupQueueInfo _).expects(queueName).returning(IO.pure(None))
 
-    a[TransferController.NoSuchQueue] shouldBe thrownBy {
-      controller.submitTransfer(queueName, goodRequest).unsafeRunSync()
-    }
+    controller
+      .submitTransfer(queueName, goodRequest)
+      .attempt
+      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
   }
 
   it should "validate the schemas of submitted requests" in {
@@ -87,5 +88,118 @@ class TransferControllerSpec
       .submitTransfer(queueName, goodRequest)
       .attempt
       .unsafeRunSync() shouldBe Left(err)
+  }
+
+  it should "look up statuses for running requests" in {
+    val counts = Map[TransferStatus, Long](TransferStatus.Succeeded -> 10)
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferStatuses _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(counts))
+
+    controller
+      .lookupTransferStatus(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestStatus(
+      TransferStatus.Succeeded,
+      counts ++ Map(
+        TransferStatus.Failed -> 0L,
+        TransferStatus.Retrying -> 0L,
+        TransferStatus.Submitted -> 0L
+      )
+    )
+  }
+
+  it should "return an error if looking up statuses for an ID with no registered transfers" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferStatuses _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(Map.empty))
+
+    controller
+      .lookupTransferStatus(queueName, requestId)
+      .attempt
+      .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
+  }
+
+  it should "return an error if looking up statuses for an unregistered queue name" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(None))
+
+    controller
+      .lookupTransferStatus(queueName, requestId)
+      .attempt
+      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+  }
+
+  it should "prioritize failures over all in request summaries" in {
+    val counts = Map(
+      TransferStatus.Submitted -> 10L,
+      TransferStatus.Succeeded -> 5L,
+      TransferStatus.Retrying -> 2L,
+      TransferStatus.Failed -> 1L
+    )
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferStatuses _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(counts))
+
+    controller
+      .lookupTransferStatus(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestStatus(TransferStatus.Failed, counts)
+  }
+
+  it should "prioritize retries over successes and submissions in request summaries" in {
+    val counts = Map(
+      TransferStatus.Submitted -> 10L,
+      TransferStatus.Succeeded -> 5L,
+      TransferStatus.Retrying -> 2L
+    )
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferStatuses _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(counts))
+
+    controller
+      .lookupTransferStatus(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestStatus(
+      TransferStatus.Retrying,
+      counts + (TransferStatus.Failed -> 0L)
+    )
+  }
+
+  it should "prioritize in-progress submissions over successes in request summaries" in {
+    val counts = Map(
+      TransferStatus.Submitted -> 10L,
+      TransferStatus.Succeeded -> 5L
+    )
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferStatuses _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(counts))
+
+    controller
+      .lookupTransferStatus(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestStatus(
+      TransferStatus.Submitted,
+      counts ++ Map(
+        TransferStatus.Failed -> 0L,
+        TransferStatus.Retrying -> 0L
+      )
+    )
   }
 }

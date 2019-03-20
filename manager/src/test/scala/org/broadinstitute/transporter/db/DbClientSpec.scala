@@ -1,21 +1,16 @@
 package org.broadinstitute.transporter.db
 
-import java.nio.file.Paths
-import java.sql.DriverManager
 import java.util.UUID
 
 import cats.data.NonEmptyList
-import cats.effect.{ContextShift, IO, Resource}
+import cats.effect.{ContextShift, IO}
 import cats.implicits._
-import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import doobie.implicits._
 import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
 import io.circe.Json
 import io.circe.literal._
-import liquibase.{Contexts, Liquibase}
-import liquibase.database.jvm.JdbcConnection
-import liquibase.resource.FileSystemResourceAccessor
+import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
 import org.broadinstitute.transporter.transfer.{
   TransferRequest,
@@ -23,47 +18,17 @@ import org.broadinstitute.transporter.transfer.{
   TransferStatus,
   TransferSummary
 }
-import org.scalatest.{EitherValues, FlatSpec, Matchers, OptionValues}
+import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
 
 class DbClientSpec
-    extends FlatSpec
-    with ForAllTestContainer
-    with Matchers
+    extends PostgresSpec
     with EitherValues
     with OptionValues
     with JsonInstances {
 
-  override val container: PostgreSQLContainer = PostgreSQLContainer("postgres:9.6.10")
-
-  private val changelogDir = Paths.get("db")
-
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
-
-  override def afterStart(): Unit = {
-    val acquireConn = for {
-      _ <- IO(Class.forName(container.driverClassName))
-      jdbc <- IO(
-        DriverManager
-          .getConnection(container.jdbcUrl, container.username, container.password)
-      )
-    } yield {
-      new JdbcConnection(jdbc)
-    }
-
-    val releaseConn = (c: JdbcConnection) => IO.delay(c.close())
-
-    Resource
-      .make(acquireConn)(releaseConn)
-      .use { liquibaseConn =>
-        val accessor =
-          new FileSystemResourceAccessor(changelogDir.toAbsolutePath.toString)
-        val liquibase = new Liquibase("changelog.xml", accessor, liquibaseConn)
-        IO.delay(liquibase.update(new Contexts()))
-      }
-      .unsafeRunSync()
-  }
 
   private def testTransactor(password: String): Transactor[IO] =
     Transactor.fromDriverManager[IO](
@@ -167,18 +132,12 @@ class DbClientSpec
     val results =
       List.tabulate(10)(i => TransferSummary(TransferResult.values(i % 3), None))
 
-    val statusCountsQuery =
-      sql"select status, count(*) from transfers group by status"
-        .query[(TransferStatus, Int)]
-        .to[List]
-        .map(_.toMap)
-
     val checks = for {
       (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
-      (_, reqs) <- client.recordTransferRequest(queueId, requests)
-      preCounts <- statusCountsQuery.transact(transactor)
+      (reqId, reqs) <- client.recordTransferRequest(queueId, requests)
+      preCounts <- client.lookupTransferStatuses(queueId, reqId)
       _ <- client.updateTransfers(reqs.map(_._1).zip(results))
-      postCounts <- statusCountsQuery.transact(transactor)
+      postCounts <- client.lookupTransferStatuses(queueId, reqId)
       _ <- client.deleteQueue("foo")
     } yield {
       preCounts shouldBe Map(TransferStatus.Submitted -> 10)

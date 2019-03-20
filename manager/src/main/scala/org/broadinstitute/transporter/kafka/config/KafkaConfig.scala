@@ -113,5 +113,9 @@ object KafkaConfig {
     */
   val ManagerGroup = "transporter-manager"
 
+  val RequestTopicPrefix = "transporter.requests."
+
+  val ResponseTopicPrefix = "transporter.responses."
+
   implicit val reader: ConfigReader[KafkaConfig] = deriveReader
 }
