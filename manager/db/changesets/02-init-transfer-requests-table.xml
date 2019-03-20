@@ -13,10 +13,8 @@
             <column name="queue_id" type="uuid">
                 <constraints nullable="false"
                              foreignKeyName="fk_queue_id"
-                             references="queues(id)" />
-            </column>
-            <column name="transfer_count" type="bigint">
-                <constraints nullable="false" />
+                             references="queues(id)"
+                             deleteCascade="true" />
             </column>
         </createTable>
 
@@ -37,7 +35,15 @@
             <column name="status" type="transfer_status">
                 <constraints nullable="false" />
             </column>
+            <column name="body" type="json">
+                <constraints nullable="false" />
+            </column>
+            <column name="info" type="json" />
         </createTable>
+
+        <createIndex tableName="transfers" indexName="transfers_status">
+            <column name="status" />
+        </createIndex>
 
         <rollback>
             <dropTable tableName="transfers" />

@@ -13,5 +13,5 @@ trait TransferRunner {
   /**
     * Run the transfer described by the given request.
     */
-  def transfer(request: Json): TransferResult
+  def transfer(request: Json): TransferSummary
 }

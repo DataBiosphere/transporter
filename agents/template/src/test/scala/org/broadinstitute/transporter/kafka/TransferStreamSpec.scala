@@ -13,9 +13,9 @@ import net.manub.embeddedkafka.streams.EmbeddedKafkaStreamsAllInOne
 import org.broadinstitute.transporter.kafka.TransferStream.UnhandledErrorInfo
 import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.broadinstitute.transporter.transfer.{
-  TransferResult,
+  TransferSummary,
   TransferRunner,
-  TransferStatus
+  TransferResult
 }
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
@@ -37,7 +37,7 @@ class TransferStreamSpec
   private val UnhandledError = new RuntimeException("OH NO")
 
   private val echoRunner = new TransferRunner {
-    override def transfer(request: Json): TransferResult =
+    override def transfer(request: Json): TransferSummary =
       request.as[EchoRequest].flatMap(_.result.toRight(UnhandledError)).valueOr(throw _)
   }
 
@@ -57,7 +57,7 @@ class TransferStreamSpec
     */
   private def roundTripTransfers(
     requests: List[(String, String)]
-  ): List[(String, TransferResult)] = {
+  ): List[(String, TransferSummary)] = {
     val topology = TransferStream.build(queue, echoRunner)
     val config = KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"))
 
@@ -77,7 +77,7 @@ class TransferStreamSpec
 
       results.traverse {
         case (k, v) =>
-          parse(v).flatMap(_.as[TransferResult]).map(k -> _)
+          parse(v).flatMap(_.as[TransferSummary]).map(k -> _)
       }.right.value
     }
   }
@@ -86,9 +86,9 @@ class TransferStreamSpec
 
   it should "receive requests, execute transfers, and push responses" in {
     val expected = List(
-      "no-info" -> TransferResult(TransferStatus.Success, None),
-      "with-info" -> TransferResult(
-        TransferStatus.TransientFailure,
+      "no-info" -> TransferSummary(TransferResult.Success, None),
+      "with-info" -> TransferSummary(
+        TransferResult.TransientFailure,
         Some(json"""{"foo": "bar"}""")
       )
     )
@@ -100,7 +100,7 @@ class TransferStreamSpec
   }
 
   it should "push error results if non-JSON values end up on the request topic" in {
-    val goodResult = TransferResult(TransferStatus.Success, None)
+    val goodResult = TransferSummary(TransferResult.Success, None)
     val messages = List(
       "not-json" -> "How did I get here???",
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
@@ -109,7 +109,7 @@ class TransferStreamSpec
     val List((key1, result1), (key2, result2)) = roundTripTransfers(messages)
 
     key1 shouldBe "not-json"
-    result1.status shouldBe TransferStatus.FatalFailure
+    result1.result shouldBe TransferResult.FatalFailure
     val info = for {
       json <- result1.info.toRight("Received unexpected empty info")
       decoded <- json.as[TransferStream.UnhandledErrorInfo]
@@ -123,7 +123,7 @@ class TransferStreamSpec
   }
 
   it should "push error results if JSON with a bad schema ends up on the request topic" in {
-    val goodResult = TransferResult(TransferStatus.Success, None)
+    val goodResult = TransferSummary(TransferResult.Success, None)
     val messages = List(
       "wrong-json" -> """{ "problem": "not the right schema" }""",
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
@@ -132,7 +132,7 @@ class TransferStreamSpec
     val List((key1, result1), (key2, result2)) = roundTripTransfers(messages)
 
     key1 shouldBe "wrong-json"
-    result1.status shouldBe TransferStatus.FatalFailure
+    result1.result shouldBe TransferResult.FatalFailure
     val info = for {
       json <- result1.info.toRight("Received unexpected empty info")
       decoded <- json.as[TransferStream.UnhandledErrorInfo]
@@ -146,7 +146,7 @@ class TransferStreamSpec
   }
 
   it should "push error results if processing a transfer fails" in {
-    val goodResult = TransferResult(TransferStatus.Success, None)
+    val goodResult = TransferSummary(TransferResult.Success, None)
     val messages = List(
       "boom" -> json"""{}""".noSpaces,
       "ok" -> EchoRequest(Some(goodResult)).asJson.noSpaces
@@ -154,7 +154,7 @@ class TransferStreamSpec
     val List((key1, result1), (key2, result2)) = roundTripTransfers(messages)
 
     key1 shouldBe "boom"
-    result1.status shouldBe TransferStatus.FatalFailure
+    result1.result shouldBe TransferResult.FatalFailure
     val info = for {
       json <- result1.info.toRight("Received unexpected empty info")
       decoded <- json.as[TransferStream.UnhandledErrorInfo]
@@ -169,7 +169,7 @@ class TransferStreamSpec
 }
 
 object TransferStreamSpec {
-  case class EchoRequest(result: Option[TransferResult])
+  case class EchoRequest(result: Option[TransferSummary])
 
   val EchoSchema = json"""{
     "type": "object",

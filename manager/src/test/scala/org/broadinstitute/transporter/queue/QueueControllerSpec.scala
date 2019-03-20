@@ -57,7 +57,7 @@ class QueueControllerSpec
 
   it should "create new queues" in {
     (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(None))
-    (db.createQueue _).expects(request).returning(IO.pure(queue))
+    (db.createQueue _).expects(request).returning(IO.pure(dbInfo))
     (kafka.createTopics _)
       .expects(List(queue.requestTopic, queue.responseTopic))
       .returning(IO.unit)
@@ -69,7 +69,7 @@ class QueueControllerSpec
     val err = new RuntimeException("OH NO")
 
     (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(None))
-    (db.createQueue _).expects(request).returning(IO.pure(queue))
+    (db.createQueue _).expects(request).returning(IO.pure(dbInfo))
     (kafka.createTopics _).expects(*).throwing(err)
     (db.deleteQueue _).expects(queue.name).returning(IO.unit)
 

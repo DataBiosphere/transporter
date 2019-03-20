@@ -138,32 +138,35 @@ object QueueController {
       * by having our queue-lookup functionality check for both a row
       * in the DB _and_ the corresponding Kafka topics.
       */
-    private def initializeQueue(request: QueueRequest): IO[Queue] =
+    private def initializeQueue(request: QueueRequest): IO[Queue] = {
+      val name = request.name
       // `bracketCase` is like try-catch-finally for the FP libs.
       // It schedules cleanup code in a way that prevents it from
       // being skipped by cancellation.
       dbClient
         .createQueue(request)
-        .bracketCase(q => kafkaClient.createTopics(q.requestTopic, q.responseTopic).as(q)) {
-          (queue, status) =>
-            val name = queue.name
-            status match {
-              case ExitCase.Completed =>
-                logger.info(s"Successfully created queue: $name")
+        .bracketCase {
+          case (_, req, res, schema) =>
+            kafkaClient.createTopics(req, res).as(Queue(name, req, res, schema))
+        } { (_, status) =>
+          status match {
+            case ExitCase.Completed =>
+              logger.info(s"Successfully created queue: $name")
 
-              case ExitCase.Canceled =>
-                for {
-                  _ <- logger.warn(s"Creation of topics for queue $name was canceled")
-                  _ <- dbClient.deleteQueue(queue.name)
-                } yield ()
+            case ExitCase.Canceled =>
+              for {
+                _ <- logger.warn(s"Creation of topics for queue $name was canceled")
+                _ <- dbClient.deleteQueue(name)
+              } yield ()
 
-              case ExitCase.Error(e) =>
-                for {
-                  _ <- logger
-                    .error(e)(s"Failed to create topics for queue $name, rolling back")
-                  _ <- dbClient.deleteQueue(name)
-                } yield ()
-            }
+            case ExitCase.Error(e) =>
+              for {
+                _ <- logger
+                  .error(e)(s"Failed to create topics for queue $name, rolling back")
+                _ <- dbClient.deleteQueue(name)
+              } yield ()
+          }
         }
+    }
   }
 }

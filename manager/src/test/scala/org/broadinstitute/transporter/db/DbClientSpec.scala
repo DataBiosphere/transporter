@@ -2,18 +2,27 @@ package org.broadinstitute.transporter.db
 
 import java.nio.file.Paths
 import java.sql.DriverManager
+import java.util.UUID
 
+import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import doobie.implicits._
+import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
+import io.circe.Json
 import io.circe.literal._
 import liquibase.{Contexts, Liquibase}
 import liquibase.database.jvm.JdbcConnection
 import liquibase.resource.FileSystemResourceAccessor
 import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
-import org.broadinstitute.transporter.transfer.TransferRequest
+import org.broadinstitute.transporter.transfer.{
+  TransferRequest,
+  TransferResult,
+  TransferStatus,
+  TransferSummary
+}
 import org.scalatest.{EitherValues, FlatSpec, Matchers, OptionValues}
 
 import scala.concurrent.ExecutionContext
@@ -23,7 +32,8 @@ class DbClientSpec
     with ForAllTestContainer
     with Matchers
     with EitherValues
-    with OptionValues {
+    with OptionValues
+    with JsonInstances {
 
   override val container: PostgreSQLContainer = PostgreSQLContainer("postgres:9.6.10")
 
@@ -130,10 +140,7 @@ class DbClientSpec
     }
 
     val checks = for {
-      _ <- client.createQueue(QueueRequest("foo", schema))
-      (queueId, _, _, _) <- client
-        .lookupQueueInfo("foo")
-        .flatMap(_.liftTo[IO](new IllegalStateException("Queue not found")))
+      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
       (initReqs, initTransfers) <- countsQuery.transact(transactor)
       (requestId, _) <- client.recordTransferRequest(queueId, requests)
       (postReqs, postTransfers) <- countsQuery.transact(transactor)
@@ -147,6 +154,122 @@ class DbClientSpec
       postTransfers shouldBe 10
       finalReqs shouldBe 0
       finalTransfers shouldBe 0
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "update recorded status for transfers" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val requests = TransferRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
+    val results =
+      List.tabulate(10)(i => TransferSummary(TransferResult.values(i % 3), None))
+
+    val statusCountsQuery =
+      sql"select status, count(*) from transfers group by status"
+        .query[(TransferStatus, Int)]
+        .to[List]
+        .map(_.toMap)
+
+    val checks = for {
+      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
+      (_, reqs) <- client.recordTransferRequest(queueId, requests)
+      preCounts <- statusCountsQuery.transact(transactor)
+      _ <- client.updateTransfers(reqs.map(_._1).zip(results))
+      postCounts <- statusCountsQuery.transact(transactor)
+      _ <- client.deleteQueue("foo")
+    } yield {
+      preCounts shouldBe Map(TransferStatus.Submitted -> 10)
+      postCounts shouldBe Map(
+        TransferStatus.Succeeded -> 4,
+        TransferStatus.Retrying -> 3,
+        TransferStatus.Failed -> 3
+      )
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "update recorded info for transfers" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val requests = TransferRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
+    val results = List.tabulate(10) { i =>
+      TransferSummary(
+        TransferResult.values(i % 3),
+        Some(json"""{ "i+1": ${i + 1} }""").filter(_ => i % 3 == 0)
+      )
+    }
+
+    val infoQuery =
+      sql"select info from transfers where info is not null"
+        .query[Json]
+        .to[List]
+
+    val checks = for {
+      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
+      (_, reqs) <- client.recordTransferRequest(queueId, requests)
+      preInfo <- infoQuery.transact(transactor)
+      _ <- client.updateTransfers(reqs.map(_._1).zip(results))
+      postInfo <- infoQuery.transact(transactor)
+      _ <- client.deleteQueue("foo")
+    } yield {
+      preInfo shouldBe Nil
+      postInfo should contain theSameElementsAs results.collect {
+        case TransferSummary(_, Some(js)) => js
+      }
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "get info needed to resubmit transient failures" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val transfers = List.tabulate(10)(i => json"""{ "i": $i }""")
+    val queues = List("foo", "bar", "baz")
+    val requests =
+      transfers
+        .grouped((transfers.length / queues.length) + 1)
+        .toList
+        .mapWithIndex {
+          case (ts, i) => queues(i) -> TransferRequest(ts)
+        }
+
+    val checks = for {
+      queueInfo <- queues.traverse { q =>
+        client.createQueue(QueueRequest(q, schema)).map {
+          case (id, reqTopic, _, _) => (q, (id, reqTopic))
+        }
+      }.map(_.toMap)
+      transferIdsToSubmitInfo <- requests.flatTraverse {
+        case (queue, req) =>
+          val (queueId, reqTopic) = queueInfo(queue)
+          client.recordTransferRequest(queueId, req).map {
+            case (_, transfersWithId) =>
+              transfersWithId.map {
+                case (id, json) => (id, (reqTopic, json))
+              }
+          }
+      }
+      resubmitIds <- NonEmptyList
+        .fromList(transferIdsToSubmitInfo)
+        .fold(IO.raiseError[NonEmptyList[UUID]](new IllegalStateException("???"))) {
+          ids =>
+            IO.pure(ids.map(_._1))
+        }
+      resubmitInfo <- client.getResubmitInfoForTransfers(resubmitIds)
+      _ <- queues.traverse_(client.deleteQueue)
+    } yield {
+      val infoById = resubmitInfo.map {
+        case (id, reqTopic, json) => (id, (reqTopic, json))
+      }
+
+      infoById should contain theSameElementsAs transferIdsToSubmitInfo
     }
 
     checks.unsafeRunSync()
