@@ -27,8 +27,9 @@ trait TransferController {
   /**
     * Summarize the current status of a request which was previously submitted
     * to a queue resource, returning:
-    *   1. The number of transfers found in each potential "transfer status", and
-    *   2. An overall summary status for the request
+    *   1. An overall summary status for the request
+    *   2. The number of transfers found in each potential "transfer status"
+    *   3. Any "info" messages sent by agents about transfers in the request
     */
   def lookupTransferStatus(queueName: String, requestId: UUID): IO[RequestStatus]
 }
@@ -91,18 +92,22 @@ object TransferController {
     ): IO[RequestStatus] =
       for {
         (queueId, _, _, _) <- getQueueInfo(queueName)
-        counts <- dbClient
-          .lookupTransferStatuses(queueId, requestId)
-          .map(baselineCounts |+| _)
+        transfersByStatus <- dbClient
+          .lookupTransfers(queueId, requestId)
+        counts = transfersByStatus.mapValues(_._1)
         maybeStatus = List(
           TransferStatus.Failed,
           TransferStatus.Retrying,
           TransferStatus.Submitted,
           TransferStatus.Succeeded
-        ).find(counts.getOrElse(_, 0L) > 0L).map(RequestStatus(_, counts))
+        ).find(counts.getOrElse(_, 0L) > 0L)
         status <- maybeStatus.liftTo[IO](NoSuchRequest(requestId))
       } yield {
-        status
+        RequestStatus(
+          status,
+          baselineCounts |+| counts,
+          transfersByStatus.flatMap(_._2._2).toList
+        )
       }
 
     private def getQueueInfo(queueName: String): IO[DbClient.QueueInfo] =

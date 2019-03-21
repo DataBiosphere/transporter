@@ -124,62 +124,47 @@ class DbClientSpec
     checks.unsafeRunSync()
   }
 
-  it should "update recorded status for transfers" in {
+  it should "update recorded status and info for transfers" in {
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
     val requests = TransferRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
     val results =
-      List.tabulate(10)(i => TransferSummary(TransferResult.values(i % 3), None))
+      List.tabulate(10) { i =>
+        TransferSummary(
+          // Success: 0, 3, 6, 9
+          // TransientFailure: 1, 4, 7
+          // FatalFailure: 2, 5, 8
+          TransferResult.values(i % 3),
+          // Success: 0+1, 6+1
+          // TransientFailure: 4+1
+          // FatalFailure: 2+1, 8+1
+          Some(json"""{ "i+1": ${i + 1} }""").filter(_ => i % 2 == 0)
+        )
+      }
 
     val checks = for {
       (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
       (reqId, reqs) <- client.recordTransferRequest(queueId, requests)
-      preCounts <- client.lookupTransferStatuses(queueId, reqId)
+      preResults <- client.lookupTransfers(queueId, reqId)
       _ <- client.updateTransfers(reqs.map(_._1).zip(results))
-      postCounts <- client.lookupTransferStatuses(queueId, reqId)
+      postResults <- client.lookupTransfers(queueId, reqId)
       _ <- client.deleteQueue("foo")
     } yield {
-      preCounts shouldBe Map(TransferStatus.Submitted -> 10)
-      postCounts shouldBe Map(
-        TransferStatus.Succeeded -> 4,
-        TransferStatus.Retrying -> 3,
-        TransferStatus.Failed -> 3
-      )
-    }
+      preResults shouldBe Map((TransferStatus.Submitted, (10, Vector.empty[Json])))
+      postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Retrying, TransferStatus.Failed)
 
-    checks.unsafeRunSync()
-  }
+      val (successCount, successInfo) = postResults(TransferStatus.Succeeded)
+      val (retryCount, retryInfo) = postResults(TransferStatus.Retrying)
+      val (failCount, failInfo) = postResults(TransferStatus.Failed)
 
-  it should "update recorded info for transfers" in {
-    val transactor = testTransactor(container.password)
-    val client = new DbClient.Impl(transactor)
+      successCount shouldBe 4
+      retryCount shouldBe 3
+      failCount shouldBe 3
 
-    val requests = TransferRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
-    val results = List.tabulate(10) { i =>
-      TransferSummary(
-        TransferResult.values(i % 3),
-        Some(json"""{ "i+1": ${i + 1} }""").filter(_ => i % 3 == 0)
-      )
-    }
-
-    val infoQuery =
-      sql"select info from transfers where info is not null"
-        .query[Json]
-        .to[List]
-
-    val checks = for {
-      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
-      (_, reqs) <- client.recordTransferRequest(queueId, requests)
-      preInfo <- infoQuery.transact(transactor)
-      _ <- client.updateTransfers(reqs.map(_._1).zip(results))
-      postInfo <- infoQuery.transact(transactor)
-      _ <- client.deleteQueue("foo")
-    } yield {
-      preInfo shouldBe Nil
-      postInfo should contain theSameElementsAs results.collect {
-        case TransferSummary(_, Some(js)) => js
-      }
+      successInfo should contain only (json"""{ "i+1": 1 }""", json"""{ "i+1": 7 }""")
+      retryInfo should contain only json"""{ "i+1": 5 }"""
+      failInfo should contain only (json"""{ "i+1": 3 }""", json"""{ "i+1": 9 }""")
     }
 
     checks.unsafeRunSync()

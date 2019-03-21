@@ -91,14 +91,14 @@ class TransferControllerSpec
   }
 
   it should "look up statuses for running requests" in {
-    val counts = Map[TransferStatus, Long](TransferStatus.Succeeded -> 10)
+    val counts = Map[TransferStatus, Long](TransferStatus.Succeeded -> 10L)
 
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransferStatuses _)
+    (db.lookupTransfers _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts))
+      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json]))))
 
     controller
       .lookupTransferStatus(queueName, requestId)
@@ -108,7 +108,8 @@ class TransferControllerSpec
         TransferStatus.Failed -> 0L,
         TransferStatus.Retrying -> 0L,
         TransferStatus.Submitted -> 0L
-      )
+      ),
+      Nil
     )
   }
 
@@ -116,7 +117,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransferStatuses _)
+    (db.lookupTransfers _)
       .expects(queueId, requestId)
       .returning(IO.pure(Map.empty))
 
@@ -148,13 +149,13 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransferStatuses _)
+    (db.lookupTransfers _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts))
+      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json]))))
 
     controller
       .lookupTransferStatus(queueName, requestId)
-      .unsafeRunSync() shouldBe RequestStatus(TransferStatus.Failed, counts)
+      .unsafeRunSync() shouldBe RequestStatus(TransferStatus.Failed, counts, Nil)
   }
 
   it should "prioritize retries over successes and submissions in request summaries" in {
@@ -167,15 +168,16 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransferStatuses _)
+    (db.lookupTransfers _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts))
+      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json]))))
 
     controller
       .lookupTransferStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
       TransferStatus.Retrying,
-      counts + (TransferStatus.Failed -> 0L)
+      counts + (TransferStatus.Failed -> 0L),
+      Nil
     )
   }
 
@@ -188,9 +190,9 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransferStatuses _)
+    (db.lookupTransfers _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts))
+      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json]))))
 
     controller
       .lookupTransferStatus(queueName, requestId)
@@ -199,7 +201,44 @@ class TransferControllerSpec
       counts ++ Map(
         TransferStatus.Failed -> 0L,
         TransferStatus.Retrying -> 0L
-      )
+      ),
+      Nil
     )
+  }
+
+  it should "include associated transfer info in request summaries" in {
+    val counts = Map(
+      TransferStatus.Submitted -> 10L,
+      TransferStatus.Succeeded -> 5L,
+      TransferStatus.Retrying -> 2L,
+      TransferStatus.Failed -> 1L
+    )
+
+    val infos = Map(
+      TransferStatus.Submitted -> Vector.empty[Json],
+      TransferStatus.Succeeded -> Vector.tabulate(5)(
+        i => json"""{ "wat": "I worked!", "i": $i }"""
+      ),
+      TransferStatus.Retrying -> Vector.tabulate(2)(
+        i => json"""{ "wut": "Try try again...", "i": $i }"""
+      ),
+      TransferStatus.Failed -> Vector(json"""{ "wot": "I BROKE" }""")
+    )
+
+    val lookup = TransferStatus.values.map(s => (s, (counts(s), infos(s)))).toMap
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransfers _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(lookup))
+
+    val status = controller
+      .lookupTransferStatus(queueName, requestId)
+      .unsafeRunSync()
+
+    status.overallStatus shouldBe TransferStatus.Failed
+    status.info should contain theSameElementsAs infos.flatMap(_._2)
   }
 }
