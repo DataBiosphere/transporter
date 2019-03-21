@@ -6,7 +6,7 @@ inThisBuild(
     scalaVersion := "2.12.8",
 
     // Auto-format
-    scalafmtConfig := Some((ThisBuild / baseDirectory)(_ / ".scalafmt.conf").value),
+    scalafmtConfig := (ThisBuild / baseDirectory)(_ / ".scalafmt.conf").value,
     scalafmtOnCompile := true,
 
     // Recommended guardrails
@@ -57,8 +57,8 @@ val postgresqlDriverVersion = "42.2.5"
 // JSON.
 val circeVersion = "0.11.1"
 val circeDerivationVersion = "0.11.0-M1"
-val enumeratumCirceVersion = "1.5.20"
-val everitJsonSchemaVersion = "1.11.0"
+val enumeratumCirceVersion = "1.5.21"
+val everitJsonSchemaVersion = "1.11.1"
 
 // Kafka.
 val fs2KafkaVersion = "0.19.4"
@@ -70,10 +70,10 @@ val log4catsVersion = "0.3.0"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
-val fuuidVersion = "0.2.0-M5"
+val fuuidVersion = "0.2.0-M6"
 
 // Web.
-val http4sVersion = "0.20.0-M6"
+val http4sVersion = "0.20.0-M7"
 val rhoVersion = "0.19.0-M6"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.20.9"
@@ -81,8 +81,8 @@ val swaggerUiVersion = "3.20.9"
 // Testing.
 val liquibaseVersion = "3.6.3"
 val scalaMockVersion = "4.1.0"
-val scalaTestVersion = "3.0.6"
-val testcontainersVersion = "1.10.6"
+val scalaTestVersion = "3.0.7"
+val testcontainersVersion = "1.10.7"
 val testcontainersScalaVersion = "0.23.0"
 
 // Settings to apply to all sub-projects.
