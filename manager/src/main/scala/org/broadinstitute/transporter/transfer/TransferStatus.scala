@@ -8,6 +8,10 @@ import io.circe.KeyEncoder
 
 import scala.collection.immutable.IndexedSeq
 
+/**
+  * Description of the current status of a transfer tracked by Transporter, as determined
+  * by the last result message received from an agent for the transfer (if any).
+  */
 sealed trait TransferStatus
     extends EnumEntry
     with Lowercase
@@ -27,8 +31,15 @@ object TransferStatus
   implicit val statusEncoder: KeyEncoder[TransferStatus] =
     KeyEncoder.encodeKeyString.contramap(_.entryName)
 
+  /** Initial status assigned to all transfers as they are pushed to downstream agents. */
   case object Submitted extends TransferStatus
+
+  /** Status assigned to transfers which are reported to have failed with a transient error. */
   case object Retrying extends TransferStatus
+
+  /** Status assigned to transfers which are reported to have failed with a fatal error. */
   case object Failed extends TransferStatus
+
+  /** Status assigned to transfers which are reported to have completed successfully. */
   case object Succeeded extends TransferStatus
 }

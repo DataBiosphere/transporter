@@ -253,7 +253,7 @@ object DbClient {
     override def lookupTransferStatuses(
       queueId: UUID,
       requestId: UUID
-    ): IO[Map[TransferStatus, Long]] = {
+    ): IO[Map[TransferStatus, Long]] =
       sql"""select t.status, count(*) from transfers t
             left join transfer_requests r on t.request_id = r.id
             left join queues q on r.queue_id = q.id
@@ -263,7 +263,6 @@ object DbClient {
         .to[List]
         .map(_.toMap)
         .transact(transactor)
-    }
 
     override def deleteTransferRequest(id: UUID): IO[Unit] =
       sql"""delete from transfer_requests where id = $id""".update.run.void

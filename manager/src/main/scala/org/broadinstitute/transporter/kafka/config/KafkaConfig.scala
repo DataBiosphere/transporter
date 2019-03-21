@@ -113,8 +113,16 @@ object KafkaConfig {
     */
   val ManagerGroup = "transporter-manager"
 
+  /**
+    * Prefix used for all Kafka topics created by Transporter for sending
+    * transfer requests to agents.
+    */
   val RequestTopicPrefix = "transporter.requests."
 
+  /**
+    * Prefix used for all Kafka topics created by Transporter for receiving
+    * transfer results from agents.
+    */
   val ResponseTopicPrefix = "transporter.responses."
 
   implicit val reader: ConfigReader[KafkaConfig] = deriveReader
