@@ -10,14 +10,19 @@ pipeline {
         PATH = "${tool('sbt')}:$PATH"
     }
     stages {
+        stage('Check formatting') {
+            steps {
+                sh 'sbt -client scalafmtCheckAll'
+            }
+        }
         stage('Compile') {
             steps {
-                sh 'sbt Compile/compile Test/compile'
+                sh 'sbt -client Compile/compile Test/compile'
             }
         }
         stage('Test') {
             steps {
-                sh 'sbt test'
+                sh 'sbt -client test'
             }
         }
     }
@@ -26,6 +31,7 @@ pipeline {
             junit '**/target/test-reports/*'
         }
         cleanup {
+            sh 'sbt -client shutdown'
             cleanWs()
         }
     }
