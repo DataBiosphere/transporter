@@ -7,11 +7,13 @@ import pureconfig.generic.semiauto.deriveReader
 
 /**
   * Top-level configuration for Transporter agent applications.
-  *
-  * TODO: Figure out the best way to inject agent-specific config into here.
   */
-case class AgentConfig(kafka: KStreamsConfig, queue: QueueConfig)
+case class AgentConfig[RC: ConfigReader](
+  kafka: KStreamsConfig,
+  queue: QueueConfig,
+  runnerConfig: RC
+)
 
 object AgentConfig {
-  implicit val reader: ConfigReader[AgentConfig] = deriveReader
+  implicit def reader[RC: ConfigReader]: ConfigReader[AgentConfig[RC]] = deriveReader
 }

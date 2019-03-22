@@ -7,48 +7,55 @@ import org.scalatest.{EitherValues, FlatSpec, Matchers}
 class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
   behavior of "QueueSchema"
 
-  private val draft4Schema =
-    json"""{
-      "$$schema": ${QueueSchema.schemaUrl(4)},
-      "id": "#draft4-example",
-      "type": "object"
-    }"""
+  private val draft4Schema = json"""{
+    "$$schema": ${QueueSchema.schemaUrl(4)},
+    "id": "#draft4-example",
+    "type": "object"
+  }"""
 
-  private val draft6Schema =
-    json"""{
-      "$$schema": ${QueueSchema.schemaUrl(6)},
-      "$$id": "#draft6-example",
-      "type": "object"
-    }"""
+  private val draft6Schema = json"""{
+    "$$schema": ${QueueSchema.schemaUrl(6)},
+    "$$id": "#draft6-example",
+    "type": "object"
+  }"""
 
-  private val draft7Schema =
-    json"""{
-      "$$schema": ${QueueSchema.schemaUrl(7)},
-      "$$id": "#draft7-example",
-      "type": ["object", "boolean"]
-    }"""
+  private val draft7Schema = json"""{
+    "$$schema": ${QueueSchema.schemaUrl(7)},
+    "$$id": "#draft7-example",
+    "type": ["object", "boolean"]
+  }"""
 
-  private val cloudCopySchema =
-    json"""{
-      "type": "object",
-      "required": [
-        "source",
-        "destination"
-      ],
-      "properties": {
-        "source": {
-          "type": "string",
-          "pattern": "^(gs://|/)[^/].*"
-        },
-        "destination": {
-          "type": "string",
-          "pattern": "^(gs://|/)[^/].*"
-        },
-        "metadata": {
-          "type": "object"
-        }
+  private val cloudCopySchema = json"""{
+    "type": "object",
+    "required": [
+      "source",
+      "destination"
+    ],
+    "properties": {
+      "source": {
+        "type": "string",
+        "pattern": "^(gs://|/)[^/].*"
+      },
+      "destination": {
+        "type": "string",
+        "pattern": "^(gs://|/)[^/].*"
+      },
+      "metadata": {
+        "type": "object"
       }
-    }"""
+    }
+  }"""
+
+  private val echoSchema = json"""{
+    "$$schema": "http://json-schema.org/draft-04/schema",
+    "type": "object",
+    "properties": {
+      "message": { "type":  "string" },
+      "fail": { "type":  "boolean" }
+    },
+    "required": ["message", "fail"],
+    "additionalProperties": false
+  }"""
 
   it should "parse draft-4 JSON schemas" in {
     val schema = draft4Schema.as[QueueSchema].right.value
@@ -66,6 +73,12 @@ class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
     val schema = draft7Schema.as[QueueSchema].right.value
     schema.validate(json"{}").isValid shouldBe true
     schema.validate(json"[]").isValid shouldBe false
+  }
+
+  it should "parse real JSON schemas" in {
+    List(cloudCopySchema, echoSchema).foreach { schema =>
+      schema.as[QueueSchema].isRight shouldBe true
+    }
   }
 
   it should "parse JSON schemas into validators" in {

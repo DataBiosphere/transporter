@@ -58,7 +58,7 @@ object TransferStream {
     *              pull from / push into
     * @param runner component which can actually perform data transfer
     */
-  def build(queue: Queue, runner: TransferRunner): Topology = {
+  def build[RC](queue: Queue, runner: TransferRunner[RC]): Topology = {
     val builder = new StreamsBuilder()
     val jsonParser = new JawnParser()
     val logger = Slf4jLogger.getLogger[IO]
@@ -74,15 +74,15 @@ object TransferStream {
      */
     builder
       .stream[String, Array[Byte]](queue.requestTopic)
-      .map { (id, requestBytes) =>
+      .mapValues { (id, requestBytes) =>
         val attemptTransfer = for {
           json <- jsonParser.parseByteBuffer(ByteBuffer.wrap(requestBytes)).liftTo[IO]
           jsonString = json.spaces2
-          _ <- logger.info(s"Received request: $jsonString")
+          _ <- logger.info(s"Received request $id: $jsonString")
           _ <- queue.schema.validate(json).liftTo[IO]
-          _ <- logger.debug(s"Processing request: $jsonString")
-          result <- IO.delay(runner.transfer(json))
-          _ <- logger.info(s"Successfully processed request: $jsonString")
+          _ <- logger.debug(s"Processing request $id: $jsonString")
+          result <- IO.suspend(runner.transfer(json))
+          _ <- logger.info(s"Successfully processed request $id: $jsonString")
         } yield {
           result
         }
@@ -101,7 +101,7 @@ object TransferStream {
             .as(TransferSummary(TransferResult.FatalFailure, Some(resultInfo.asJson)))
         }
 
-        id -> recovered.map(_.asJson.noSpaces.getBytes).unsafeRunSync()
+        recovered.map(_.asJson.noSpaces.getBytes).unsafeRunSync()
       }
       .to(queue.responseTopic)
 
