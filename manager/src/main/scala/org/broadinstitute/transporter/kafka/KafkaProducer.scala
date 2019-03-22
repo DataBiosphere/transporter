@@ -33,13 +33,13 @@ object KafkaProducer {
     * the threading infrastructure required by the underlying Java client.
     *
     * @param config settings for the underlying Kafka client
-    * @param cs proof of the ability to shift IO-wrapped computations
-    *           onto other threads
+    * @param cs     proof of the ability to shift IO-wrapped computations
+    *               onto other threads
     */
-  def resource[K: Serializer, V: Serializer](config: KafkaConfig)(
+  def resource[K, V](config: KafkaConfig, ks: Serializer[K], vs: Serializer[V])(
     implicit cs: ContextShift[IO]
   ): Resource[IO, KafkaProducer[K, V]] =
-    fs2.kafka.producerResource[IO].using(config.producerSettings[K, V]).map(new Impl(_))
+    fs2.kafka.producerResource[IO].using(config.producerSettings(ks, vs)).map(new Impl(_))
 
   /**
     * Concrete implementation of our producer used by mainline code.
@@ -64,4 +64,5 @@ object KafkaProducer {
       } yield ()
     }
   }
+
 }

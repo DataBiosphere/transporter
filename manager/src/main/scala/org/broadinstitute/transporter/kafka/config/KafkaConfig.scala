@@ -38,7 +38,6 @@ case class KafkaConfig(
     * which isn't acceptable for our use-case.
     */
   def producerSettings[K, V](
-    implicit
     keySerializer: Serializer[K],
     valueSerializer: Serializer[V]
   ): ProducerSettings[K, V] =
@@ -66,8 +65,8 @@ case class KafkaConfig(
     *                libs will detect the possibility of concurrent modification and throw an
     *                exception.
     */
-  def consumerSettings[K, V](actorEc: ExecutionContext)(
-    implicit
+  def consumerSettings[K, V](
+    actorEc: ExecutionContext,
     keyDeserializer: Deserializer[K],
     valueDeserializer: Deserializer[V]
   ): ConsumerSettings[K, V] =

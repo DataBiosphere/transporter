@@ -5,7 +5,7 @@ import java.util.UUID
 import cats.effect.{IO, Timer}
 import fs2.Stream
 import fs2.concurrent.Queue
-import fs2.kafka.Serializer
+import fs2.kafka.{Deserializer, Serializer}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
@@ -32,13 +32,15 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
             Serializer.uuid
           )
         }
-        out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach { batch =>
-            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
-          }.start
+        out <- KafkaConsumer
+          .resource(topicPattern, config, Deserializer.int, Deserializer.uuid)
+          .use { consumer =>
+            val fiber = consumer.runForeach { batch =>
+              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+            }.start
 
-          fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
-        }
+            fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
+          }
       } yield {
         out
       }
@@ -56,21 +58,23 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
       val roundTrip = for {
         q <- Queue.unbounded[IO, (Int, UUID)]
         _ <- IO.delay(createCustomTopic("the-topic")(embeddedConfig))
-        out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach { batch =>
-            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
-          }.start
+        out <- KafkaConsumer
+          .resource(topicPattern, config, Deserializer.int, Deserializer.uuid)
+          .use { consumer =>
+            val fiber = consumer.runForeach { batch =>
+              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+            }.start
 
-          fiber.bracket({ _ =>
-            IO.delay {
-              publishToKafka("the-topic", messages)(
-                embeddedConfig,
-                Serializer.int,
-                Serializer.uuid
-              )
-            }.flatMap(_ => q.dequeue.take(5).compile.toList)
-          })(_.cancel)
-        }
+            fiber.bracket({ _ =>
+              IO.delay {
+                publishToKafka("the-topic", messages)(
+                  embeddedConfig,
+                  Serializer.int,
+                  Serializer.uuid
+                )
+              }.flatMap(_ => q.dequeue.take(5).compile.toList)
+            })(_.cancel)
+          }
       } yield {
         out
       }
@@ -95,20 +99,24 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
             Serializer.uuid
           )
         }
-        out1 <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach { batch =>
-            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
-          }.start
+        out1 <- KafkaConsumer
+          .resource(topicPattern, config, Deserializer.int, Deserializer.uuid)
+          .use { consumer =>
+            val fiber = consumer.runForeach { batch =>
+              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+            }.start
 
-          fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
-        }
-        out2 <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach(_ => ???).start
+            fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
+          }
+        out2 <- KafkaConsumer
+          .resource(topicPattern, config, Deserializer.int, Deserializer.uuid)
+          .use { consumer =>
+            val fiber = consumer.runForeach(_ => ???).start
 
-          fiber.bracket(
-            _ => q.dequeue.take(1).compile.toList.timeoutTo(1.second, IO.pure(Nil))
-          )(_.cancel)
-        }
+            fiber.bracket(
+              _ => q.dequeue.take(1).compile.toList.timeoutTo(1.second, IO.pure(Nil))
+            )(_.cancel)
+          }
       } yield {
         out1 ::: out2
       }
@@ -133,19 +141,21 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
             Serializer.uuid
           )
         )
-        out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach { batch =>
-            Stream
-              .emits(batch)
-              .covary[IO]
-              .collect { case Left(err) => err }
-              .through(q.enqueue)
-              .compile
-              .drain
-          }.start
+        out <- KafkaConsumer
+          .resource(topicPattern, config, Deserializer.int, Deserializer.uuid)
+          .use { consumer =>
+            val fiber = consumer.runForeach { batch =>
+              Stream
+                .emits(batch)
+                .covary[IO]
+                .collect { case Left(err) => err }
+                .through(q.enqueue)
+                .compile
+                .drain
+            }.start
 
-          fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
-        }
+            fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
+          }
       } yield {
         out
       }
@@ -170,19 +180,21 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
             Serializer.int
           )
         )
-        out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach { batch =>
-            Stream
-              .emits(batch)
-              .covary[IO]
-              .collect { case Left(err) => err }
-              .through(q.enqueue)
-              .compile
-              .drain
-          }.start
+        out <- KafkaConsumer
+          .resource(topicPattern, config, Deserializer.int, Deserializer.uuid)
+          .use { consumer =>
+            val fiber = consumer.runForeach { batch =>
+              Stream
+                .emits(batch)
+                .covary[IO]
+                .collect { case Left(err) => err }
+                .through(q.enqueue)
+                .compile
+                .drain
+            }.start
 
-          fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
-        }
+            fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
+          }
       } yield {
         out
       }
@@ -209,34 +221,36 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
             Serializer.uuid
           )
         }
-        out <- KafkaConsumer.resource[Int, UUID](topicPattern, config).use { consumer =>
-          val fiber = consumer.runForeach { batch =>
-            Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
-          }.start
+        out <- KafkaConsumer
+          .resource(topicPattern, config, Deserializer.int, Deserializer.uuid)
+          .use { consumer =>
+            val fiber = consumer.runForeach { batch =>
+              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+            }.start
 
-          fiber.bracket({ _ =>
-            for {
-              _ <- IO.delay(createCustomTopic("the-topic2")(embeddedConfig))
-              _ <- IO.delay {
-                publishToKafka("the-topic2", messages2)(
-                  embeddedConfig,
-                  Serializer.int,
-                  Serializer.uuid
-                )
+            fiber.bracket({ _ =>
+              for {
+                _ <- IO.delay(createCustomTopic("the-topic2")(embeddedConfig))
+                _ <- IO.delay {
+                  publishToKafka("the-topic2", messages2)(
+                    embeddedConfig,
+                    Serializer.int,
+                    Serializer.uuid
+                  )
+                }
+                _ <- IO.delay {
+                  publishToKafka("the-topic", messages3)(
+                    embeddedConfig,
+                    Serializer.int,
+                    Serializer.uuid
+                  )
+                }
+                out <- q.dequeue.take(10).compile.toList
+              } yield {
+                out
               }
-              _ <- IO.delay {
-                publishToKafka("the-topic", messages3)(
-                  embeddedConfig,
-                  Serializer.int,
-                  Serializer.uuid
-                )
-              }
-              out <- q.dequeue.take(10).compile.toList
-            } yield {
-              out
-            }
-          })(_.cancel)
-        }
+            })(_.cancel)
+          }
       } yield {
         out
       }

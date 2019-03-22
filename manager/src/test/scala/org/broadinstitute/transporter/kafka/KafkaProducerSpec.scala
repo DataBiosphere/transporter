@@ -11,17 +11,11 @@ class KafkaProducerSpec extends BaseKafkaSpec {
   it should "submit messages" in {
     val topic = "the-topic"
 
-    implicit val ks: Serializer[Int] = Serializer.int
-    implicit val vs: Serializer[String] = Serializer.string
-
-    val kd: Deserializer[Int] = Deserializer.int.map(_.valueOr(throw _))
-    val vd: Deserializer[String] = Deserializer.string
-
     val messages = List(1 -> "foo", 2 -> "bar", 3 -> "baz")
 
     val published = withKafka { (config, embeddedConfig) =>
       KafkaProducer
-        .resource[Int, String](config)
+        .resource(config, Serializer.int, Serializer.string)
         .use { producer =>
           for {
             _ <- IO.delay(createCustomTopic(topic)(embeddedConfig))
@@ -29,8 +23,8 @@ class KafkaProducerSpec extends BaseKafkaSpec {
             consumed <- IO.delay {
               consumeNumberKeyedMessagesFrom(topic, messages.length)(
                 embeddedConfig,
-                kd,
-                vd
+                Deserializer.int.map(_.valueOr(throw _)),
+                Deserializer.string
               )
             }
           } yield {

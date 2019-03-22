@@ -1,15 +1,11 @@
 package org.broadinstitute.transporter
 
-import java.nio.ByteBuffer
-import java.util.UUID
-
 import cats.data.NonEmptyList
 import cats.effect._
 import cats.implicits._
 import doobie.util.ExecutionContexts
 import fs2.kafka.{Deserializer, Serializer}
-import io.circe.{Decoder, Json}
-import io.circe.jawn.JawnParser
+import io.circe.Json
 import org.broadinstitute.transporter.web.{
   ApiRoutes,
   InfoRoutes,
@@ -17,7 +13,12 @@ import org.broadinstitute.transporter.web.{
   WebConfig
 }
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.{AdminClient, KafkaConsumer, KafkaProducer}
+import org.broadinstitute.transporter.kafka.{
+  AdminClient,
+  KafkaConsumer,
+  KafkaProducer,
+  Serdes
+}
 import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.kafka.config.KafkaConfig
 import org.broadinstitute.transporter.queue.QueueController
@@ -71,17 +72,6 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
   t: Timer[IO]
 ) {
 
-  private implicit val jsonSerializer: Serializer[Json] =
-    Serializer.string.contramap[Json](_.noSpaces)
-
-  private implicit val jsonDeserializer: Deserializer.Attempt[Json] = {
-    val parser = new JawnParser()
-    Deserializer.bytes.map(bytes => parser.parseByteBuffer(ByteBuffer.wrap(bytes.get)))
-  }
-
-  private implicit def decodingDeserializer[A: Decoder]: Deserializer.Attempt[A] =
-    jsonDeserializer.map(_.flatMap(_.as[A]))
-
   def run: IO[ExitCode] = appResource(config).use {
     case (httpApp, listener) =>
       (bindAndRun(httpApp, config.web), listener.processResults).parMapN {
@@ -106,12 +96,17 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       // across controllers in the app.
       dbClient <- DbClient.resource(config.db, blockingEc)
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
-      producer <- KafkaProducer.resource[UUID, Json](config.kafka)
-      consumer <- KafkaConsumer
-        .resource[UUID, TransferSummary](
-          s"${KafkaConfig.ResponseTopicPrefix}.+".r,
-          config.kafka
-        )
+      producer <- KafkaProducer.resource(
+        config.kafka,
+        Serializer.uuid,
+        Serdes.encodingSerializer[Json]
+      )
+      consumer <- KafkaConsumer.resource(
+        s"${KafkaConfig.ResponseTopicPrefix}.+".r,
+        config.kafka,
+        Deserializer.uuid,
+        Serdes.decodingDeserializer[TransferSummary]
+      )
     } yield {
       val queueController = QueueController(dbClient, adminClient)
       val routes = NonEmptyList.of(
