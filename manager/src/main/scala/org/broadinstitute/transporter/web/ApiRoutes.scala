@@ -64,14 +64,15 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
    * body into a collection, which it then passes into the superclass constructor.
    */
 
-  createQueue.decoding(EntityDecoder[IO, QueueRequest]) |>> { request: QueueRequest =>
-    queueController.createQueue(request).attempt.map {
-      case Right(queue) => Ok(queue)
-      case Left(err)    => ISE(s"Failed to create queue ${request.name}", err)
-    }
+  createQueue.decoding(EntityDecoder[IO, QueueRequest]).bindAction {
+    request: QueueRequest =>
+      queueController.createQueue(request).attempt.map {
+        case Right(queue) => Ok(queue)
+        case Left(err)    => ISE(s"Failed to create queue ${request.name}", err)
+      }
   }
 
-  lookupQueue |>> { name: String =>
+  lookupQueue.bindAction { name: String =>
     queueController.lookupQueue(name).attempt.map {
       case Right(queue) => Ok(queue)
       case Left(QueueController.NoSuchQueue(_)) =>
@@ -80,7 +81,7 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
     }
   }
 
-  submitTransfers.decoding(EntityDecoder[IO, TransferRequest]) |>> {
+  submitTransfers.decoding(EntityDecoder[IO, TransferRequest]).bindAction {
     (name: String, request: TransferRequest) =>
       transferController.submitTransfer(name, request).attempt.map {
         case Right(ack) => Ok(ack)
@@ -94,7 +95,7 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
       }
   }
 
-  lookupTransfers |>> { (name: String, id: UUID) =>
+  lookupTransfers.bindAction { (name: String, id: UUID) =>
     transferController.lookupTransferStatus(name, id).attempt.map {
       case Right(status) => Ok(status)
       case Left(QueueController.NoSuchQueue(_)) =>

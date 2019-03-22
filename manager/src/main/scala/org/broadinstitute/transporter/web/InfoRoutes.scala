@@ -35,7 +35,7 @@ class InfoRoutes(infoController: InfoController) extends RhoRoutes[IO] {
    *      we have to live with the boilerplate.
    */
 
-  statusRoute |>> { () =>
+  statusRoute.bindAction { () =>
     implicit val encoder: EntityEncoder[IO, ManagerStatus] =
       org.http4s.circe.jsonEncoderOf
 
@@ -48,7 +48,7 @@ class InfoRoutes(infoController: InfoController) extends RhoRoutes[IO] {
     }
   }
 
-  versionRoute |>> { () =>
+  versionRoute.bindAction { () =>
     implicit val encoder: EntityEncoder[IO, ManagerVersion] =
       org.http4s.circe.jsonEncoderOf
 

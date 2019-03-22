@@ -105,7 +105,7 @@ object TransferController {
       } yield {
         RequestStatus(
           status,
-          baselineCounts |+| counts,
+          baselineCounts.combine(counts),
           transfersByStatus.flatMap(_._2._2).toList
         )
       }
