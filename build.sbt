@@ -70,7 +70,7 @@ val log4catsVersion = "0.3.0"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
-val fuuidVersion = "0.2.0-M6"
+val fuuidVersion = "0.2.0-M7"
 
 // Web.
 val http4sVersion = "0.20.0-M7"
@@ -113,7 +113,8 @@ lazy val transporter = project
   .aggregate(
     `transporter-common`,
     `transporter-manager`,
-    `transporter-agent-template`
+    `transporter-agent-template`,
+    `transporter-echo-agent`
   )
 
 /** Definitions used by both the manager and agents. */
@@ -226,3 +227,8 @@ lazy val `transporter-agent-template` = project
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
     )
   )
+
+lazy val `transporter-echo-agent` = project
+  .in(file("./agents/echo"))
+  .dependsOn(`transporter-agent-template`)
+  .settings(commonSettings)

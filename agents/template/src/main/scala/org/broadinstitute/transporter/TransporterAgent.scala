@@ -12,6 +12,7 @@ import org.broadinstitute.transporter.transfer.TransferRunner
 import org.http4s.Request
 import org.http4s.circe.CirceEntityDecoder
 import org.http4s.client.blaze.BlazeClientBuilder
+import pureconfig.ConfigReader
 import pureconfig.module.catseffect._
 
 import scala.concurrent.ExecutionContext
@@ -23,7 +24,9 @@ import scala.concurrent.ExecutionContext
   * the full framework needed to hook into Transporter's Kafka infrastructure
   * and run data transfers.
   */
-abstract class TransporterAgent extends IOApp.WithContext with CirceEntityDecoder {
+abstract class TransporterAgent[RC: ConfigReader]
+    extends IOApp.WithContext
+    with CirceEntityDecoder {
 
   private val logger = Slf4jLogger.getLogger[IO]
 
@@ -42,15 +45,18 @@ abstract class TransporterAgent extends IOApp.WithContext with CirceEntityDecode
     * Modeled as a `Resource` so agent programs can hook in setup / teardown
     * logic for config, thread pools, etc.
     */
-  def runnerResource: Resource[IO, TransferRunner]
+  def runnerResource(config: RC): Resource[IO, TransferRunner[RC]]
 
   /** [[IOApp]] equivalent of `main`. */
   final override def run(args: List[String]): IO[ExitCode] =
-    loadConfigF[IO, AgentConfig]("org.broadinstitute.transporter").flatMap { config =>
+    loadConfigF[IO, AgentConfig[RC]]("org.broadinstitute.transporter").flatMap { config =>
       for {
         maybeQueue <- lookupQueue(config.queue)
         retCode <- maybeQueue match {
-          case Some(queue) => runStream(config.kafka, queue)
+          case Some(queue) =>
+            runnerResource(config.runnerConfig).use { runner =>
+              runStream(queue, runner, config.kafka)
+            }
           case None =>
             logger.error(s"No such queue: ${config.queue.queueName}").as(ExitCode.Error)
         }
@@ -61,8 +67,10 @@ abstract class TransporterAgent extends IOApp.WithContext with CirceEntityDecode
 
   /** Query the configured Transporter manager for information about a queue. */
   private def lookupQueue(config: QueueConfig): IO[Option[Queue]] =
-    BlazeClientBuilder[IO](ExecutionContext.global).resource.use { client =>
-      val request = Request[IO](uri = config.managerUri / "queues" / config.queueName)
+    BlazeClientBuilder[IO](executionContext).resource.use { client =>
+      val request = Request[IO](
+        uri = config.managerUri / "api" / "transporter" / "v1" / "queues" / config.queueName
+      )
       logger
         .info(
           s"Getting Kafka topics for queue '${config.queueName}' from Transporter at ${config.managerUri}"
@@ -77,17 +85,18 @@ abstract class TransporterAgent extends IOApp.WithContext with CirceEntityDecode
     * This method should only return if the underlying stream is interrupted
     * (i.e. by a Ctrl-C).
     */
-  private def runStream(config: KStreamsConfig, queue: Queue): IO[ExitCode] = {
-    runnerResource.use { runner =>
-      val topology = TransferStream.build(queue, runner)
-
-      for {
-        stream <- IO.delay(new KafkaStreams(topology, config.asProperties))
-        _ <- IO.delay(stream.start())
-        _ <- IO.cancelable[Unit](_ => IO.delay(stream.close()))
-      } yield {
-        ExitCode.Success
-      }
+  private def runStream(
+    queue: Queue,
+    runner: TransferRunner[RC],
+    kafkaConfig: KStreamsConfig
+  ): IO[ExitCode] = {
+    val topology = TransferStream.build(queue, runner)
+    for {
+      stream <- IO.delay(new KafkaStreams(topology, kafkaConfig.asProperties))
+      _ <- IO.delay(stream.start())
+      _ <- IO.cancelable[Unit](_ => IO.delay(stream.close()))
+    } yield {
+      ExitCode.Success
     }
   }
 }

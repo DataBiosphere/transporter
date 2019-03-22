@@ -43,10 +43,10 @@ object KafkaConsumer {
     *                     in the subscription. Topics will dynamically join/leave
     *                     the subscriptions as they're created/destroyed in
     *                     Kafka, as determined by a polling interval set in config
-    * @param config settings for the underlying Kafka client
-    * @param cs proof of the ability to shift IO-wrapped computations
-    *           onto other threads
-    * @param t proof of the ability to schedule tasks for later execution
+    * @param config       settings for the underlying Kafka client
+    * @param cs           proof of the ability to shift IO-wrapped computations
+    *                     onto other threads
+    * @param t            proof of the ability to schedule tasks for later execution
     */
   def resource[K, V](
     topicPattern: Regex,
@@ -87,9 +87,11 @@ object KafkaConsumer {
 
     override def runForeach(f: List[Attempt[(K, V)]] => IO[Unit]): IO[Unit] =
       consumer.stream.evalTap { message =>
-        logger.info(
-          s"Got message from topic ${message.committableOffset.topicPartition.topic}"
-        )
+        for {
+          _ <- logger.info(s"Got message from topic ${message.record.topic}")
+          _ <- logger.debug(s"Key: ${message.record.key}")
+          _ <- logger.debug(s"Value: ${message.record.value}")
+        } yield ()
       }.map { message =>
         (message.record.key(), message.record.value()).tupled -> message.committableOffset
       }.evalTap {
@@ -108,4 +110,5 @@ object KafkaConsumer {
         .compile
         .drain
   }
+
 }
