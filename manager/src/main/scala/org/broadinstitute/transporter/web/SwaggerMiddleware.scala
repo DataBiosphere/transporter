@@ -3,6 +3,7 @@ package org.broadinstitute.transporter.web
 import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
+import io.circe.Json
 import org.broadinstitute.transporter.BuildInfo
 import org.broadinstitute.transporter.queue.QueueSchema
 import org.http4s.dsl.io._
@@ -41,7 +42,7 @@ object SwaggerMiddleware {
      * one safe choice for the swagger parameters so there's no point
      * in taking them as arguments.
      */
-    s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/index.html?url=/$apiDocsPath"
+    s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/index.html?url=/$apiDocsPath&apisSorter=alpha&operationsSorter=alpha"
 
   /**
     * Convert a set of Rho routes tagged with documentation into
@@ -87,6 +88,7 @@ object SwaggerMiddleware {
       apiPath = TypedPath(PathMatch(apiDocsPath)),
       swaggerFormats = DefaultSwaggerFormats
         .withFieldSerializers(typeOf[QueueSchema], AbstractProperty(`type` = "object"))
+        .withFieldSerializers(typeOf[Json], AbstractProperty(`type` = "object"))
     )
 
     // Converts the Rho routes to corresponding http4s routes, then tacks

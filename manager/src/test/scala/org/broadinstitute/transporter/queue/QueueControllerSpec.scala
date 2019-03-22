@@ -32,7 +32,8 @@ class QueueControllerSpec
 
     controller
       .lookupQueue(queue.name)
-      .unsafeRunSync() shouldBe None
+      .attempt
+      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queue.name))
   }
 
   it should "verify Kafka is consistent with the DB on lookups" in {
@@ -43,7 +44,8 @@ class QueueControllerSpec
 
     controller
       .lookupQueue(queue.name)
-      .unsafeRunSync() shouldBe None
+      .attempt
+      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queue.name))
   }
 
   it should "look up queues with consistent state" in {
@@ -52,7 +54,7 @@ class QueueControllerSpec
       .expects(List(queue.requestTopic, queue.responseTopic))
       .returning(IO.pure(true))
 
-    controller.lookupQueue(queue.name).unsafeRunSync() shouldBe Some(queue)
+    controller.lookupQueue(queue.name).unsafeRunSync() shouldBe queue
   }
 
   it should "create new queues" in {

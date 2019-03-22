@@ -8,8 +8,8 @@ import cats.implicits._
 import doobie.hi._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
-import doobie.postgres.implicits._
-import doobie.postgres.circe.Instances
+import doobie.postgres.{Instances => PostgresInstances}
+import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.{ExecutionContexts, Get, Put}
 import doobie.util.log.LogHandler
 import doobie.util.transactor.Transactor
@@ -18,13 +18,9 @@ import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.config.DbConfig
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
-import org.broadinstitute.transporter.transfer.{
-  TransferRequest,
-  TransferResult,
-  TransferStatus,
-  TransferSummary
-}
+import org.broadinstitute.transporter.transfer._
 
 import scala.concurrent.ExecutionContext
 
@@ -72,6 +68,12 @@ trait DbClient {
     queueId: UUID,
     request: TransferRequest
   ): IO[(UUID, List[(UUID, Json)])]
+
+  /** Fetch summary info for transfers registered under a queue/request pair. */
+  def lookupTransfers(
+    queueId: UUID,
+    requestId: UUID
+  ): IO[Map[TransferStatus, (Long, Vector[Json])]]
 
   /**
     * Delete the top-level description, and individual transfer descriptions,
@@ -168,7 +170,8 @@ object DbClient {
   private[db] class Impl(transactor: Transactor[IO])(
     implicit cs: ContextShift[IO]
   ) extends DbClient
-      with Instances.JsonInstances {
+      with PostgresInstances
+      with JsonInstances {
 
     private val logger = Slf4jLogger.getLogger[IO]
     private implicit val logHandler: LogHandler = DbLogHandler(logger)
@@ -203,8 +206,8 @@ object DbClient {
     override def createQueue(request: QueueRequest): IO[QueueInfo] =
       for {
         uuid <- FUUID.randomFUUID[IO]
-        requestTopic = s"transporter.requests.$uuid"
-        responseTopic = s"transporter.responses.$uuid"
+        requestTopic = s"${KafkaConfig.RequestTopicPrefix}$uuid"
+        responseTopic = s"${KafkaConfig.ResponseTopicPrefix}$uuid"
 
         insertStatement = sql"""insert into queues (id, name, request_topic, response_topic, request_schema)
             values ($uuid, ${request.name}, $requestTopic, $responseTopic, ${request.schema})"""
@@ -241,6 +244,26 @@ object DbClient {
       } yield {
         (requestUuid, transfersById)
       }
+
+    override def lookupTransfers(
+      queueId: UUID,
+      requestId: UUID
+    ): IO[Map[TransferStatus, (Long, Vector[Json])]] =
+      // 'coalesce' needed to strip the nulls out of the results.
+      sql"""select t.status, count(*), coalesce(json_agg(t.info) filter (where t.info is not null), '[]')
+            from transfers t
+            left join transfer_requests r on t.request_id = r.id
+            left join queues q on r.queue_id = q.id
+            where q.id = $queueId and r.id = $requestId
+            group by t.status"""
+        .query[(TransferStatus, Long, Json)]
+        .to[List]
+        .map(
+          // Ideally we could pull `Vector[Json]` from the DB directly, but doobie
+          // can't handle mapping PG arrays of complex types.
+          _.map { case (s, i, j) => (s, (i, j.asArray.getOrElse(Vector.empty))) }.toMap
+        )
+        .transact(transactor)
 
     override def deleteTransferRequest(id: UUID): IO[Unit] =
       sql"""delete from transfer_requests where id = $id""".update.run.void

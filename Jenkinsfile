@@ -5,6 +5,7 @@ pipeline {
     options {
         timestamps()
         ansiColor('xterm')
+        disableConcurrentBuilds()
     }
     environment {
         PATH = "${tool('sbt')}:$PATH"
@@ -12,17 +13,17 @@ pipeline {
     stages {
         stage('Check formatting') {
             steps {
-                sh 'sbt -client scalafmtCheckAll'
+                sh 'sbt scalafmtCheckAll'
             }
         }
         stage('Compile') {
             steps {
-                sh 'sbt -client Compile/compile Test/compile'
+                sh 'sbt Compile/compile Test/compile'
             }
         }
         stage('Test') {
             steps {
-                sh 'sbt -client test'
+                sh 'sbt test'
             }
         }
     }
@@ -31,7 +32,6 @@ pipeline {
             junit '**/target/test-reports/*'
         }
         cleanup {
-            sh 'sbt -client shutdown'
             cleanWs()
         }
     }

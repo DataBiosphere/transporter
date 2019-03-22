@@ -38,7 +38,6 @@ case class KafkaConfig(
     * which isn't acceptable for our use-case.
     */
   def producerSettings[K, V](
-    implicit
     keySerializer: Serializer[K],
     valueSerializer: Serializer[V]
   ): ProducerSettings[K, V] =
@@ -66,8 +65,8 @@ case class KafkaConfig(
     *                libs will detect the possibility of concurrent modification and throw an
     *                exception.
     */
-  def consumerSettings[K, V](actorEc: ExecutionContext)(
-    implicit
+  def consumerSettings[K, V](
+    actorEc: ExecutionContext,
     keyDeserializer: Deserializer[K],
     valueDeserializer: Deserializer[V]
   ): ConsumerSettings[K, V] =
@@ -112,6 +111,18 @@ object KafkaConfig {
     * Having a consistent group ID prevents double-processing of data, so we hard-code it here.
     */
   val ManagerGroup = "transporter-manager"
+
+  /**
+    * Prefix used for all Kafka topics created by Transporter for sending
+    * transfer requests to agents.
+    */
+  val RequestTopicPrefix = "transporter.requests."
+
+  /**
+    * Prefix used for all Kafka topics created by Transporter for receiving
+    * transfer results from agents.
+    */
+  val ResponseTopicPrefix = "transporter.responses."
 
   implicit val reader: ConfigReader[KafkaConfig] = deriveReader
 }

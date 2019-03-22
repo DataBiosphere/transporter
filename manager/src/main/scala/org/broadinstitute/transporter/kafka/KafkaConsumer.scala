@@ -48,16 +48,18 @@ object KafkaConsumer {
     *           onto other threads
     * @param t proof of the ability to schedule tasks for later execution
     */
-  def resource[K: Deserializer.Attempt, V: Deserializer.Attempt](
+  def resource[K, V](
     topicPattern: Regex,
-    config: KafkaConfig
+    config: KafkaConfig,
+    kd: Deserializer.Attempt[K],
+    vd: Deserializer.Attempt[V]
   )(
     implicit cs: ContextShift[IO],
     t: Timer[IO]
   ): Resource[IO, KafkaConsumer[K, V]] = {
     val underlyingConsumer = for {
       ec <- fs2.kafka.consumerExecutionContextResource[IO]
-      settings = config.consumerSettings[Attempt[K], Attempt[V]](ec)
+      settings = config.consumerSettings(ec, kd, vd)
       consumer <- fs2.kafka.consumerResource[IO].using(settings)
     } yield {
       consumer
