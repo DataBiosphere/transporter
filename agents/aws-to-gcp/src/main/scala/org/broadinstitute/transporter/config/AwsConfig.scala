@@ -18,12 +18,14 @@ import software.amazon.awssdk.services.s3.S3Client
 
 import scala.collection.JavaConverters._
 
+/** Configuration determining how the AWS->GCP agent should connect to S3. */
 case class AwsConfig(
   accessKeyId: String,
   secretAccessKey: String,
   region: Region
 ) {
 
+  /** Build an S3 client using the auth configuration from this object. */
   def toClient: IO[S3Client] = IO.delay {
     import RetryConstants._
 
@@ -59,6 +61,8 @@ case class AwsConfig(
 }
 
 object AwsConfig {
+
+  /** Convenience converter from arbitrary strings into AWS Regions. */
   implicit val regionReader: ConfigReader[Region] =
     ConfigReader.stringConfigReader.emap { str =>
       Region

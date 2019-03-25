@@ -12,8 +12,10 @@ import org.threeten.bp.Duration
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
+/** Configuration determining how the AWS->GCP agent should connect to GCS. */
 case class GcpConfig(serviceAccountJson: Option[Path]) {
 
+  /** Build a GCS client using the auth configuration from this object. */
   def toClient: IO[Storage] = IO.delay {
     import RetryConstants._
 
