@@ -170,7 +170,7 @@ object TransferStreamSpec {
 
   val UnhandledError = new RuntimeException("OH NO")
 
-  class EchoRunner(fail: Boolean) extends TransferRunner(fail) {
+  class EchoRunner(fail: Boolean) extends TransferRunner {
     override def transfer(request: Json): IO[TransferSummary] =
       request
         .as[EchoRequest]

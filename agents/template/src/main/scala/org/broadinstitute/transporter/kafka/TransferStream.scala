@@ -58,7 +58,7 @@ object TransferStream {
     *              pull from / push into
     * @param runner component which can actually perform data transfer
     */
-  def build[RC](queue: Queue, runner: TransferRunner[RC]): Topology = {
+  def build[R: Decoder](queue: Queue, runner: TransferRunner[R]): Topology = {
     val builder = new StreamsBuilder()
     val jsonParser = new JawnParser()
     val logger = Slf4jLogger.getLogger[IO]
@@ -81,7 +81,8 @@ object TransferStream {
           _ <- logger.info(s"Received request $id: $jsonString")
           _ <- queue.schema.validate(json).liftTo[IO]
           _ <- logger.debug(s"Processing request $id: $jsonString")
-          result <- IO.suspend(runner.transfer(json))
+          request <- json.as[R].liftTo[IO]
+          result <- IO.suspend(runner.transfer(request))
           _ <- logger.info(s"Successfully processed request $id: $jsonString")
         } yield {
           result
