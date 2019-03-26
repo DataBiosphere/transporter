@@ -13,13 +13,13 @@ import scala.concurrent.duration._
 object RetryConstants {
 
   /** Max time to spend on a single attempt of an cloud operation. */
-  val SingleRequestTimeout: FiniteDuration = 180000.seconds
+  val SingleRequestTimeout: FiniteDuration = 3.minutes
 
   /**
     * Max time to spend trying to complete a cloud operation,
     * covering all retries.
     */
-  val TotalRequestTimeout: FiniteDuration = 4000000.seconds
+  val TotalRequestTimeout: FiniteDuration = 10.minutes
 
   /** Max times to try completing a cloud operation. */
   val RetryCount = 15
