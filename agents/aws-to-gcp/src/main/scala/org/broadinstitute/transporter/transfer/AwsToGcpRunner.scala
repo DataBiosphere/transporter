@@ -1,16 +1,15 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.{ContextShift, IO, Resource, Timer}
+import cats.effect.{ContextShift, IO, Resource}
 import com.google.cloud.WriteChannel
 import com.google.cloud.storage.{BlobInfo, Storage}
 import fs2.concurrent.Queue
-import fs2.{Pipe, Stream}
+import fs2.{Chunk, Pipe, Stream}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.model.{GetObjectRequest, HeadObjectRequest}
 
 import scala.concurrent.ExecutionContext
-import scala.concurrent.duration._
 
 /**
   * Transfer runner which can copy files from S3 to GCS, optionally
@@ -24,7 +23,6 @@ import scala.concurrent.duration._
   * @param gcs client which can run operations against GCS
   * @param gcsEc thread pool which should run all requests go GCS
   * @param cs utility which can shift operations between threads
-  * @param t utility which can schedule operations for later execution
   */
 class AwsToGcpRunner(
   s3: S3Client,
@@ -32,8 +30,7 @@ class AwsToGcpRunner(
   gcs: Storage,
   gcsEc: ExecutionContext
 )(
-  implicit cs: ContextShift[IO],
-  t: Timer[IO]
+  implicit cs: ContextShift[IO]
 ) extends TransferRunner[AwsToGcpRequest] {
   import AwsToGcpRunner._
 
@@ -104,9 +101,12 @@ class AwsToGcpRunner(
     fileSize: Long
   ): IO[Unit] =
     for {
-      buffer <- Queue.bounded[IO, Byte](BufferSize)
-      s3Pull = s3MultipartDownload(s3Builder, fileSize).through(buffer.enqueue)
-      gcsPush = buffer.dequeue.through(writeGcsBytes(gcsWriter, fileSize))
+      buffer <- Queue.boundedNoneTerminated[IO, Chunk[Byte]](BufferSize)
+      s3Pull = s3MultipartDownload(s3Builder, fileSize)
+        .map(Some(_))
+        .append(Stream.emit(None))
+        .through(buffer.enqueue)
+      gcsPush = buffer.dequeue.through(writeGcsBytes(gcsWriter))
       // Order matters here: the argument to `concurrently` is considered the 'background'
       // stream, and won't interrupt processing if it completes first.
       _ <- gcsPush.concurrently(s3Pull).compile.drain
@@ -121,71 +121,58 @@ class AwsToGcpRunner(
   private def s3MultipartDownload(
     reqBuilder: GetObjectRequest.Builder,
     fileSize: Long
-  ): Stream[IO, Byte] =
-    Stream
-      .unfold(0L) { start =>
-        // First, build the content ranges of the requests to send to S3.
-        // We do this instead of opening one mega-request to avoid tripping
-        // any request timeouts.
-        if (start == fileSize) {
-          None
-        } else {
-          // The min is important; without it, S3 will return a 4XX error
-          // if we specify a range that exceeds the total file size.
-          val newStart = math.min(start + S3RangeSize, fileSize)
-          Some((start, newStart - 1) -> newStart)
+  ): Stream[IO, Chunk[Byte]] =
+    Stream.unfoldEval(0L) { start =>
+      // Request data in ranges, instead of using a single mega-request,
+      // to avoid tripping any request timeouts on huge files.
+      if (start == fileSize) {
+        IO.pure(None)
+      } else {
+        // The min is important; without it, S3 will return a 4XX error
+        // if we specify a range that exceeds the total file size.
+        val newStart = math.min(start + ChunkSize, fileSize)
+        val range = s"$start-${newStart - 1}"
+        for {
+          _ <- logger.info(s"Pulling bytes $range from S3...")
+          response <- cs.evalOn(s3Ec)(IO.delay {
+            s3.getObjectAsBytes(reqBuilder.range(s"bytes=$range").build())
+          })
+          _ <- logger.debug(s"Got S3 response for range $range")
+        } yield {
+          Some(Chunk.byteBuffer(response.asByteBuffer()) -> newStart)
         }
       }
-      .flatMap {
-        case (start, end) =>
-          val range = s"$start-$end"
-          val inStream = for {
-            _ <- logger.info(s"Pulling bytes $range from S3...")
-            respStream <- IO.delay(
-              s3.getObject(reqBuilder.range(s"bytes=$range").build())
-            )
-            _ <- logger.debug(s"Got response for range $range")
-          } yield {
-            respStream
-          }
-
-          fs2.io.readInputStream[IO](inStream, 8192, s3Ec)
-      }
+    }
 
   /**
     * Build a stream sink which uploads bytes to an object in GCS.
     *
     * @param channel writer pointing to the GCS object to upload
-    * @param fileSize expected size in bytes of the total upload
     */
-  private def writeGcsBytes(channel: WriteChannel, fileSize: Long): Pipe[IO, Byte, Unit] =
-    // 5 seconds is just guesswork here, could probably use some tuning.
-    _.groupWithin(BytesPerMib, 5.seconds)
-      .evalScan(0L) {
-        case (numUploaded, byteChunk) =>
-          val nextNum = numUploaded + byteChunk.size
-          for {
-            _ <- logger.info(
-              s"Uploading bytes $numUploaded-${nextNum - 1} to GCS..."
-            )
-            _ <- cs.evalOn(gcsEc)(IO.delay(channel.write(byteChunk.toByteBuffer)))
-          } yield nextNum
-      }
-      // This 'takeWhile' is very important; without it, the stream never
-      // completes because the upstream byte buffer doesn't know when to close.
-      .takeWhile(_ < fileSize)
-      .map(_ => ())
+  private def writeGcsBytes(channel: WriteChannel): Pipe[IO, Chunk[Byte], Unit] =
+    _.evalScan(0L) {
+      case (numUploaded, byteChunk) =>
+        val nextNum = numUploaded + byteChunk.size
+        for {
+          _ <- logger.info(
+            s"Writing bytes $numUploaded-${nextNum - 1} to GCS..."
+          )
+          _ <- cs.evalOn(gcsEc)(IO.delay(channel.write(byteChunk.toByteBuffer)))
+        } yield nextNum
+    }.map(_ => ())
 }
 
 object AwsToGcpRunner {
 
-  val BytesPerMib: Int = math.pow(2, 20).toInt
+  val BytesPerKiB: Double = math.pow(2, 10)
 
-  /** Number of bytes to request from S3 at a time. Probably needs tuning. */
-  val S3RangeSize: Int = 5 * BytesPerMib
+  val BytesPerMib: Double = math.pow(BytesPerKiB, 2)
+
+  /** Number of bytes to pull from S3 / push to GCS at a time. */
+  val ChunkSize: Int = 256 * BytesPerKiB.toInt
 
   /** Max number of bytes to store in-memory between the parallel download & upload streams. */
-  val BufferSize: Int = 512 * BytesPerMib
+  val BufferSize: Int = 512 * BytesPerMib.toInt
 
   /** Exception raised when the size of the source S3 object doesn't match a request's expectations. */
   case class UnexpectedFileSize(uri: String, expected: Long, actual: Long)
