@@ -27,8 +27,11 @@ pipeline {
             }
         }
         stage('Publish') {
+
+            def dockerProjects = ['transporter-manager', 'transporter-echo-agent', 'transporter-aws-to-gcp-agent']
+
             steps {
-                sh 'sbt Docker/publish'
+                sh 'sbt all ' + dockerProjects.collect { "$it/Docker/publish" }.join(' ')
             }
         }
     }
