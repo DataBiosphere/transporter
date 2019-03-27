@@ -26,6 +26,11 @@ pipeline {
                 sh 'sbt test'
             }
         }
+        stage('Publish') {
+            steps {
+                sh 'sbt Docker/publish'
+            }
+        }
     }
     post {
         always {
