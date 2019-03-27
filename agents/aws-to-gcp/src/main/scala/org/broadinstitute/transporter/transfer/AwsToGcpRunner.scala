@@ -107,9 +107,17 @@ class AwsToGcpRunner(
         .append(Stream.emit(None))
         .through(buffer.enqueue)
       gcsPush = buffer.dequeue.through(writeGcsBytes(gcsWriter))
+      totalChunks = math.ceil(fileSize / ChunkSize.toDouble).toLong
       // Order matters here: the argument to `concurrently` is considered the 'background'
       // stream, and won't interrupt processing if it completes first.
-      _ <- gcsPush.concurrently(s3Pull).compile.drain
+      _ <- gcsPush
+        .concurrently(s3Pull)
+        .evalScan(0L) { (i, _) =>
+          // NOTE: Scan also emits its zero arg, so we'll get an initial log for '0/total'.
+          logger.info(s"Chunks uploaded: $i/$totalChunks").map(_ => i + 1)
+        }
+        .compile
+        .drain
     } yield ()
 
   /**
@@ -133,11 +141,10 @@ class AwsToGcpRunner(
         val newStart = math.min(start + ChunkSize, fileSize)
         val range = s"$start-${newStart - 1}"
         for {
-          _ <- logger.info(s"Pulling bytes $range from S3...")
+          _ <- logger.debug(s"Pulling bytes $range from S3...")
           response <- cs.evalOn(s3Ec)(IO.delay {
             s3.getObjectAsBytes(reqBuilder.range(s"bytes=$range").build())
           })
-          _ <- logger.debug(s"Got S3 response for range $range")
         } yield {
           Some(Chunk.byteBuffer(response.asByteBuffer()) -> newStart)
         }
@@ -154,7 +161,7 @@ class AwsToGcpRunner(
       case (numUploaded, byteChunk) =>
         val nextNum = numUploaded + byteChunk.size
         for {
-          _ <- logger.info(
+          _ <- logger.debug(
             s"Writing bytes $numUploaded-${nextNum - 1} to GCS..."
           )
           _ <- cs.evalOn(gcsEc)(IO.delay(channel.write(byteChunk.toByteBuffer)))
@@ -164,15 +171,17 @@ class AwsToGcpRunner(
 
 object AwsToGcpRunner {
 
-  val BytesPerKiB: Double = math.pow(2, 10)
+  private val bytesPerMib = math.pow(2, 20).toInt
 
-  val BytesPerMib: Double = math.pow(BytesPerKiB, 2)
+  /**
+    * Number of bytes to pull from S3 / push to GCS at a time.
+    *
+    * Default chunk size for Google Cloud Java's write channels.
+    */
+  val ChunkSize: Int = 2 * bytesPerMib
 
-  /** Number of bytes to pull from S3 / push to GCS at a time. */
-  val ChunkSize: Int = 256 * BytesPerKiB.toInt
-
-  /** Max number of bytes to store in-memory between the parallel download & upload streams. */
-  val BufferSize: Int = 512 * BytesPerMib.toInt
+  /** Max number of chunks to store in-memory between the parallel download & upload streams. */
+  val BufferSize: Int = (512 * bytesPerMib) / ChunkSize
 
   /** Exception raised when the size of the source S3 object doesn't match a request's expectations. */
   case class UnexpectedFileSize(uri: String, expected: Long, actual: Long)

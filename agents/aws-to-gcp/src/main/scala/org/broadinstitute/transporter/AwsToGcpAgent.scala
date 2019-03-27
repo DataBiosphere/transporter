@@ -23,23 +23,21 @@ object AwsToGcpAgent extends TransporterAgent[RunnerConfig, AwsToGcpRequest] {
 
   /** Build a resource wrapping a single-threaded execution context. */
   private def singleThreadedEc: Resource[IO, ExecutionContext] = {
-    val allocate = IO.delay(Executors.newSingleThreadExecutor())
+    val allocate = IO.delay(Executors.newSingleThreadScheduledExecutor())
     val free = (es: ExecutorService) => IO.delay(es.shutdown())
     Resource.make(allocate)(free).map(ExecutionContext.fromExecutor)
   }
 
   override def runnerResource(
     config: RunnerConfig
-  ): Resource[IO, TransferRunner[AwsToGcpRequest]] = {
-    val create = (config.aws.toClient, config.gcp.toClient).tupled
-    val close = (clients: (S3Client, Storage)) => IO.delay(clients._1.close())
-
+  ): Resource[IO, TransferRunner[AwsToGcpRequest]] =
     for {
+      (s3Ec, gcsEc) <- (singleThreadedEc, singleThreadedEc).tupled
+      create = (config.aws.toClient, config.gcp.toClient).tupled
+      close = (clients: (S3Client, Storage)) =>
+        contextShift.evalOn(s3Ec)(IO.delay(clients._1.close()))
       (s3, gcs) <- Resource.make(create)(close)
-      s3Ec <- singleThreadedEc
-      gcsEc <- singleThreadedEc
     } yield {
       new AwsToGcpRunner(s3, s3Ec, gcs, gcsEc)
     }
-  }
 }

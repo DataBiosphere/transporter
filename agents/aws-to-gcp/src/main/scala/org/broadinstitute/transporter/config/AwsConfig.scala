@@ -12,7 +12,7 @@ import software.amazon.awssdk.auth.credentials.{
 }
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration
 import software.amazon.awssdk.core.retry.RetryPolicy
-import software.amazon.awssdk.core.retry.backoff.FullJitterBackoffStrategy
+import software.amazon.awssdk.core.retry.backoff.EqualJitterBackoffStrategy
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
 
@@ -32,24 +32,27 @@ case class AwsConfig(
     val credentials = AwsBasicCredentials.create(accessKeyId, secretAccessKey)
     val provider = StaticCredentialsProvider.create(credentials)
 
-    val overrideConfig = ClientOverrideConfiguration
-      .builder()
-      .retryPolicy(
-        RetryPolicy
-          .builder()
-          .numRetries(RetryCount)
-          .backoffStrategy(
-            FullJitterBackoffStrategy
-              .builder()
-              .baseDelay(Duration.ofMillis(RetryInitDelay.toMillis))
-              .maxBackoffTime(Duration.ofMillis(RetryMaxDelay.toMillis))
-              .build()
-          )
-          .build()
-      )
-      .apiCallAttemptTimeout(Duration.ofMillis(SingleRequestTimeout.toMillis))
-      .apiCallTimeout(Duration.ofMillis(TotalRequestTimeout.toMillis))
-      .build()
+    val overrideConfig = {
+      val backoffStrategy = EqualJitterBackoffStrategy
+        .builder()
+        .baseDelay(Duration.ofMillis(RetryInitDelay.toMillis))
+        .maxBackoffTime(Duration.ofMillis(RetryMaxDelay.toMillis))
+        .build()
+
+      ClientOverrideConfiguration
+        .builder()
+        .retryPolicy(
+          RetryPolicy
+            .builder()
+            .numRetries(RetryCount)
+            .backoffStrategy(backoffStrategy)
+            .throttlingBackoffStrategy(backoffStrategy)
+            .build()
+        )
+        .apiCallAttemptTimeout(Duration.ofMillis(SingleRequestTimeout.toMillis))
+        .apiCallTimeout(Duration.ofMillis(TotalRequestTimeout.toMillis))
+        .build()
+    }
 
     S3Client
       .builder()
