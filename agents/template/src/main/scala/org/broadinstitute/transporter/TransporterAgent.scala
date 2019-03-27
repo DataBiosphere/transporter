@@ -5,6 +5,7 @@ import java.util.concurrent.{ExecutorService, Executors}
 import cats.effect._
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import io.circe.Decoder
 import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.kafka.{KStreamsConfig, TransferStream}
 import org.broadinstitute.transporter.queue.{Queue, QueueConfig}
@@ -24,7 +25,7 @@ import scala.concurrent.ExecutionContext
   * the full framework needed to hook into Transporter's Kafka infrastructure
   * and run data transfers.
   */
-abstract class TransporterAgent[RC: ConfigReader]
+abstract class TransporterAgent[RC: ConfigReader, R: Decoder]
     extends IOApp.WithContext
     with CirceEntityDecoder {
 
@@ -45,7 +46,7 @@ abstract class TransporterAgent[RC: ConfigReader]
     * Modeled as a `Resource` so agent programs can hook in setup / teardown
     * logic for config, thread pools, etc.
     */
-  def runnerResource(config: RC): Resource[IO, TransferRunner[RC]]
+  def runnerResource(config: RC): Resource[IO, TransferRunner[R]]
 
   /** [[IOApp]] equivalent of `main`. */
   final override def run(args: List[String]): IO[ExitCode] =
@@ -87,7 +88,7 @@ abstract class TransporterAgent[RC: ConfigReader]
     */
   private def runStream(
     queue: Queue,
-    runner: TransferRunner[RC],
+    runner: TransferRunner[R],
     kafkaConfig: KStreamsConfig
   ): IO[ExitCode] = {
     val topology = TransferStream.build(queue, runner)

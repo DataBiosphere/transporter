@@ -1,11 +1,7 @@
 package org.broadinstitute.transporter.transfer
 
 import cats.effect.IO
-import cats.implicits._
-import io.circe.{Decoder, Json}
-import io.circe.derivation.deriveDecoder
 import io.circe.syntax._
-import org.broadinstitute.transporter.EchoConfig
 
 import scala.util.Random
 
@@ -14,36 +10,17 @@ import scala.util.Random
   *
   * Doesn't actually transfer data, so it's useful for manual plumbing tests.
   */
-class EchoRunner(config: EchoConfig) extends TransferRunner(config) {
+class EchoRunner(transientFailureRate: Double) extends TransferRunner[EchoInput] {
 
   private val rng = new Random()
 
-  override def transfer(request: Json): IO[TransferSummary] =
-    for {
-      rand <- IO.delay(rng.nextDouble())
-      (result, message) <- if (rand > config.transientFailureRate) {
-        IO.pure {
-          TransferResult.TransientFailure -> s"Simulating transient value for value $rand"
-        }
+  override def transfer(request: EchoInput): IO[TransferSummary] =
+    IO.delay(rng.nextDouble()).map { rand =>
+      val (result, message) = if (rand > transientFailureRate) {
+        TransferResult.TransientFailure -> s"Simulating transient value for value $rand"
       } else {
-        request
-          .as[EchoRunner.Input]
-          .map { input =>
-            (
-              if (input.fail) TransferResult.FatalFailure else TransferResult.Success,
-              input.message
-            )
-          }
-          .liftTo[IO]
+        (if (request.fail) TransferResult.FatalFailure else TransferResult.Success) -> request.message
       }
-    } yield {
       TransferSummary(result, Some(message.asJson))
     }
-}
-
-object EchoRunner {
-
-  case class Input(message: String, fail: Boolean)
-
-  implicit val decoder: Decoder[Input] = deriveDecoder
 }

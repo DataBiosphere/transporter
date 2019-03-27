@@ -2,7 +2,7 @@ package org.broadinstitute.transporter.kafka
 
 import cats.effect.IO
 import cats.implicits._
-import io.circe.{Decoder, Encoder, Json}
+import io.circe.{Decoder, Encoder}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import io.circe.literal._
 import io.circe.parser.parse
@@ -170,12 +170,9 @@ object TransferStreamSpec {
 
   val UnhandledError = new RuntimeException("OH NO")
 
-  class EchoRunner(fail: Boolean) extends TransferRunner(fail) {
-    override def transfer(request: Json): IO[TransferSummary] =
-      request
-        .as[EchoRequest]
-        .flatMap(e => if (fail) Left(UnhandledError) else Right(e.result))
-        .liftTo[IO]
+  class EchoRunner(fail: Boolean) extends TransferRunner[EchoRequest] {
+    override def transfer(request: EchoRequest): IO[TransferSummary] =
+      if (fail) IO.raiseError(UnhandledError) else IO.pure(request.result)
   }
 
   case class EchoRequest(result: TransferSummary)

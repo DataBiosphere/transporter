@@ -4,11 +4,9 @@ inThisBuild(
   Seq(
     organization := "org.broadinstitute",
     scalaVersion := "2.12.8",
-
     // Auto-format
     scalafmtConfig := (ThisBuild / baseDirectory)(_ / ".scalafmt.conf").value,
     scalafmtOnCompile := true,
-
     // Recommended guardrails
     scalacOptions ++= Seq(
       "-deprecation",
@@ -68,6 +66,10 @@ val kafkaVersion = "2.1.1"
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
 
+// Transfer.
+val s3Version = "2.5.15"
+val gcsVersion = "1.66.0"
+
 // Utils.
 val enumeratumVersion = "1.5.13"
 val fuuidVersion = "0.2.0-M7"
@@ -114,7 +116,8 @@ lazy val transporter = project
     `transporter-common`,
     `transporter-manager`,
     `transporter-agent-template`,
-    `transporter-echo-agent`
+    `transporter-echo-agent`,
+    `transporter-aws-to-gcp-agent`
   )
 
 /** Definitions used by both the manager and agents. */
@@ -124,7 +127,6 @@ lazy val `transporter-common` = project
   .settings(
     // Needed to resolve JSON schema lib.
     resolvers += "Jitpack" at "https://jitpack.io",
-
     libraryDependencies ++= Seq(
       "com.beachape" %% "enumeratum" % enumeratumVersion,
       "com.beachape" %% "enumeratum-circe" % enumeratumCirceVersion,
@@ -133,7 +135,6 @@ lazy val `transporter-common` = project
       "io.circe" %% "circe-derivation" % circeDerivationVersion,
       "io.circe" %% "circe-parser" % circeVersion
     ),
-
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion
@@ -165,7 +166,6 @@ lazy val `transporter-manager` = project
       "org.tpolecat" %% "doobie-postgres-circe" % doobieVersion,
       "org.webjars" % swaggerUiModule % swaggerUiVersion
     ),
-
     libraryDependencies ++= Seq(
       "com.dimafeng" %% "testcontainers-scala" % testcontainersScalaVersion,
       "io.circe" %% "circe-literal" % circeVersion,
@@ -175,7 +175,6 @@ lazy val `transporter-manager` = project
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       "org.testcontainers" % "postgresql" % testcontainersVersion
     ).map(_ % Test),
-
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
@@ -183,10 +182,8 @@ lazy val `transporter-manager` = project
       "org.postgresql" % "postgresql" % postgresqlDriverVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
-
       "org.testcontainers" % "testcontainers" % testcontainersVersion % Test
     ),
-
     // Inject version information into the app.
     buildInfoKeys := Seq(
       version,
@@ -212,19 +209,17 @@ lazy val `transporter-agent-template` = project
       "org.http4s" %% "http4s-blaze-client" % http4sVersion,
       "org.http4s" %% "http4s-circe" % http4sVersion
     ),
-
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
       "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test),
-
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
       "org.apache.kafka" % "kafka-clients" % kafkaVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
-      "org.typelevel" %% "cats-effect" % catsEffectVersion,
+      "org.typelevel" %% "cats-effect" % catsEffectVersion
     )
   )
 
@@ -232,3 +227,14 @@ lazy val `transporter-echo-agent` = project
   .in(file("./agents/echo"))
   .dependsOn(`transporter-agent-template`)
   .settings(commonSettings)
+
+lazy val `transporter-aws-to-gcp-agent` = project
+  .in(file("./agents/aws-to-gcp"))
+  .dependsOn(`transporter-agent-template`)
+  .settings(commonSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "com.google.cloud" % "google-cloud-storage" % gcsVersion,
+      "software.amazon.awssdk" % "s3" % s3Version
+    )
+  )

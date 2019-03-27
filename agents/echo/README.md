@@ -10,7 +10,7 @@ Use this JSON schema to initialize Transporter queues for this agent:
   "type": "object",
   "properties": {
     "message": { "type":  "string" },
-    "fail": { "type":  "boolean" },
+    "fail": { "type":  "boolean" }
   },
   "required": ["message", "fail"],
   "additionalProperties": false
