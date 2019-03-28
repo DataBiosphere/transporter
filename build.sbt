@@ -59,15 +59,15 @@ val enumeratumCirceVersion = "1.5.21"
 val everitJsonSchemaVersion = "1.11.1"
 
 // Kafka.
-val fs2KafkaVersion = "0.19.4"
-val kafkaVersion = "2.1.1"
+val fs2KafkaVersion = "0.19.7"
+val kafkaVersion = "2.2.0"
 
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
 
 // Transfer.
-val s3Version = "2.5.15"
+val s3Version = "2.5.19"
 val gcsVersion = "1.66.0"
 
 // Utils.
@@ -84,7 +84,7 @@ val swaggerUiVersion = "3.20.9"
 val liquibaseVersion = "3.6.3"
 val scalaMockVersion = "4.1.0"
 val scalaTestVersion = "3.0.7"
-val testcontainersVersion = "1.10.7"
+val testcontainersVersion = "1.11.1"
 val testcontainersScalaVersion = "0.23.0"
 
 // Settings to apply to all sub-projects.
