@@ -1,5 +1,7 @@
 package org.broadinstitute.transporter.kafka
 
+import java.net.ServerSocket
+
 import cats.effect.IO
 import cats.implicits._
 import io.circe.{Decoder, Encoder}
@@ -35,8 +37,15 @@ class TransferStreamSpec
     EchoSchema.as[QueueSchema].right.value
   )
 
-  private implicit val baseConfig: EmbeddedKafkaConfig =
-    EmbeddedKafkaConfig(
+  private def embeddedConfig = {
+    // Find unused ports to avoid port clashes between tests.
+    // This isn't rock-solid, but it's better than having a hard-coded port.
+    val kafkaSocket = new ServerSocket(0)
+    val zkSocket = new ServerSocket(0)
+
+    val conf = EmbeddedKafkaConfig(
+      kafkaPort = kafkaSocket.getLocalPort,
+      zooKeeperPort = zkSocket.getLocalPort,
       customBrokerProperties = Map(
         // Needed to make exactly-once processing work in Kafka Streams
         // when there's only 1 broker in the cluster.
@@ -44,6 +53,12 @@ class TransferStreamSpec
         "transaction.state.log.min.isr" -> "1"
       )
     )
+
+    kafkaSocket.close()
+    zkSocket.close()
+
+    conf
+  }
 
   /**
     * Run a set of requests through an instance of the "echo" stream,
@@ -53,10 +68,13 @@ class TransferStreamSpec
     requests: List[(String, String)],
     fail: Boolean = false
   ): List[(String, TransferSummary)] = {
+    implicit val baseConfig: EmbeddedKafkaConfig = embeddedConfig
+
     val topology = TransferStream.build(queue, new EchoRunner(fail))
     val config = KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"))
 
     runStreams(List(queue.requestTopic, queue.responseTopic), topology, config.asMap) {
+
       publishToKafka(queue.requestTopic, requests)
 
       // The default max attempts of 3 sometimes isn't enough on Jenkins.
