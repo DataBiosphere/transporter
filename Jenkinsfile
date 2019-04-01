@@ -26,6 +26,14 @@ pipeline {
                 sh 'sbt test'
             }
         }
+        stage('Publish') {
+            steps {
+                script {
+                    def dockerProjects = ['manager', 'echo-agent', 'aws-to-gcp-agent']
+                    sh "sbt 'all ${dockerProjects.collect { "transporter-$it/Docker/publish" }.join(' ') }'"
+                }
+            }
+        }
     }
     post {
         always {

@@ -1,5 +1,6 @@
 package org.broadinstitute.transporter.kafka
 
+import java.time.Duration
 import java.util.concurrent.{CancellationException, CompletionException}
 
 import cats.effect._
@@ -112,7 +113,7 @@ object AdminClient {
     }
     val closeClient = (client: JAdminClient) =>
       cs.evalOn(blockingEc)(IO.delay {
-        client.close(settings.closeTimeout.length, settings.closeTimeout.unit)
+        client.close(Duration.ofMillis(settings.closeTimeout.toMillis))
       })
 
     Resource.make(initClient)(closeClient)
