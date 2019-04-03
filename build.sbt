@@ -67,8 +67,8 @@ val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
 
 // Transfer.
-val s3Version = "2.5.22"
-val gcsVersion = "1.67.0"
+val s3Version = "2.5.23"
+val gcsVersion = "1.68.0"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
