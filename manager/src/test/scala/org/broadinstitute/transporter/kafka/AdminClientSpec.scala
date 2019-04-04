@@ -20,7 +20,7 @@ class AdminClientSpec extends BaseKafkaSpec {
       ec <- ExecutionContexts.cachedThreadPool[IO]
       adminClient <- AdminClient.adminResource(mapConfig(config), ec)
     } yield {
-      new AdminClient.Impl(adminClient, topicConfig)
+      new AdminClient.Impl(adminClient, replicationFactor)
     }
 
     resource.use(body(_, embeddedConfig)).unsafeRunSync()

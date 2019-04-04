@@ -1,16 +1,15 @@
 package org.broadinstitute.transporter.transfer
 
-import java.util.UUID
-
 import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.{ExitCase, IO}
 import cats.implicits._
+import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaProducer
-import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
+import org.broadinstitute.transporter.queue.{Queue, QueueController, QueueSchema}
 
 /** Component responsible for handling all transfer-related web requests. */
 trait TransferController {
@@ -31,7 +30,7 @@ trait TransferController {
     *   2. The number of transfers found in each potential "transfer status"
     *   3. Any "info" messages sent by agents about transfers in the request
     */
-  def lookupTransferStatus(queueName: String, requestId: UUID): IO[RequestStatus]
+  def lookupTransferStatus(queueName: String, requestId: FUUID): IO[RequestStatus]
 }
 
 object TransferController {
@@ -40,7 +39,7 @@ object TransferController {
   def apply(
     queueController: QueueController,
     dbClient: DbClient,
-    producer: KafkaProducer[UUID, Json]
+    producer: KafkaProducer[FUUID, Json]
   ): TransferController = new Impl(queueController, dbClient, producer)
 
   /** Exception used to mark when a user submits transfers that don't match a queue's expected schema. */
@@ -50,7 +49,7 @@ object TransferController {
       )
 
   /** Exception used to mark when a user attempts to interact with a nonexistent request. */
-  case class NoSuchRequest(id: UUID)
+  case class NoSuchRequest(id: FUUID)
       extends IllegalArgumentException(s"No transfers registered under ID $id")
 
   /**
@@ -63,7 +62,7 @@ object TransferController {
   private[transfer] class Impl(
     queueController: QueueController,
     dbClient: DbClient,
-    producer: KafkaProducer[UUID, Json]
+    producer: KafkaProducer[FUUID, Json]
   ) extends TransferController {
 
     private val logger = Slf4jLogger.getLogger[IO]
@@ -73,13 +72,13 @@ object TransferController {
       request: TransferRequest
     ): IO[TransferAck] =
       for {
-        (queueId, requestTopic, _, schema) <- getQueueInfo(queueName)
+        (id, queue) <- getQueueInfo(queueName)
         _ <- logger.info(
           s"Submitting ${request.transfers.length} transfers to queue $queueName"
         )
-        _ <- validateRequests(request.transfers, schema)
-        (requestId, transfersById) <- dbClient.recordTransferRequest(queueId, request)
-        _ <- submitOrRollback(requestId, requestTopic, transfersById)
+        _ <- validateRequests(request.transfers, queue.schema)
+        (requestId, transfersById) <- dbClient.recordTransferRequest(id, request)
+        _ <- submitOrRollback(requestId, queue.requestTopic, transfersById)
       } yield {
         TransferAck(requestId)
       }
@@ -88,10 +87,10 @@ object TransferController {
 
     override def lookupTransferStatus(
       queueName: String,
-      requestId: UUID
+      requestId: FUUID
     ): IO[RequestStatus] =
       for {
-        (queueId, _, _, _) <- getQueueInfo(queueName)
+        (queueId, _) <- getQueueInfo(queueName)
         transfersByStatus <- dbClient
           .lookupTransfers(queueId, requestId)
         counts = transfersByStatus.mapValues(_._1)
@@ -110,7 +109,7 @@ object TransferController {
         )
       }
 
-    private def getQueueInfo(queueName: String): IO[DbClient.QueueInfo] =
+    private def getQueueInfo(queueName: String): IO[(FUUID, Queue)] =
       for {
         maybeInfo <- queueController.lookupQueueInfo(queueName)
         info <- maybeInfo.liftTo[IO](QueueController.NoSuchQueue(queueName))
@@ -137,9 +136,9 @@ object TransferController {
       * DB records on failure.
       */
     private def submitOrRollback(
-      requestId: UUID,
+      requestId: FUUID,
       requestTopic: String,
-      messages: List[(UUID, Json)]
+      messages: List[(FUUID, Json)]
     ): IO[Unit] =
       producer.submit(requestTopic, messages).guaranteeCase {
         case ExitCase.Completed =>

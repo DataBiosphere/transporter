@@ -4,7 +4,6 @@ import cats.data.NonEmptyList
 import cats.effect._
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import fs2.kafka.{Deserializer, Serializer}
 import io.circe.Json
 import org.broadinstitute.transporter.web.{
   ApiRoutes,
@@ -98,13 +97,13 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
       producer <- KafkaProducer.resource(
         config.kafka,
-        Serializer.uuid,
+        Serdes.fuuidSerializer,
         Serdes.encodingSerializer[Json]
       )
       consumer <- KafkaConsumer.resource(
         s"${KafkaConfig.ResponseTopicPrefix}.+".r,
         config.kafka,
-        Deserializer.uuid,
+        Serdes.fuuidDeserializer,
         Serdes.decodingDeserializer[TransferSummary]
       )
     } yield {

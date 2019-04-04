@@ -1,18 +1,18 @@
 package org.broadinstitute.transporter.db
 
-import java.util.UUID
-
 import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import doobie.implicits._
 import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
+import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
-import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
+import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.broadinstitute.transporter.transfer.{
+  ResubmitInfo,
   TransferRequest,
   TransferResult,
   TransferStatus,
@@ -39,6 +39,7 @@ class DbClientSpec
     )
 
   private val schema = json"{}".as[QueueSchema].right.value
+  private val queue = Queue("test-queue", "requests", "progress", "responses", schema)
 
   behavior of "DbClient"
 
@@ -53,20 +54,21 @@ class DbClientSpec
   }
 
   it should "create, lookup, and delete transfer queues" in {
-    val request = QueueRequest("test-queue", schema)
 
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val check = for {
-      res <- client.lookupQueueInfo(request.name)
-      _ <- client.createQueue(request)
-      res2 <- client.lookupQueueInfo(request.name)
-      _ <- client.deleteQueue(request.name)
-      res3 <- client.lookupQueueInfo(request.name)
+      id <- FUUID.randomFUUID[IO]
+      res <- client.lookupQueue(queue.name)
+      _ <- client.createQueue(id, queue)
+      res2 <- client.lookupQueue(queue.name)
+      _ <- client.deleteQueue(id)
+      res3 <- client.lookupQueue(queue.name)
     } yield {
       res shouldBe None
-      val (_, _, _, schema) = res2.value
-      schema shouldBe request.schema
+      val (outId, outQueue) = res2.value
+      outId shouldBe id
+      outQueue shouldBe queue
       res3 shouldBe None
     }
 
@@ -74,13 +76,12 @@ class DbClientSpec
   }
 
   it should "fail to double-create a queue by name" in {
-    val request = QueueRequest("test-queue2", schema)
-
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val tryInsert = for {
-      _ <- client.createQueue(request)
-      _ <- client.createQueue(request)
+      id <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(id, queue)
+      _ <- client.createQueue(id, queue)
     } yield ()
 
     tryInsert.attempt.unsafeRunSync().isLeft shouldBe true
@@ -88,7 +89,10 @@ class DbClientSpec
 
   it should "no-op when deleting a nonexistent queue" in {
     val client = new DbClient.Impl(testTransactor(container.password))
-    client.deleteQueue("nope").unsafeRunSync()
+    for {
+      id <- FUUID.randomFUUID[IO]
+      _ <- client.deleteQueue(id)
+    } yield succeed
   }
 
   it should "record and delete new transfer requests under a queue" in {
@@ -105,13 +109,14 @@ class DbClientSpec
     }
 
     val checks = for {
-      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
+      queueId <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(queueId, queue)
       (initReqs, initTransfers) <- countsQuery.transact(transactor)
       (requestId, _) <- client.recordTransferRequest(queueId, requests)
       (postReqs, postTransfers) <- countsQuery.transact(transactor)
       _ <- client.deleteTransferRequest(requestId)
       (finalReqs, finalTransfers) <- countsQuery.transact(transactor)
-      _ <- client.deleteQueue("foo")
+      _ <- client.deleteQueue(queueId)
     } yield {
       initReqs shouldBe 0
       initTransfers shouldBe 0
@@ -144,12 +149,13 @@ class DbClientSpec
       }
 
     val checks = for {
-      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
+      queueId <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(queueId, queue)
       (reqId, reqs) <- client.recordTransferRequest(queueId, requests)
       preResults <- client.lookupTransfers(queueId, reqId)
       _ <- client.updateTransfers(reqs.map(_._1).zip(results))
       postResults <- client.lookupTransfers(queueId, reqId)
-      _ <- client.deleteQueue("foo")
+      _ <- client.deleteQueue(queueId)
     } yield {
       preResults shouldBe Map((TransferStatus.Submitted, (10, Vector.empty[Json])))
       postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Retrying, TransferStatus.Failed)
@@ -176,41 +182,40 @@ class DbClientSpec
 
     val transfers = List.tabulate(10)(i => json"""{ "i": $i }""")
     val queues = List("foo", "bar", "baz")
-    val requests =
-      transfers
+
+    val checks = for {
+      queuesWithIds <- queues.map { name =>
+        Queue(name, s"$name.requests", s"$name.progress", s"$name.results", schema)
+      }.traverse(queue => FUUID.randomFUUID[IO].map(_ -> queue))
+      _ <- queuesWithIds.traverse_ {
+        case (id, q) => client.createQueue(id, q)
+      }
+      transferIdsToSubmitInfo <- transfers
         .grouped((transfers.length / queues.length) + 1)
         .toList
         .mapWithIndex {
-          case (ts, i) => queues(i) -> TransferRequest(ts)
+          case (ts, i) => queuesWithIds(i) -> TransferRequest(ts)
         }
-
-    val checks = for {
-      queueInfo <- queues.traverse { q =>
-        client.createQueue(QueueRequest(q, schema)).map {
-          case (id, reqTopic, _, _) => (q, (id, reqTopic))
+        .flatTraverse {
+          case ((qId, q), req) =>
+            client.recordTransferRequest(qId, req).map {
+              case (_, transfersWithId) =>
+                transfersWithId.map {
+                  case (id, json) => (id, (q.requestTopic, json))
+                }
+            }
         }
-      }.map(_.toMap)
-      transferIdsToSubmitInfo <- requests.flatTraverse {
-        case (queue, req) =>
-          val (queueId, reqTopic) = queueInfo(queue)
-          client.recordTransferRequest(queueId, req).map {
-            case (_, transfersWithId) =>
-              transfersWithId.map {
-                case (id, json) => (id, (reqTopic, json))
-              }
-          }
-      }
       resubmitIds <- NonEmptyList
         .fromList(transferIdsToSubmitInfo)
-        .fold(IO.raiseError[NonEmptyList[UUID]](new IllegalStateException("???"))) {
+        .fold(IO.raiseError[NonEmptyList[FUUID]](new IllegalStateException("???"))) {
           ids =>
             IO.pure(ids.map(_._1))
         }
-      resubmitInfo <- client.getResubmitInfoForTransfers(resubmitIds)
-      _ <- queues.traverse_(client.deleteQueue)
+      resubmitInfo <- client.getResubmitInfo(resubmitIds)
+      _ <- queuesWithIds.traverse_ { case (id, _) => client.deleteQueue(id) }
     } yield {
       val infoById = resubmitInfo.map {
-        case (id, reqTopic, json) => (id, (reqTopic, json))
+        case ResubmitInfo(id, reqTopic, json) => (id, (reqTopic, json))
       }
 
       infoById should contain theSameElementsAs transferIdsToSubmitInfo

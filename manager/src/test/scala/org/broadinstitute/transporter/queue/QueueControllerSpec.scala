@@ -1,8 +1,7 @@
 package org.broadinstitute.transporter.queue
 
-import java.util.UUID
-
 import cats.effect.IO
+import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
@@ -20,15 +19,17 @@ class QueueControllerSpec
 
   private def controller = new QueueController.Impl(db, kafka)
 
-  private val id = UUID.randomUUID()
   private val request = QueueRequest("test-queue", Json.obj().as[QueueSchema].right.value)
-  private val queue = Queue(request.name, "requests", "responses", request.schema)
-  private val dbInfo = (id, queue.requestTopic, queue.responseTopic, queue.schema)
+
+  private val id = FUUID.randomFUUID[IO].unsafeRunSync()
+  private val queue =
+    Queue(request.name, "requests", "progress", "responses", request.schema)
+  private val dbInfo = (id, queue)
 
   behavior of "QueueController"
 
   it should "look up queue information by name in the DB" in {
-    (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(None))
+    (db.lookupQueue _).expects(queue.name).returning(IO.pure(None))
 
     controller
       .lookupQueue(queue.name)
@@ -37,9 +38,9 @@ class QueueControllerSpec
   }
 
   it should "verify Kafka is consistent with the DB on lookups" in {
-    (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
+    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
     (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.responseTopic))
+      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.pure(false))
 
     controller
@@ -49,31 +50,31 @@ class QueueControllerSpec
   }
 
   it should "look up queues with consistent state" in {
-    (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
+    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
     (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.responseTopic))
+      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.pure(true))
 
     controller.lookupQueue(queue.name).unsafeRunSync() shouldBe queue
   }
 
   it should "create new queues" in {
-    (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(None))
-    (db.createQueue _).expects(request).returning(IO.pure(dbInfo))
-    (kafka.createTopics _)
-      .expects(List(queue.requestTopic, queue.responseTopic))
-      .returning(IO.unit)
+    (db.lookupQueue _).expects(request.name).returning(IO.pure(None))
+    (db.createQueue _).expects(*, *).returning(IO.unit)
+    (kafka.createTopics _).expects(*).returning(IO.unit)
 
-    controller.createQueue(request).unsafeRunSync() shouldBe queue
+    val created = controller.createQueue(request).unsafeRunSync()
+    created.name shouldBe request.name
+    created.schema shouldBe request.schema
   }
 
   it should "clean up the DB if topic creation fails" in {
     val err = new RuntimeException("OH NO")
 
-    (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(None))
-    (db.createQueue _).expects(request).returning(IO.pure(dbInfo))
+    (db.lookupQueue _).expects(queue.name).returning(IO.pure(None))
+    (db.createQueue _).expects(*, *).returning(IO.unit)
     (kafka.createTopics _).expects(*).throwing(err)
-    (db.deleteQueue _).expects(queue.name).returning(IO.unit)
+    (db.deleteQueue _).expects(*).returning(IO.unit)
 
     controller
       .createQueue(request)
@@ -84,9 +85,9 @@ class QueueControllerSpec
   }
 
   it should "not overwrite existing, consistent queues" in {
-    (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
+    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
     (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.responseTopic))
+      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.pure(true))
 
     controller
@@ -98,13 +99,13 @@ class QueueControllerSpec
   }
 
   it should "detect and attempt to correct inconsistent state on creation" in {
-    (db.lookupQueueInfo _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
+    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
     (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.responseTopic))
+      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.pure(false))
     (db.patchQueueSchema _).expects(id, queue.schema).returning(IO.unit)
     (kafka.createTopics _)
-      .expects(List(queue.requestTopic, queue.responseTopic))
+      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.unit)
 
     controller.createQueue(request).unsafeRunSync() shouldBe queue

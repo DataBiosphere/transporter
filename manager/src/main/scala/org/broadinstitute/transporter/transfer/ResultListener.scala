@@ -1,10 +1,9 @@
 package org.broadinstitute.transporter.transfer
 
-import java.util.UUID
-
 import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
+import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
@@ -33,8 +32,8 @@ object ResultListener {
 
   // Pseudo-constructor for the Impl subclass.
   def apply(
-    consumer: KafkaConsumer[UUID, TransferSummary],
-    producer: KafkaProducer[UUID, Json],
+    consumer: KafkaConsumer[FUUID, TransferSummary],
+    producer: KafkaProducer[FUUID, Json],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO]): ResultListener =
     new Impl(consumer, producer, dbClient)
@@ -49,8 +48,8 @@ object ResultListener {
     *           onto other threads
     */
   private[transfer] class Impl(
-    consumer: KafkaConsumer[UUID, TransferSummary],
-    producer: KafkaProducer[UUID, Json],
+    consumer: KafkaConsumer[FUUID, TransferSummary],
+    producer: KafkaProducer[FUUID, Json],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO])
       extends ResultListener {
@@ -61,7 +60,7 @@ object ResultListener {
 
     /** Process a single batch of results received from some number of Transporter agents. */
     private[transfer] def processBatch(
-      batch: List[KafkaConsumer.Attempt[(UUID, TransferSummary)]]
+      batch: List[KafkaConsumer.Attempt[(FUUID, TransferSummary)]]
     ): IO[Unit] = {
       val (numMalformed, results) = batch.foldMap {
         case Right(res) => (0, List(res))
@@ -88,7 +87,7 @@ object ResultListener {
       * not the manager service.
       */
     private def resubmitTransientFailures(
-      results: List[(UUID, TransferSummary)]
+      results: List[(FUUID, TransferSummary)]
     ): IO[Unit] = {
       val transientFailures = results.collect {
         case (id, TransferSummary(TransferResult.TransientFailure, _)) => id
@@ -97,11 +96,11 @@ object ResultListener {
       NonEmptyList.fromList(transientFailures).fold(IO.unit) { toRetry =>
         for {
           _ <- logger.info(s"Resubmitting ${toRetry.length} transient failures")
-          resubmitInfo <- dbClient.getResubmitInfoForTransfers(toRetry)
-          resubmissionsByTopic = resubmitInfo.groupBy(_._2)
+          resubmitInfo <- dbClient.getResubmitInfo(toRetry)
+          resubmissionsByTopic = resubmitInfo.groupBy(_.requestTopic)
           _ <- resubmissionsByTopic.toList.parTraverse {
             case (topic, messages) =>
-              producer.submit(topic, messages.map { case (id, _, body) => id -> body })
+              producer.submit(topic, messages.map(m => m.transferId -> m.transferBody))
           }
         } yield ()
       }

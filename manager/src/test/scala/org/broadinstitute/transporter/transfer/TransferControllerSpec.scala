@@ -1,13 +1,12 @@
 package org.broadinstitute.transporter.transfer
 
-import java.util.UUID
-
 import cats.effect.IO
+import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaProducer
-import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
+import org.broadinstitute.transporter.queue.{Queue, QueueController, QueueSchema}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
@@ -19,20 +18,23 @@ class TransferControllerSpec
 
   private val db = mock[DbClient]
   private val queueController = mock[QueueController]
-  private val kafka = mock[KafkaProducer[UUID, Json]]
+  private val kafka = mock[KafkaProducer[FUUID, Json]]
 
   private val queueName = "queue"
-  private val queueId = UUID.randomUUID()
+  private val queueId = FUUID.randomFUUID[IO].unsafeRunSync()
   private val reqTopic = "requests"
+  private val progressTopic = "progress"
   private val resTopic = "results"
   private val schema = json"""{ "type": "object" }""".as[QueueSchema].right.value
-  private val queueInfo = (queueId, reqTopic, resTopic, schema)
+  private val queue = Queue(queueName, reqTopic, progressTopic, resTopic, schema)
+  private val queueInfo = (queueId, queue)
 
   private val goodRequest = TransferRequest(
     List(json"""{ "a": "b" }""", json"""{ "c": "d" }""", json"""{ "e": "f" }""")
   )
-  private val requestId = UUID.randomUUID()
-  private val transfersWithIds = goodRequest.transfers.map(UUID.randomUUID() -> _)
+  private val requestId = FUUID.randomFUUID[IO].unsafeRunSync()
+  private val transfersWithIds =
+    goodRequest.transfers.map(FUUID.randomFUUID[IO].unsafeRunSync() -> _)
 
   private def controller = new TransferController.Impl(queueController, db, kafka)
 

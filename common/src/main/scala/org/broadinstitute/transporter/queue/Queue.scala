@@ -9,16 +9,19 @@ import io.circe.derivation.{deriveDecoder, deriveEncoder}
   *
   * @param name ID provided by users when submitting requests to the
   *             transfer stream
-  * @param requestTopic Kafka topic which Transporter pushes new transfer
-  *                     requests onto for this stream
-  * @param responseTopic Kafka topic which Transporter reads transfer
-  *                      updates from for this stream
+  * @param requestTopic Kafka topic which Transporter should push new transfer
+  *                     requests onto for this queue
+  * @param progressTopic Kafka topic from which Transporter should read incremental
+  *                      progress updates for transfers in this queue
+  * @param responseTopic Kafka topic from which Transporter should read final
+  *                      transfer summaries for transfers in this queue
   * @param schema JSON schema which Transporter should enforce for all new
   *               requests submitted to this transfer stream
   */
 case class Queue(
   name: String,
   requestTopic: String,
+  progressTopic: String,
   responseTopic: String,
   schema: QueueSchema
 )

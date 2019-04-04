@@ -1,9 +1,8 @@
 package org.broadinstitute.transporter.transfer
 
-import java.util.UUID
-
 import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
+import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.db.DbClient
@@ -17,12 +16,14 @@ import scala.concurrent.ExecutionContext
 class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
 
   private val db = mock[DbClient]
-  private val consumer = mock[KafkaConsumer[UUID, TransferSummary]]
-  private val producer = mock[KafkaProducer[UUID, Json]]
+  private val consumer = mock[KafkaConsumer[FUUID, TransferSummary]]
+  private val producer = mock[KafkaProducer[FUUID, Json]]
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
   private def listener = new transfer.ResultListener.Impl(consumer, producer, db)
+
+  private def fuuid() = FUUID.randomFUUID[IO].unsafeRunSync()
 
   behavior of "ResultListener"
 
@@ -32,7 +33,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
       TransferSummary(TransferResult.FatalFailure, None),
       TransferSummary(TransferResult.Success, None),
       TransferSummary(TransferResult.FatalFailure, Some(json"[]"))
-    ).map(s => UUID.randomUUID() -> s)
+    ).map(fuuid() -> _)
 
     (db.updateTransfers _).expects(results).returning(IO.unit)
 
@@ -47,17 +48,18 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
       TransferSummary(TransferResult.Success, None),
       TransferSummary(TransferResult.FatalFailure, Some(json"[]")),
       TransferSummary(TransferResult.TransientFailure, None)
-    ).map(s => UUID.randomUUID() -> s)
+    ).map(fuuid() -> _)
 
     val resubmitIds = NonEmptyList.of(results(2)._1, results(5)._1)
-    val resubmitInfo = resubmitIds.map(id => (id, s"queue.$id", json"{}")).toList
+    val resubmitInfo =
+      resubmitIds.map(id => ResubmitInfo(id, s"queue.$id", json"{}")).toList
 
     (db.updateTransfers _).expects(results).returning(IO.unit)
-    (db.getResubmitInfoForTransfers _)
+    (db.getResubmitInfo _)
       .expects(resubmitIds)
       .returning(IO.pure(resubmitInfo))
     resubmitInfo.foreach {
-      case (id, topic, message) =>
+      case ResubmitInfo(id, topic, message) =>
         (producer.submit _).expects(topic, List(id -> message)).returning(IO.unit)
     }
 
@@ -72,17 +74,17 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
       TransferSummary(TransferResult.Success, None),
       TransferSummary(TransferResult.FatalFailure, Some(json"[]")),
       TransferSummary(TransferResult.TransientFailure, None)
-    ).map(s => UUID.randomUUID() -> s)
+    ).map(fuuid() -> _)
 
     val resubmitIds = NonEmptyList.of(results(2)._1, results(5)._1)
-    val resubmitInfo = resubmitIds.map(id => (id, "queue", json"{}")).toList
+    val resubmitInfo = resubmitIds.map(id => ResubmitInfo(id, "queue", json"{}")).toList
 
     (db.updateTransfers _).expects(results).returning(IO.unit)
-    (db.getResubmitInfoForTransfers _)
+    (db.getResubmitInfo _)
       .expects(resubmitIds)
       .returning(IO.pure(resubmitInfo))
     (producer.submit _)
-      .expects("queue", resubmitInfo.map(info => info._1 -> info._3))
+      .expects("queue", resubmitInfo.map(info => info.transferId -> info.transferBody))
       .returning(IO.unit)
 
     listener.processBatch(results.map(Right(_))).unsafeRunSync()
@@ -94,7 +96,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
       TransferSummary(TransferResult.FatalFailure, None),
       TransferSummary(TransferResult.Success, None),
       TransferSummary(TransferResult.FatalFailure, Some(json"[]"))
-    ).map(s => UUID.randomUUID() -> s)
+    ).map(fuuid() -> _)
 
     val batch = List.concat(
       List(Left(new IllegalStateException("WAT"))),

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="3" author="danmoran">
+
+        <!-- Add the column as nullable to start for backwards-compat. -->
+        <addColumn tableName="queues">
+            <column name="progress_topic" type="varchar(249)" />
+        </addColumn>
+
+        <!-- Fill in the column with the conventional pattern the app will use. -->
+        <sql>UPDATE queues set progress_topic = 'transporter.progress.' || id</sql>
+
+        <!-- Lock down nullability. -->
+        <addNotNullConstraint tableName="queues" columnName="progress_topic" />
+
+        <rollback>
+            <dropColumn tableName="queues" columnName="progress_topic" />
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>

@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.transfer
 
 import java.util.UUID
 
+import io.chrisdavenport.fuuid.FUUID
 import io.circe.Encoder
 
 /**
@@ -9,8 +10,11 @@ import io.circe.Encoder
   *
   * @param id unique ID for the transfer batch which can be used for status queries
   */
-case class TransferAck(id: UUID)
+case class TransferAck(id: FUUID)
 
 object TransferAck {
+  implicit val fuuidEncoder: Encoder[FUUID] =
+    Encoder[UUID].contramap(FUUID.Unsafe.toUUID)
+
   implicit val encoder: Encoder[TransferAck] = io.circe.derivation.deriveEncoder
 }
