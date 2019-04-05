@@ -32,7 +32,7 @@ object ResultListener {
 
   // Pseudo-constructor for the Impl subclass.
   def apply(
-    consumer: KafkaConsumer[FUUID, TransferSummary],
+    consumer: KafkaConsumer[FUUID, TransferSummary[Option[Json]]],
     producer: KafkaProducer[FUUID, Json],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO]): ResultListener =
@@ -48,7 +48,7 @@ object ResultListener {
     *           onto other threads
     */
   private[transfer] class Impl(
-    consumer: KafkaConsumer[FUUID, TransferSummary],
+    consumer: KafkaConsumer[FUUID, TransferSummary[Option[Json]]],
     producer: KafkaProducer[FUUID, Json],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO])
@@ -60,7 +60,7 @@ object ResultListener {
 
     /** Process a single batch of results received from some number of Transporter agents. */
     private[transfer] def processBatch(
-      batch: List[KafkaConsumer.Attempt[(FUUID, TransferSummary)]]
+      batch: List[KafkaConsumer.Attempt[(FUUID, TransferSummary[Option[Json]])]]
     ): IO[Unit] = {
       val (numMalformed, results) = batch.foldMap {
         case Right(res) => (0, List(res))
@@ -87,7 +87,7 @@ object ResultListener {
       * not the manager service.
       */
     private def resubmitTransientFailures(
-      results: List[(FUUID, TransferSummary)]
+      results: List[(FUUID, TransferSummary[Option[Json]])]
     ): IO[Unit] = {
       val transientFailures = results.collect {
         case (id, TransferSummary(TransferResult.TransientFailure, _)) => id

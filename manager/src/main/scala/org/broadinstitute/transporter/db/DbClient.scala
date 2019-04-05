@@ -87,7 +87,7 @@ trait DbClient {
     * @param results batch of ID -> result pairs pulled from Kafka which
     *                should be pushed into the DB
     */
-  def updateTransfers(results: List[(FUUID, TransferSummary)]): IO[Unit]
+  def updateTransfers(results: List[(FUUID, TransferSummary[Option[Json]])]): IO[Unit]
 
   /** Get info needed to resubmit a batch of transfers to Kafka. */
   def getResubmitInfo(transferIds: NonEmptyList[FUUID]): IO[List[ResubmitInfo]]
@@ -267,7 +267,9 @@ object DbClient {
       sql"""delete from transfer_requests where id = $id""".update.run.void
         .transact(transactor)
 
-    override def updateTransfers(summary: List[(FUUID, TransferSummary)]): IO[Unit] = {
+    override def updateTransfers(
+      summary: List[(FUUID, TransferSummary[Option[Json]])]
+    ): IO[Unit] = {
       val newStatuses = summary.map {
         case (id, s) =>
           val status = s.result match {

@@ -65,6 +65,7 @@ val kafkaVersion = "2.2.0"
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
+val log4sVersion = "1.7.0"
 
 // Transfer.
 val s3Version = "2.5.23"
@@ -204,10 +205,11 @@ lazy val `transporter-agent-template` = project
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-http4s" % pureConfigVersion,
-      "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
+      "io.chrisdavenport" %% "log4cats-log4s" % log4catsVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
       "org.http4s" %% "http4s-blaze-client" % http4sVersion,
-      "org.http4s" %% "http4s-circe" % http4sVersion
+      "org.http4s" %% "http4s-circe" % http4sVersion,
+      "org.log4s" %% "log4s" % log4sVersion
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,

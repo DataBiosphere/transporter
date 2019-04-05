@@ -16,7 +16,7 @@ import scala.concurrent.ExecutionContext
 class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
 
   private val db = mock[DbClient]
-  private val consumer = mock[KafkaConsumer[FUUID, TransferSummary]]
+  private val consumer = mock[KafkaConsumer[FUUID, TransferSummary[Option[Json]]]]
   private val producer = mock[KafkaProducer[FUUID, Json]]
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
@@ -28,7 +28,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
   behavior of "ResultListener"
 
   it should "record successes and fatal failures" in {
-    val results = List(
+    val results = List[TransferSummary[Option[Json]]](
       TransferSummary(TransferResult.Success, Some(json"{}")),
       TransferSummary(TransferResult.FatalFailure, None),
       TransferSummary(TransferResult.Success, None),
@@ -41,7 +41,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
   }
 
   it should "record and resubmit transient failures" in {
-    val results = List(
+    val results = List[TransferSummary[Option[Json]]](
       TransferSummary(TransferResult.Success, Some(json"{}")),
       TransferSummary(TransferResult.FatalFailure, None),
       TransferSummary(TransferResult.TransientFailure, Some(json"1")),
@@ -67,7 +67,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
   }
 
   it should "batch resubmissions by topic" in {
-    val results = List(
+    val results = List[TransferSummary[Option[Json]]](
       TransferSummary(TransferResult.Success, Some(json"{}")),
       TransferSummary(TransferResult.FatalFailure, None),
       TransferSummary(TransferResult.TransientFailure, Some(json"1")),
@@ -91,7 +91,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
   }
 
   it should "not crash if Kafka receives malformed data" in {
-    val results = List(
+    val results = List[TransferSummary[Option[Json]]](
       TransferSummary(TransferResult.Success, Some(json"{}")),
       TransferSummary(TransferResult.FatalFailure, None),
       TransferSummary(TransferResult.Success, None),
