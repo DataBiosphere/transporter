@@ -68,8 +68,7 @@ val log4catsVersion = "0.3.0"
 val log4sVersion = "1.7.0"
 
 // Transfer.
-val s3Version = "2.5.23"
-val gcsVersion = "1.68.0"
+val googleAuthVersion = "0.15.0"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
@@ -237,8 +236,8 @@ lazy val `transporter-aws-to-gcp-agent` = project
   .dependsOn(`transporter-agent-template`)
   .settings(commonSettings)
   .settings(
+    resolvers += Resolver.jcenterRepo,
     libraryDependencies ++= Seq(
-      "com.google.cloud" % "google-cloud-storage" % gcsVersion,
-      "software.amazon.awssdk" % "s3" % s3Version
+      "com.google.auth" % "google-auth-library-oauth2-http" % googleAuthVersion
     )
   )

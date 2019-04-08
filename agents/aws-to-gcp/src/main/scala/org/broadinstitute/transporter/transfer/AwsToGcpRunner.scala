@@ -1,172 +1,168 @@
 package org.broadinstitute.transporter.transfer
 
 import cats.effect.{ContextShift, IO, Resource}
-import com.google.cloud.WriteChannel
-import com.google.cloud.storage.{BlobInfo, Storage}
-import fs2.concurrent.Queue
-import fs2.{Chunk, Pipe, Stream}
-import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import software.amazon.awssdk.services.s3.S3Client
-import software.amazon.awssdk.services.s3.model.{GetObjectRequest, HeadObjectRequest}
+import cats.implicits._
+import fs2.Stream
+import io.circe.{Json, JsonObject}
+import io.circe.syntax._
+import org.apache.commons.codec.binary.{Base64, Hex}
+import org.broadinstitute.transporter.config.RunnerConfig
+import org.broadinstitute.transporter.transfer.auth.{GcsAuthProvider, S3AuthProvider}
+import org.http4s.{Charset, Header, Headers, MediaType, Method, Request, Uri}
+import org.http4s.client.Client
+import org.http4s.client.blaze.BlazeClientBuilder
+import org.http4s.client.middleware.RequestLogger
+import org.http4s.headers._
+import org.http4s.util.CaseInsensitiveString
 
 import scala.concurrent.ExecutionContext
 
-/**
-  * Transfer runner which can copy files from S3 to GCS, optionally
-  * enforcing an expected length/md5 in the process.
-  *
-  * Runs S3 download and GCS upload processes concurrently, with a
-  * bounded buffer in-between.
-  *
-  * @param s3 client which can run operations against S3
-  * @param s3Ec thread pool which should run all requests to S3
-  * @param gcs client which can run operations against GCS
-  * @param gcsEc thread pool which should run all requests go GCS
-  * @param cs utility which can shift operations between threads
-  */
 class AwsToGcpRunner(
-  s3: S3Client,
-  s3Ec: ExecutionContext,
-  gcs: Storage,
-  gcsEc: ExecutionContext
-)(
-  implicit cs: ContextShift[IO]
-) extends TransferRunner[AwsToGcpRequest] {
+  httpClient: Client[IO],
+  googleAuth: GcsAuthProvider,
+  s3Auth: S3AuthProvider
+) extends TransferRunner {
   import AwsToGcpRunner._
 
-  private val logger = Slf4jLogger.getLogger[IO]
+  /*--- BOILERPLATE ---*/
 
-  override def transfer(request: AwsToGcpRequest): IO[TransferSummary] = {
-    val s3Uri = s"s3://${request.s3Bucket}/${request.s3Path}"
-    val gcsUri = s"gs://${request.gcsBucket}/${request.gcsPath}"
+  override type In = AwsToGcpRequest
+  override type Progress = AwsToGcpProgress
+  override type Out = AwsToGcpOutput
 
-    for {
-      _ <- logger.info(s"Fetching metadata for $s3Uri")
-      s3Metadata <- IO.delay {
-        s3.headObject(
-          HeadObjectRequest
-            .builder()
-            .bucket(request.s3Bucket)
-            .key(request.s3Path)
-            .build()
-        )
-      }
-      // We can sanity-check expected size up-front, but not md5, since multipart uploads
-      // don't generate md5s for the final combined blob.
-      s3Size = s3Metadata.contentLength()
-      _ <- request.expectedSize.fold(
-        logger.warn(s"No expected size given for $s3Uri, skipping sanity-check")
-      ) { expectedSize =>
-        if (s3Size == expectedSize) {
-          logger.info(s"$s3Uri matches expected size; transferring to $gcsUri")
-        } else {
-          IO.raiseError(UnexpectedFileSize(s3Uri, expectedSize, s3Size))
-        }
-      }
-      _ <- {
-        val options = if (request.expectedMd5.isDefined) {
-          List(Storage.BlobWriteOption.md5Match())
-        } else {
-          Nil
-        }
-        val gcsBase = BlobInfo.newBuilder(request.gcsBucket, request.gcsPath)
-        val gcsTarget = request.expectedMd5
-          .fold(gcsBase)(gcsBase.setMd5FromHexString)
-          .setContentType(s3Metadata.contentType())
-          .setContentEncoding(s3Metadata.contentEncoding())
-          .setContentDisposition(s3Metadata.contentDisposition())
-          .build()
-        val s3Source =
-          GetObjectRequest.builder().bucket(request.s3Bucket).key(request.s3Path)
+  override def decodeInput(json: Json): Either[Throwable, AwsToGcpRequest] =
+    json.as[AwsToGcpRequest]
 
-        val open = IO.delay(gcs.writer(gcsTarget, options: _*))
-        val close = (w: WriteChannel) => IO.delay(w.close())
-        Resource.make(open)(close).use(runTransfer(s3Source, _, s3Size))
-      }
+  override def decodeProgress(json: Json): Either[Throwable, AwsToGcpProgress] =
+    json.as[AwsToGcpProgress]
+
+  override def encodeProgress(progress: AwsToGcpProgress): Json = progress.asJson
+
+  override def encodeOutput(output: AwsToGcpOutput): Json = output.asJson
+
+  /*--- END BOILERPLATE ---*/
+
+  override def initialize(request: AwsToGcpRequest): AwsToGcpProgress = {
+
+    val initFlow = for {
+      s3Metadata <- getS3Metadata(request.s3Bucket, request.s3Path, request.expectedSize)
+      uploadToken <- initGcsResumableUpload(
+        request.gcsBucket,
+        request.gcsPath,
+        s3Metadata,
+        request.expectedMd5
+      )
     } yield {
-      TransferSummary(TransferResult.Success, None)
+      AwsToGcpProgress(request.s3Bucket, request.s3Path, request.gcsBucket, uploadToken)
     }
+
+    initFlow.unsafeRunSync()
   }
 
   /**
-    * Copy an object from S3 to GCS.
+    * Send a HEAD request to S3 to verify:
+    *   1. That an object exists, and
+    *   2. That the object's size matches our expectations, if any.
     *
-    * @param s3Builder request-builder pointing at the S3 object to copy
-    * @param gcsWriter write-channel pointing at the GCS object to create
-    * @param fileSize size in bytes of the object to copy
+    * S3 reliably generates Content-Length headers, so we can run that
+    * check as an early fail-fast mechanism. Ideally we'd be able to do
+    * the same thing with md5s, but S3 doesn't generate those for
+    * multipart uploads.
     */
-  private def runTransfer(
-    s3Builder: GetObjectRequest.Builder,
-    gcsWriter: WriteChannel,
-    fileSize: Long
-  ): IO[Unit] =
-    for {
-      buffer <- Queue.boundedNoneTerminated[IO, Chunk[Byte]](BufferSize)
-      s3Pull = s3MultipartDownload(s3Builder, fileSize)
-        .map(Some(_))
-        .append(Stream.emit(None))
-        .through(buffer.enqueue)
-      gcsPush = buffer.dequeue.through(writeGcsBytes(gcsWriter))
-      totalChunks = math.ceil(fileSize / ChunkSize.toDouble).toLong
-      // Order matters here: the argument to `concurrently` is considered the 'background'
-      // stream, and won't interrupt processing if it completes first.
-      _ <- gcsPush
-        .concurrently(s3Pull)
-        .evalScan(0L) { (i, _) =>
-          // NOTE: Scan also emits its zero arg, so we'll get an initial log for '0/total'.
-          logger.info(s"Chunks uploaded: $i/$totalChunks").map(_ => i + 1)
-        }
-        .compile
-        .drain
-    } yield ()
+  private def getS3Metadata(
+    bucket: String,
+    path: String,
+    expectedSize: Option[Long]
+  ): IO[S3Metadata] = {
+    val s3DebugUri = s"s3://$bucket/$path"
 
-  /**
-    * Download the contents of an object in S3.
-    *
-    * @param reqBuilder request-builder pointing at the S3 object to download
-    * @param fileSize size in bytes of the object to download
-    */
-  private def s3MultipartDownload(
-    reqBuilder: GetObjectRequest.Builder,
-    fileSize: Long
-  ): Stream[IO, Chunk[Byte]] =
-    Stream.unfoldEval(0L) { start =>
-      // Request data in ranges, instead of using a single mega-request,
-      // to avoid tripping any request timeouts on huge files.
-      if (start == fileSize) {
-        IO.pure(None)
-      } else {
-        // The min is important; without it, S3 will return a 4XX error
-        // if we specify a range that exceeds the total file size.
-        val newStart = math.min(start + ChunkSize, fileSize)
-        val range = s"$start-${newStart - 1}"
-        for {
-          _ <- logger.debug(s"Pulling bytes $range from S3...")
-          response <- cs.evalOn(s3Ec)(IO.delay {
-            s3.getObjectAsBytes(reqBuilder.range(s"bytes=$range").build())
-          })
-        } yield {
-          Some(Chunk.byteBuffer(response.asByteBuffer()) -> newStart)
+    for {
+      s3Req <- s3Auth.addAuth {
+        Request(
+          method = Method.HEAD,
+          uri = s3Uri(bucket, path)
+        )
+      }
+      metadata <- httpClient.fetch(s3Req) { response =>
+        response.contentLength.liftTo[IO](NoFileSize(s3DebugUri)).map {
+          S3Metadata(_, response.contentType)
         }
       }
+      _ <- expectedSize.filter(_ != metadata.contentLength).fold(IO.unit) {
+        expectedSize =>
+          IO.raiseError(
+            UnexpectedFileSize(s3DebugUri, expectedSize, metadata.contentLength)
+          )
+      }
+    } yield {
+      metadata
+    }
+  }
+
+  private def initGcsResumableUpload(
+    bucket: String,
+    path: String,
+    s3Metadata: S3Metadata,
+    expectedMd5: Option[String]
+  ): IO[String] = {
+    // Object metadata is used by Google to register the upload to the correct pseudo-path.
+    val baseObjectMetadata = JsonObject("name" -> path.asJson)
+    // Including the "md5Hash" metadata triggers server-side validation on upload.
+    val objectMetadata = expectedMd5
+      .fold(baseObjectMetadata) { hexMd5 =>
+        baseObjectMetadata.add("md5Hash", hexToBase64(hexMd5).asJson)
+      }
+      .asJson
+
+    val initBody = Stream.emits(objectMetadata.noSpaces.getBytes)
+
+    for {
+      initSize <- initBody.covary[IO].compile.fold(0L)((s, _) => s + 1)
+      initHeaders = Headers(
+        `Content-Length`.unsafeFromLong(initSize),
+        `Content-Type`(MediaType.application.json, Charset.`UTF-8`),
+        Header("X-Upload-Content-Length", s3Metadata.contentLength.toString)
+      )
+      gcsInitReq <- googleAuth.addAuth {
+        Request(
+          method = Method.POST,
+          uri = baseGcsUploadUri(bucket),
+          body = initBody,
+          headers = s3Metadata.contentType.fold(initHeaders) { s3ContentType =>
+            initHeaders.put(Header("X-Upload-Content-Type", s3ContentType.renderString))
+          }
+        )
+      }
+      locationHeader <- httpClient.fetch(gcsInitReq) { response =>
+        response.headers
+          .get(CaseInsensitiveString("Location"))
+          .liftTo[IO](NoToken(s"gs://$bucket/$path"))
+      }
+    } yield {
+      locationHeader.value
     }
 
-  /**
-    * Build a stream sink which uploads bytes to an object in GCS.
-    *
-    * @param channel writer pointing to the GCS object to upload
-    */
-  private def writeGcsBytes(channel: WriteChannel): Pipe[IO, Chunk[Byte], Unit] =
-    _.evalScan(0L) {
-      case (numUploaded, byteChunk) =>
-        val nextNum = numUploaded + byteChunk.size
-        for {
-          _ <- logger.debug(
-            s"Writing bytes $numUploaded-${nextNum - 1} to GCS..."
-          )
-          _ <- cs.evalOn(gcsEc)(IO.delay(channel.write(byteChunk.toByteBuffer)))
-        } yield nextNum
-    }.map(_ => ())
+  }
+
+  private def hexToBase64(hex: String): String =
+    Base64.encodeBase64String(Hex.decodeHex(hex.toCharArray))
+
+  override def step(
+    progress: AwsToGcpProgress
+  ): Either[AwsToGcpProgress, AwsToGcpOutput] = ???
+
+  override def retriable(err: Throwable): Boolean = err match {
+    // TODO: Add custom exceptions for retriable failures, throw them when appropriate, and look for them here.
+    case _ => false
+  }
+
+  private def s3Uri(bucket: String, path: String): Uri =
+    Uri.unsafeFromString(s"https://$bucket.s3.amazonaws.com/$path")
+
+  private def baseGcsUploadUri(bucket: String): Uri =
+    Uri
+      .unsafeFromString(s"https://www.googleapis.com/upload/storage/v1/b/$bucket/o")
+      .withQueryParam("uploadType", "resumable")
 }
 
 object AwsToGcpRunner {
@@ -183,9 +179,36 @@ object AwsToGcpRunner {
   /** Max number of chunks to store in-memory between the parallel download & upload streams. */
   val BufferSize: Int = (512 * bytesPerMib) / ChunkSize
 
+  def resource(config: RunnerConfig, ec: ExecutionContext)(
+    implicit cs: ContextShift[IO]
+  ): Resource[IO, AwsToGcpRunner] =
+    for {
+      httpClient <- BlazeClientBuilder[IO](ec).resource
+      gcsAuth <- Resource.liftF(GcsAuthProvider.build(config.gcp))
+    } yield {
+      val s3Auth = new S3AuthProvider(config.aws)
+      new AwsToGcpRunner(
+        RequestLogger(logHeaders = true, logBody = true)(httpClient),
+        gcsAuth,
+        s3Auth
+      )
+    }
+
+  case class S3Metadata(contentLength: Long, contentType: Option[`Content-Type`])
+
+  case class NoFileSize(uri: String)
+      extends IllegalStateException(
+        s"Object $uri doesn't have a recorded size"
+      )
+
   /** Exception raised when the size of the source S3 object doesn't match a request's expectations. */
   case class UnexpectedFileSize(uri: String, expected: Long, actual: Long)
       extends IllegalStateException(
         s"Object $uri has size $actual, but expected $expected"
+      )
+
+  case class NoToken(uri: String)
+      extends IllegalStateException(
+        s"Initiating resumable upload for $uri did not return an upload token"
       )
 }
