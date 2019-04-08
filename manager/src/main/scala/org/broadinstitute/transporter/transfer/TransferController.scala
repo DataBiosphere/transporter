@@ -96,7 +96,6 @@ object TransferController {
         counts = transfersByStatus.mapValues(_._1)
         maybeStatus = List(
           TransferStatus.Failed,
-          TransferStatus.Retrying,
           TransferStatus.Submitted,
           TransferStatus.Succeeded
         ).find(counts.getOrElse(_, 0L) > 0L)

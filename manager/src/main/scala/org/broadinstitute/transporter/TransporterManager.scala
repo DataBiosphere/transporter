@@ -117,7 +117,7 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       )
       val appRoutes = SwaggerMiddleware(routes, info, blockingEc).orNotFound
       val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
-      val listener = ResultListener(consumer, producer, dbClient)
+      val listener = ResultListener(consumer, dbClient)
 
       (http, listener)
     }

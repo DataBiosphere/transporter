@@ -34,9 +34,6 @@ object TransferStatus
   /** Initial status assigned to all transfers as they are pushed to downstream agents. */
   case object Submitted extends TransferStatus
 
-  /** Status assigned to transfers which are reported to have failed with a transient error. */
-  case object Retrying extends TransferStatus
-
   /** Status assigned to transfers which are reported to have failed with a fatal error. */
   case object Failed extends TransferStatus
 

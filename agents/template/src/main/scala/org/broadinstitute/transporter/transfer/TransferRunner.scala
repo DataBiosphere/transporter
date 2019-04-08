@@ -36,6 +36,4 @@ trait TransferRunner {
     * following chunk.
     */
   def step(progress: Progress): Either[Progress, Out]
-
-  def retriable(err: Throwable): Boolean
 }

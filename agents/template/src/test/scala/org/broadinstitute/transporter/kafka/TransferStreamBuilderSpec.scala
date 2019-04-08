@@ -258,10 +258,6 @@ object TransferStreamBuilderSpec {
           )
         )
       }
-
-    override def retriable(err: Throwable): Boolean = err match {
-      case _ => false
-    }
   }
 
   val LoopSchema = json"""{

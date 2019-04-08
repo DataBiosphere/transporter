@@ -22,15 +22,6 @@ object TransferResult
   case object Success extends TransferResult
 
   /**
-    * Signal for transfers that failed with a transient error and
-    * are likely to succeed if resubmitted.
-    *
-    * Whether or not a failure should be considered transient is
-    * left up to the individual agent implementations.
-    */
-  case object TransientFailure extends TransferResult
-
-  /**
     * Signal for transfers that failed and are likely / guaranteed
     * to fail again if resubmitted.
     *

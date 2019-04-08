@@ -12,5 +12,5 @@ import org.broadinstitute.transporter.transfer.{EchoRunner, TransferRunner}
 object EchoAgent extends TransporterAgent[EchoConfig] {
 
   override def runnerResource(config: EchoConfig): Resource[IO, TransferRunner] =
-    Resource.pure(new EchoRunner(config.transientFailureRate))
+    Resource.pure(EchoRunner)
 }

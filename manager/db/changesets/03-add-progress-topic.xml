@@ -12,7 +12,9 @@
         </addColumn>
 
         <!-- Fill in the column with the conventional pattern the app will use. -->
-        <sql>UPDATE queues set progress_topic = 'transporter.progress.' || id</sql>
+        <sql>
+            UPDATE queues SET progress_topic = 'transporter.progress.' || id
+        </sql>
 
         <!-- Lock down nullability. -->
         <addNotNullConstraint tableName="queues" columnName="progress_topic" />

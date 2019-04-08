@@ -2,7 +2,6 @@ package org.broadinstitute.transporter.db
 
 import java.util.UUID
 
-import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import doobie.hi._
@@ -88,9 +87,6 @@ trait DbClient {
     *                should be pushed into the DB
     */
   def updateTransfers(results: List[(FUUID, TransferSummary[Option[Json]])]): IO[Unit]
-
-  /** Get info needed to resubmit a batch of transfers to Kafka. */
-  def getResubmitInfo(transferIds: NonEmptyList[FUUID]): IO[List[ResubmitInfo]]
 }
 
 object DbClient {
@@ -273,9 +269,8 @@ object DbClient {
       val newStatuses = summary.map {
         case (id, s) =>
           val status = s.result match {
-            case TransferResult.Success          => TransferStatus.Succeeded
-            case TransferResult.TransientFailure => TransferStatus.Retrying
-            case TransferResult.FatalFailure     => TransferStatus.Failed
+            case TransferResult.Success      => TransferStatus.Succeeded
+            case TransferResult.FatalFailure => TransferStatus.Failed
           }
           (status, s.info, id)
       }
@@ -285,18 +280,6 @@ object DbClient {
       ).updateMany(newStatuses)
         .void
         .transact(transactor)
-    }
-
-    override def getResubmitInfo(
-      transferIds: NonEmptyList[FUUID]
-    ): IO[List[ResubmitInfo]] = {
-      val query = fr"""select t.id, q.request_topic, t.body from
-            transfers t
-            left join transfer_requests r on t.request_id = r.id
-            left join queues q on r.queue_id = q.id
-            where""" ++ doobie.Fragments.in(fr"t.id", transferIds)
-
-      query.query[ResubmitInfo].to[List].transact(transactor)
     }
 
     /**

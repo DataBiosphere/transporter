@@ -19,7 +19,7 @@
         </createTable>
 
         <sql>
-            CREATE TYPE transfer_status AS ENUM ('submitted', 'retrying', 'failed', 'succeeded')
+            CREATE TYPE transfer_status AS ENUM ('submitted', 'failed', 'succeeded')
         </sql>
 
         <createTable tableName="transfers">

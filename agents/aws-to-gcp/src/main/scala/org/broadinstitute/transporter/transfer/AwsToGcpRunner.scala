@@ -240,11 +240,6 @@ class AwsToGcpRunner(
       nextOrDone
     }
 
-  override def retriable(err: Throwable): Boolean = err match {
-    // TODO: Add custom exceptions for retriable failures, throw them when appropriate, and look for them here.
-    case _ => false
-  }
-
   private def s3Uri(bucket: String, path: String): Uri =
     Uri.unsafeFromString(s"https://$bucket.s3.amazonaws.com/$path")
 

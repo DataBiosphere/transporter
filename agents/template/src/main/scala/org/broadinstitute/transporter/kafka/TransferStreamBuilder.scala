@@ -84,17 +84,11 @@ class TransferStreamBuilder(queue: Queue) {
             case p: ParsingFailure => (ParseFailureMsg, p.message)
             case e                 => (UnhandledErrMsg, e.getMessage)
           }
-
-          val message = s"Failed to initialize request $id: $log"
-          val res = if (runner.retriable(failure)) {
-            TransferResult.TransientFailure
-          } else {
-            TransferResult.FatalFailure
-          }
-
           logger.error(failure)(log)
-
-          TransferSummary(res, UnhandledErrorInfo(message, detail)).asJson.noSpaces
+          TransferSummary(
+            TransferResult.FatalFailure,
+            UnhandledErrorInfo(s"Failed to initialize request $id: $log", detail)
+          ).asJson.noSpaces
         }.to(queue.responseTopic)
       }
       _ <- IO.delay {
@@ -138,17 +132,17 @@ class TransferStreamBuilder(queue: Queue) {
                   case e                 => (UnhandledErrMsg, e.getMessage)
                 }
 
-                val message = s"Failed to run step on request $id: $log"
-                val res = if (runner.retriable(failure)) {
-                  TransferResult.TransientFailure
-                } else {
-                  TransferResult.FatalFailure
-                }
-
                 logger.error(failure)(log)
 
-                Either
-                  .right(TransferSummary(res, UnhandledErrorInfo(message, detail).asJson))
+                Either.right(
+                  TransferSummary(
+                    TransferResult.FatalFailure,
+                    UnhandledErrorInfo(
+                      s"Failed to run step on request $id: $log",
+                      detail
+                    ).asJson
+                  )
+                )
               },
               _.map { out =>
                 TransferSummary(TransferResult.Success, runner.encodeOutput(out))
