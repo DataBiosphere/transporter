@@ -1,6 +1,6 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.IO
+import io.circe.Json
 import io.circe.syntax._
 
 import scala.util.Random
@@ -10,17 +10,58 @@ import scala.util.Random
   *
   * Doesn't actually transfer data, so it's useful for manual plumbing tests.
   */
-class EchoRunner(transientFailureRate: Double) extends TransferRunner[EchoInput] {
+class EchoRunner(transientFailureRate: Double) extends TransferRunner {
+  import EchoRunner._
+
+  /*--- BOILERPLATE ---*/
+
+  override type In = EchoInput
+
+  override type Progress = EchoInput
+
+  override type Out = String
+
+  override def decodeInput(json: Json): Either[Throwable, EchoInput] = json.as[EchoInput]
+
+  override def decodeProgress(json: Json): Either[Throwable, EchoInput] =
+    json.as[EchoInput]
+
+  override def encodeProgress(progress: EchoInput): Json = progress.asJson
+
+  override def encodeOutput(output: String): Json = output.asJson
+
+  /*--- END BOILERPLATE ---*/
 
   private val rng = new Random()
 
-  override def transfer(request: EchoInput): IO[TransferSummary] =
-    IO.delay(rng.nextDouble()).map { rand =>
-      val (result, message) = if (rand > transientFailureRate) {
-        TransferResult.TransientFailure -> s"Simulating transient value for value $rand"
-      } else {
-        (if (request.fail) TransferResult.FatalFailure else TransferResult.Success) -> request.message
-      }
-      TransferSummary(result, Some(message.asJson))
+  override def initialize(request: EchoInput): EchoInput = {
+    val rand = rng.nextDouble()
+
+    if (rand > transientFailureRate) {
+      throw SimulatedFlakyError(rand)
+    } else {
+      request
     }
+  }
+
+  override def step(progress: EchoInput): Either[EchoInput, String] = {
+    val rand = rng.nextDouble()
+
+    if (rand > transientFailureRate) {
+      throw SimulatedFlakyError(rand)
+    } else if (progress.fail) {
+      throw new IllegalStateException(s"Simulating fatal error during transfer")
+    } else {
+      Right(progress.message)
+    }
+  }
+
+  override def retriable(err: Throwable): Boolean =
+    err.isInstanceOf[SimulatedFlakyError]
+}
+
+object EchoRunner {
+
+  case class SimulatedFlakyError(pct: Double)
+      extends RuntimeException(s"Simulating transient failure for value $pct")
 }
