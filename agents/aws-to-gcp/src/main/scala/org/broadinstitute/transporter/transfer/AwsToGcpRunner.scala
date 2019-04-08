@@ -11,7 +11,7 @@ import org.broadinstitute.transporter.transfer.auth.{GcsAuthProvider, S3AuthProv
 import org.http4s._
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
-import org.http4s.client.middleware.RequestLogger
+import org.http4s.client.middleware.Logger
 import org.http4s.headers._
 import org.http4s.util.CaseInsensitiveString
 
@@ -92,8 +92,16 @@ class AwsToGcpRunner(
         )
       }
       metadata <- httpClient.fetch(s3Req) { response =>
-        response.contentLength.liftTo[IO](NoFileSize(s3DebugUri)).map {
-          S3Metadata(_, response.contentType)
+        if (response.status.isSuccess) {
+          response.contentLength.liftTo[IO](NoFileSize(s3DebugUri)).map {
+            S3Metadata(_, response.contentType)
+          }
+        } else {
+          IO.raiseError(
+            new RuntimeException(
+              s"Request for S3 metadata returned status ${response.status}: $s3DebugUri"
+            )
+          )
         }
       }
       _ <- expectedSize.filter(_ != metadata.contentLength).fold(IO.unit) {
@@ -272,7 +280,7 @@ object AwsToGcpRunner {
     } yield {
       val s3Auth = new S3AuthProvider(config.aws)
       new AwsToGcpRunner(
-        RequestLogger(logHeaders = true, logBody = true)(httpClient),
+        Logger(logHeaders = true, logBody = true)(httpClient),
         gcsAuth,
         s3Auth
       )

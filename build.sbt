@@ -239,5 +239,8 @@ lazy val `transporter-aws-to-gcp-agent` = project
     resolvers += Resolver.jcenterRepo,
     libraryDependencies ++= Seq(
       "com.google.auth" % "google-auth-library-oauth2-http" % googleAuthVersion
-    )
+    ),
+    libraryDependencies ++= Seq(
+      "org.scalatest" %% "scalatest" % scalaTestVersion,
+    ).map(_ % Test)
   )
