@@ -7,7 +7,10 @@ case class AwsToGcpProgress(
   s3Bucket: String,
   s3Path: String,
   gcsBucket: String,
-  gcsToken: String
+  gcsPath: String,
+  gcsToken: String,
+  bytesUploaded: Long,
+  totalBytes: Long
 )
 
 object AwsToGcpProgress {

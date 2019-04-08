@@ -2,13 +2,13 @@ package org.broadinstitute.transporter.transfer
 
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
-import fs2.Stream
+import fs2.{Chunk, Stream}
 import io.circe.{Json, JsonObject}
 import io.circe.syntax._
 import org.apache.commons.codec.binary.{Base64, Hex}
 import org.broadinstitute.transporter.config.RunnerConfig
 import org.broadinstitute.transporter.transfer.auth.{GcsAuthProvider, S3AuthProvider}
-import org.http4s.{Charset, Header, Headers, MediaType, Method, Request, Uri}
+import org.http4s._
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.RequestLogger
@@ -53,7 +53,15 @@ class AwsToGcpRunner(
         request.expectedMd5
       )
     } yield {
-      AwsToGcpProgress(request.s3Bucket, request.s3Path, request.gcsBucket, uploadToken)
+      AwsToGcpProgress(
+        request.s3Bucket,
+        request.s3Path,
+        request.gcsBucket,
+        request.gcsPath,
+        uploadToken,
+        0L,
+        s3Metadata.contentLength
+      )
     }
 
     initFlow.unsafeRunSync()
@@ -149,7 +157,88 @@ class AwsToGcpRunner(
 
   override def step(
     progress: AwsToGcpProgress
-  ): Either[AwsToGcpProgress, AwsToGcpOutput] = ???
+  ): Either[AwsToGcpProgress, AwsToGcpOutput] = {
+    val doStep = for {
+      chunk <- getS3Chunk(
+        progress.s3Bucket,
+        progress.s3Path,
+        progress.bytesUploaded,
+        progress.bytesUploaded + ChunkSize - 1
+      )
+      nextOrDone <- uploadChunk(
+        progress.gcsBucket,
+        progress.gcsPath,
+        progress.gcsToken,
+        progress.bytesUploaded,
+        chunk
+      )
+    } yield {
+      nextOrDone.bimap(
+        bytesUploaded => progress.copy(bytesUploaded = bytesUploaded),
+        _ => AwsToGcpOutput(progress.gcsBucket, progress.gcsPath)
+      )
+    }
+
+    doStep.unsafeRunSync()
+  }
+
+  private def getS3Chunk(
+    bucket: String,
+    path: String,
+    rangeStart: Long,
+    rangeEnd: Long
+  ): IO[Chunk[Byte]] =
+    for {
+      s3Req <- s3Auth.addAuth {
+        Request(
+          method = Method.HEAD,
+          uri = s3Uri(bucket, path),
+          headers = Headers(`Content-Range`(rangeStart, rangeEnd))
+        )
+      }
+      chunk <- httpClient.expect[Chunk[Byte]](s3Req)
+    } yield {
+      chunk
+    }
+
+  private def uploadChunk(
+    bucket: String,
+    path: String,
+    uploadToken: String,
+    rangeStart: Long,
+    chunk: Chunk[Byte]
+  ): IO[Either[Long, Unit]] =
+    for {
+      gcsReq <- googleAuth.addAuth {
+        Request(
+          method = Method.PUT,
+          uri = baseGcsUploadUri(bucket).withQueryParam("upload_id", uploadToken),
+          headers = Headers(
+            `Content-Length`.unsafeFromLong(chunk.size.toLong),
+            `Content-Range`(rangeStart, rangeStart + chunk.size - 1)
+          )
+        )
+      }
+      nextOrDone <- httpClient.fetch(gcsReq) { response =>
+        if (response.status.code == 308) {
+          val bytesReceived = for {
+            range <- response.headers.get(`Content-Range`)
+            rangeEnd <- range.range.second
+          } yield {
+            rangeEnd
+          }
+          IO.pure(Left(bytesReceived.getOrElse(rangeStart + chunk.size)))
+        } else if (response.status.isSuccess) {
+          IO.pure(Right(()))
+        } else {
+          IO.raiseError(
+            new RuntimeException(s"Failed to upload chunk to bucket gs://$bucket/$path")
+          )
+        }
+      }
+    } yield {
+      nextOrDone
+    }
 
   override def retriable(err: Throwable): Boolean = err match {
     // TODO: Add custom exceptions for retriable failures, throw them when appropriate, and look for them here.
