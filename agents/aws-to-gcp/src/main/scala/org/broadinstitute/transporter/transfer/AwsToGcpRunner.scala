@@ -187,7 +187,7 @@ class AwsToGcpRunner(
         progress.s3Region,
         progress.s3Path,
         progress.bytesUploaded,
-        progress.bytesUploaded + ChunkSize - 1
+        math.min(progress.bytesUploaded + ChunkSize, progress.totalBytes) - 1
       )
       nextOrDone <- uploadChunk(
         progress.gcsBucket,
@@ -289,12 +289,10 @@ object AwsToGcpRunner {
   /**
     * Number of bytes to pull from S3 / push to GCS at a time.
     *
-    * Default chunk size for Google Cloud Java's write channels.
+    * Google recommends any file smaller than this be uploaded in a single request,
+    * and Amazon doesn't allow multipart uploads with chunks smaller than this.
     */
-  val ChunkSize: Int = 2 * bytesPerMib
-
-  /** Max number of chunks to store in-memory between the parallel download & upload streams. */
-  val BufferSize: Int = (512 * bytesPerMib) / ChunkSize
+  val ChunkSize: Int = 5 * bytesPerMib
 
   def resource(config: RunnerConfig, ec: ExecutionContext)(
     implicit cs: ContextShift[IO]
