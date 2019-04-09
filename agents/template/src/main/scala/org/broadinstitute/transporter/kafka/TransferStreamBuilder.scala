@@ -92,9 +92,10 @@ class TransferStreamBuilder(queue: Queue) {
         }.to(queue.responseTopic)
       }
       _ <- IO.delay {
-        successes
-          .mapValues(s => runner.encodeProgress(s.right.get).noSpaces)
-          .to(queue.progressTopic)
+        successes.mapValues { (id, s) =>
+          logger.info(s"Enqueueing zero progress for request with ID: $id")
+          runner.encodeProgress(s.right.get).noSpaces
+        }.to(queue.progressTopic)
       }
     } yield {
       builder

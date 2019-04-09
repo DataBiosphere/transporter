@@ -7,6 +7,9 @@ import io.circe.derivation.deriveDecoder
   * A request to copy a single file from AWS to GCP.
   *
   * @param s3Bucket name of the S3 bucket (without leading s3://) containing the file-to-copy
+  * @param s3Region region hosting `s3Bucket`. S3 doesn't have a concept of multi-regional buckets
+  *                 like Google does, and it requires regions to be included in request signatures
+  *                 when making authorized requests
   * @param s3Path path within `s3Bucket` (without leading /) pointing to the file-to-copy
   * @param gcsBucket name of the GCS bucket (without leading gs://) to copy the file into
   * @param gcsPath path within `gcsBucket` (without leading /) to copy the file into
@@ -17,6 +20,7 @@ import io.circe.derivation.deriveDecoder
   */
 case class AwsToGcpRequest(
   s3Bucket: String,
+  s3Region: String,
   s3Path: String,
   gcsBucket: String,
   gcsPath: String,

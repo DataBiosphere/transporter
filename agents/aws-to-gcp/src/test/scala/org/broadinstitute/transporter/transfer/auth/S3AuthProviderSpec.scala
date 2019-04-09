@@ -2,12 +2,11 @@ package org.broadinstitute.transporter.transfer.auth
 
 import java.time.LocalDateTime
 
-import org.http4s.{Headers, Method, Uri}
+import org.http4s.{Header, Headers, Method, Uri}
 import org.http4s.headers._
-import org.http4s.util.CaseInsensitiveString
-import org.scalatest.{FlatSpec, Matchers, OptionValues}
+import org.scalatest.{FlatSpec, Matchers}
 
-class S3AuthProviderSpec extends FlatSpec with Matchers with OptionValues {
+class S3AuthProviderSpec extends FlatSpec with Matchers {
   behavior of "S3AuthProvider"
 
   // https://docs.aws.amazon.com/general/latest/gr/signature-v4-test-suite.html
@@ -40,17 +39,15 @@ class S3AuthProviderSpec extends FlatSpec with Matchers with OptionValues {
 
   private val testSigningString =
     s"""AWS4-HMAC-SHA256
-        |20150830T123600Z
-        |20150830/us-east-1/service/aws4_request
-        |$hashedCanonical""".stripMargin
+       |20150830T123600Z
+       |20150830/us-east-1/service/aws4_request
+       |$hashedCanonical""".stripMargin
 
   private val testSignature =
     "b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500"
 
   private val testRenderedAuth =
-    s"""Authorization: AWS4-HMAC-SHA256 Credential="$fakeAccessKey/20150830/$fakeRegion/$fakeService/aws4_request",SignedHeaders="$testHeaders",Signature="$testSignature""""
-
-  private val testHeaderSha = s"x-amz-content-sha256: $emptyStringHash"
+    s"""Authorization: AWS4-HMAC-SHA256 Credential=$fakeAccessKey/20150830/$fakeRegion/$fakeService/aws4_request,SignedHeaders=$testHeaders,Signature=$testSignature"""
 
   it should "hash payloads" in {
     S3AuthProvider
@@ -64,14 +61,32 @@ class S3AuthProviderSpec extends FlatSpec with Matchers with OptionValues {
 
     val (canonicalized, headerNames) = S3AuthProvider.canonicalize(
       method = Method.GET,
-      uri = Uri.uri("/?Param2=value2&Param1=value1"),
-      headers = Headers(Host("example.amazonaws.com")),
-      hashedPayload = emptyStringHash,
-      now = now
+      uri = Uri.uri("https://bucket.s3.amazonaws.com/?Param2=value2&Param1=value1"),
+      headers =
+        Headers(Host("example.amazonaws.com"), Header("x-amz-date", "20150830T123600Z")),
+      hashedPayload = emptyStringHash
     )
 
     canonicalized shouldBe testCanonical
     headerNames shouldBe testHeaders
+  }
+
+  it should "insert a blank placeholder into canonical requests without query strings" in {
+    val (canonicalized, _) = S3AuthProvider.canonicalize(
+      method = Method.PUT,
+      uri = Uri.uri("https://bucket.s3.amazonaws.com/thing1/thing2.file"),
+      headers = Headers(Header("x-amz-date", "20150830T123600Z")),
+      hashedPayload = emptyStringHash
+    )
+
+    canonicalized shouldBe
+      s"""PUT
+         |/thing1/thing2.file
+         |
+         |x-amz-date:20150830T123600Z
+         |
+         |x-amz-date
+         |$emptyStringHash""".stripMargin
   }
 
   it should "create credential scopes" in {
@@ -80,8 +95,7 @@ class S3AuthProviderSpec extends FlatSpec with Matchers with OptionValues {
 
   it should "build strings to sign" in {
     S3AuthProvider
-      .sha256(testCanonical.getBytes)
-      .map(S3AuthProvider.buildStringToSign(_, now, testScope))
+      .buildStringToSign(testCanonical, now, testScope)
       .unsafeRunSync() shouldBe testSigningString
   }
 
@@ -92,18 +106,13 @@ class S3AuthProviderSpec extends FlatSpec with Matchers with OptionValues {
   }
 
   it should "build authorization headers" in {
-    val headers = S3AuthProvider.buildHeaders(
+    val auth = S3AuthProvider.authHeader(
       fakeAccessKey,
       testScope,
       testHeaders,
-      testSignature,
-      emptyStringHash
+      testSignature
     )
 
-    headers.get(Authorization).value.renderString shouldBe testRenderedAuth
-    headers
-      .get(CaseInsensitiveString("x-amz-content-sha256"))
-      .value
-      .renderString shouldBe testHeaderSha
+    auth.renderString shouldBe testRenderedAuth
   }
 }

@@ -5,6 +5,7 @@ import io.circe.derivation.{deriveDecoder, deriveEncoder}
 
 case class AwsToGcpProgress(
   s3Bucket: String,
+  s3Region: String,
   s3Path: String,
   gcsBucket: String,
   gcsPath: String,

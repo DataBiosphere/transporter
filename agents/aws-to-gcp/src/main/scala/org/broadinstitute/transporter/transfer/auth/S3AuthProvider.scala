@@ -2,7 +2,7 @@ package org.broadinstitute.transporter.transfer.auth
 
 import java.net.URLEncoder
 import java.security.MessageDigest
-import java.time.LocalDateTime
+import java.time.{LocalDateTime, ZoneId}
 import java.time.format.DateTimeFormatter
 
 import javax.crypto.Mac
@@ -10,54 +10,49 @@ import javax.crypto.spec.SecretKeySpec
 import cats.effect.IO
 import fs2.Stream
 import org.broadinstitute.transporter.config.AwsConfig
-import org.http4s.headers.Authorization
-import org.http4s.util.CaseInsensitiveString
-import org.http4s.{Credentials, Header, Headers, Method, Query, Request, Uri}
+import org.http4s.{Header, Headers, Method, Query, Request, Uri}
 
 class S3AuthProvider(config: AwsConfig) {
   import S3AuthProvider._
 
-  def addAuth(request: Request[IO]): IO[Request[IO]] =
+  def addAuth(s3Region: String, request: Request[IO]): IO[Request[IO]] =
     for {
-      now <- IO.delay(LocalDateTime.now())
+      now <- IO.delay(LocalDateTime.now(ZoneId.of("UTC")))
       hashedBody <- sha256(request.body).map(base16)
 
-      (canonicalRequest, signedHeaders) = canonicalize(
-        request.method,
-        request.uri,
-        request.headers,
-        hashedBody,
-        now
+      requestWithAmzHeaders = request.transformHeaders(
+        _.put(
+          Header("x-amz-date", now.format(DateFormatter)),
+          Header("x-amz-content-sha256", hashedBody)
+        )
       )
 
-      hashedCanonicalRequest <- sha256(canonicalRequest.getBytes)
+      (canonicalRequest, signedHeaders) = canonicalize(
+        requestWithAmzHeaders.method,
+        requestWithAmzHeaders.uri,
+        requestWithAmzHeaders.headers,
+        hashedBody
+      )
 
-      credScope = credentialScope(config.region, S3Service, now)
-
-      stringToSign = List(
-        AWSAuthAlgorithm,
-        now.format(DateFormatter),
-        credScope,
-        base16(hashedCanonicalRequest).mkString
-      ).mkString("\n")
+      credScope = credentialScope(s3Region, S3Service, now)
+      stringToSign <- buildStringToSign(canonicalRequest, now, credScope)
 
       signature <- sign(
         config.secretAccessKey,
-        config.region,
+        s3Region,
         S3Service,
         stringToSign,
         now
       )
     } yield {
-      request.transformHeaders(
-        _ ++ buildHeaders(
-          config.accessKeyId,
-          credScope,
-          signedHeaders,
-          signature,
-          hashedBody
-        )
+      val auth = authHeader(
+        config.accessKeyId,
+        credScope,
+        signedHeaders,
+        signature
       )
+
+      requestWithAmzHeaders.transformHeaders(_.put(auth))
     }
 
 }
@@ -74,21 +69,16 @@ object S3AuthProvider {
     method: Method,
     uri: Uri,
     headers: Headers,
-    hashedPayload: String,
-    now: LocalDateTime
+    hashedPayload: String
   ): (String, String) = {
-    val allHeaders = headers.put(
-      Header("x-amz-date", now.format(DateFormatter))
-    )
-
-    val signedHeaderNames =
-      allHeaders.toList.map(_.name.value.toLowerCase).sorted.mkString(";")
+    val sortedHeaders = canonicalSort(headers)
+    val signedHeaderNames = sortedHeaders.map(_._1).mkString(";")
 
     val canonicalRequest = List(
       method.name,
       uri.path,
       canonicalize(uri.query),
-      canonicalize(allHeaders),
+      canonicalize(sortedHeaders),
       signedHeaderNames,
       hashedPayload.mkString
     ).mkString("\n")
@@ -104,16 +94,18 @@ object S3AuthProvider {
     s"${now.format(DateTimeFormatter.BASIC_ISO_DATE)}/$region/$service/aws4_request"
 
   private[auth] def buildStringToSign(
-    hashedCanonicalRequest: Array[Byte],
+    canonicalRequest: String,
     now: LocalDateTime,
     credentialScope: String
-  ): String =
-    List(
-      AWSAuthAlgorithm,
-      now.format(DateFormatter),
-      credentialScope,
-      base16(hashedCanonicalRequest)
-    ).mkString("\n")
+  ): IO[String] =
+    sha256(canonicalRequest.getBytes).map { hashedRequest =>
+      List(
+        AWSAuthAlgorithm,
+        now.format(DateFormatter),
+        credentialScope,
+        base16(hashedRequest)
+      ).mkString("\n")
+    }
 
   private[auth] def sign(
     secretKey: String,
@@ -135,25 +127,15 @@ object S3AuthProvider {
     }
   }
 
-  private[auth] def buildHeaders(
+  private[auth] def authHeader(
     accessKey: String,
     credentialScope: String,
     signedHeaders: String,
-    signature: String,
-    hashedBody: String
-  ): Headers = {
-    val authCreds = Credentials.AuthParams(
-      CaseInsensitiveString(AWSAuthAlgorithm),
-      "Credential" -> s"$accessKey/$credentialScope",
-      "SignedHeaders" -> signedHeaders,
-      "Signature" -> signature
-    )
-
-    Headers(
-      Authorization(authCreds),
-      Header("x-amz-content-sha256", hashedBody)
-    )
-  }
+    signature: String
+  ): Header = Header(
+    "Authorization",
+    s"$AWSAuthAlgorithm Credential=$accessKey/$credentialScope,SignedHeaders=$signedHeaders,Signature=$signature"
+  )
 
   private[this] def canonicalize(query: Query): String =
     query.params.toList
@@ -163,11 +145,13 @@ object S3AuthProvider {
       }
       .mkString("&")
 
-  private[this] def canonicalize(headers: Headers): String =
-    headers.toList
-      .sortBy(_.name.value.toLowerCase)
-      .map(h => s"${h.name.value.toLowerCase}:${h.value}\n")
-      .mkString
+  private[this] def canonicalSort(headers: Headers): List[(String, String)] =
+    headers.toList.map { h =>
+      h.name.value.toLowerCase -> h.value
+    }.sortBy(_._1)
+
+  private[this] def canonicalize(sortedHeaders: List[(String, String)]): String =
+    sortedHeaders.map { case (k, v) => s"$k:$v\n" }.mkString
 
   private[this] val Base16 =
     Array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f')

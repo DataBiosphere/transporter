@@ -6,8 +6,7 @@ import pureconfig.generic.semiauto.deriveReader
 /** Configuration determining how the AWS->GCP agent should authorize with S3. */
 case class AwsConfig(
   accessKeyId: String,
-  secretAccessKey: String,
-  region: String
+  secretAccessKey: String
 )
 
 object AwsConfig {

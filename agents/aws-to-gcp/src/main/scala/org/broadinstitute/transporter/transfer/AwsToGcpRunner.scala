@@ -45,7 +45,12 @@ class AwsToGcpRunner(
   override def initialize(request: AwsToGcpRequest): AwsToGcpProgress = {
 
     val initFlow = for {
-      s3Metadata <- getS3Metadata(request.s3Bucket, request.s3Path, request.expectedSize)
+      s3Metadata <- getS3Metadata(
+        request.s3Bucket,
+        request.s3Region,
+        request.s3Path,
+        request.expectedSize
+      )
       uploadToken <- initGcsResumableUpload(
         request.gcsBucket,
         request.gcsPath,
@@ -55,6 +60,7 @@ class AwsToGcpRunner(
     } yield {
       AwsToGcpProgress(
         request.s3Bucket,
+        request.s3Region,
         request.s3Path,
         request.gcsBucket,
         request.gcsPath,
@@ -79,27 +85,32 @@ class AwsToGcpRunner(
     */
   private def getS3Metadata(
     bucket: String,
+    region: String,
     path: String,
     expectedSize: Option[Long]
   ): IO[S3Metadata] = {
-    val s3DebugUri = s"s3://$bucket/$path"
+    val s3HttpUri = s3Uri(bucket, path)
 
     for {
-      s3Req <- s3Auth.addAuth {
-        Request(
+      s3Req <- IO.delay {
+        Request[IO](
           method = Method.HEAD,
-          uri = s3Uri(bucket, path)
+          uri = s3HttpUri,
+          headers = s3HttpUri.authority
+            .fold(Headers.empty) { authority =>
+              Headers(Host(authority.host.renderString, authority.port))
+            }
         )
       }
-      metadata <- httpClient.fetch(s3Req) { response =>
+      metadata <- httpClient.fetch(s3Auth.addAuth(region, s3Req)) { response =>
         if (response.status.isSuccess) {
-          response.contentLength.liftTo[IO](NoFileSize(s3DebugUri)).map {
+          response.contentLength.liftTo[IO](NoFileSize(s3HttpUri.renderString)).map {
             S3Metadata(_, response.contentType)
           }
         } else {
           IO.raiseError(
             new RuntimeException(
-              s"Request for S3 metadata returned status ${response.status}: $s3DebugUri"
+              s"Request for metadata from $s3HttpUri returned status ${response.status}"
             )
           )
         }
@@ -107,7 +118,11 @@ class AwsToGcpRunner(
       _ <- expectedSize.filter(_ != metadata.contentLength).fold(IO.unit) {
         expectedSize =>
           IO.raiseError(
-            UnexpectedFileSize(s3DebugUri, expectedSize, metadata.contentLength)
+            UnexpectedFileSize(
+              s3HttpUri.renderString,
+              expectedSize,
+              metadata.contentLength
+            )
           )
       }
     } yield {
@@ -126,7 +141,10 @@ class AwsToGcpRunner(
     // Including the "md5Hash" metadata triggers server-side validation on upload.
     val objectMetadata = expectedMd5
       .fold(baseObjectMetadata) { hexMd5 =>
-        baseObjectMetadata.add("md5Hash", hexToBase64(hexMd5).asJson)
+        baseObjectMetadata.add(
+          "md5Hash",
+          Base64.encodeBase64String(Hex.decodeHex(hexMd5.toCharArray)).asJson
+        )
       }
       .asJson
 
@@ -139,8 +157,8 @@ class AwsToGcpRunner(
         `Content-Type`(MediaType.application.json, Charset.`UTF-8`),
         Header("X-Upload-Content-Length", s3Metadata.contentLength.toString)
       )
-      gcsInitReq <- googleAuth.addAuth {
-        Request(
+      gcsReq <- IO.delay {
+        Request[IO](
           method = Method.POST,
           uri = baseGcsUploadUri(bucket),
           body = initBody,
@@ -149,9 +167,9 @@ class AwsToGcpRunner(
           }
         )
       }
-      locationHeader <- httpClient.fetch(gcsInitReq) { response =>
+      locationHeader <- httpClient.fetch(googleAuth.addAuth(gcsReq)) { response =>
         response.headers
-          .get(CaseInsensitiveString("Location"))
+          .get(CaseInsensitiveString("X-GUploader-UploadID"))
           .liftTo[IO](NoToken(s"gs://$bucket/$path"))
       }
     } yield {
@@ -160,15 +178,13 @@ class AwsToGcpRunner(
 
   }
 
-  private def hexToBase64(hex: String): String =
-    Base64.encodeBase64String(Hex.decodeHex(hex.toCharArray))
-
   override def step(
     progress: AwsToGcpProgress
   ): Either[AwsToGcpProgress, AwsToGcpOutput] = {
     val doStep = for {
       chunk <- getS3Chunk(
         progress.s3Bucket,
+        progress.s3Region,
         progress.s3Path,
         progress.bytesUploaded,
         progress.bytesUploaded + ChunkSize - 1
@@ -192,22 +208,30 @@ class AwsToGcpRunner(
 
   private def getS3Chunk(
     bucket: String,
+    region: String,
     path: String,
     rangeStart: Long,
     rangeEnd: Long
-  ): IO[Chunk[Byte]] =
+  ): IO[Chunk[Byte]] = {
+    val s3HttpUri = s3Uri(bucket, path)
+
     for {
-      s3Req <- s3Auth.addAuth {
-        Request(
-          method = Method.HEAD,
-          uri = s3Uri(bucket, path),
-          headers = Headers(`Content-Range`(rangeStart, rangeEnd))
+      s3Req <- IO.delay {
+        Request[IO](
+          method = Method.GET,
+          uri = s3HttpUri,
+          headers = s3HttpUri.authority
+            .fold(Headers.empty) { authority =>
+              Headers(Host(authority.host.renderString, authority.port))
+            }
+            .put(Range(rangeStart, rangeEnd))
         )
       }
-      chunk <- httpClient.expect[Chunk[Byte]](s3Req)
+      chunk <- httpClient.expect[Chunk[Byte]](s3Auth.addAuth(region, s3Req))
     } yield {
       chunk
     }
+  }
 
   private def uploadChunk(
     bucket: String,
@@ -217,17 +241,18 @@ class AwsToGcpRunner(
     chunk: Chunk[Byte]
   ): IO[Either[Long, Unit]] =
     for {
-      gcsReq <- googleAuth.addAuth {
-        Request(
+      gcsReq <- IO.delay {
+        Request[IO](
           method = Method.PUT,
           uri = baseGcsUploadUri(bucket).withQueryParam("upload_id", uploadToken),
           headers = Headers(
             `Content-Length`.unsafeFromLong(chunk.size.toLong),
             `Content-Range`(rangeStart, rangeStart + chunk.size - 1)
-          )
+          ),
+          body = Stream.chunk(chunk)
         )
       }
-      nextOrDone <- httpClient.fetch(gcsReq) { response =>
+      nextOrDone <- httpClient.fetch(googleAuth.addAuth(gcsReq)) { response =>
         if (response.status.code == 308) {
           val bytesReceived = for {
             range <- response.headers.get(`Content-Range`)
@@ -280,7 +305,7 @@ object AwsToGcpRunner {
     } yield {
       val s3Auth = new S3AuthProvider(config.aws)
       new AwsToGcpRunner(
-        Logger(logHeaders = true, logBody = true)(httpClient),
+        Logger(logHeaders = true, logBody = false)(httpClient),
         gcsAuth,
         s3Auth
       )
