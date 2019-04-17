@@ -17,6 +17,17 @@ import org.http4s.util.CaseInsensitiveString
 
 import scala.concurrent.ExecutionContext
 
+/**
+  * Component which can transfer files from AWS to GCP, optionally checking the
+  * expected size / md5 in the process.
+  *
+  * TODO: Consider using a synchronous HTTP client here instead of http4s, since
+  * the Kafka APIs are synchronous and we end up `unsafeRunSync`-ing everywhere anyways.
+  *
+  * @param httpClient client to use when making requests to both AWS and GCP
+  * @param googleAuth component which can add authentication to GCP requests
+  * @param s3Auth component which can add authentication to AWS requests
+  */
 class AwsToGcpRunner(
   httpClient: Client[IO],
   googleAuth: GcsAuthProvider,
@@ -28,27 +39,27 @@ class AwsToGcpRunner(
 
     val initFlow = for {
       s3Metadata <- getS3Metadata(
-        request.s3Bucket,
-        request.s3Region,
-        request.s3Path,
-        request.expectedSize
+        bucket = request.s3Bucket,
+        region = request.s3Region,
+        path = request.s3Path,
+        expectedSize = request.expectedSize
       )
       uploadToken <- initGcsResumableUpload(
-        request.gcsBucket,
-        request.gcsPath,
-        s3Metadata,
-        request.expectedMd5
+        bucket = request.gcsBucket,
+        path = request.gcsPath,
+        s3Metadata = s3Metadata,
+        expectedMd5 = request.expectedMd5
       )
     } yield {
       AwsToGcpProgress(
-        request.s3Bucket,
-        request.s3Region,
-        request.s3Path,
-        request.gcsBucket,
-        request.gcsPath,
-        uploadToken,
-        0L,
-        s3Metadata.contentLength
+        s3Bucket = request.s3Bucket,
+        s3Region = request.s3Region,
+        s3Path = request.s3Path,
+        gcsBucket = request.gcsBucket,
+        gcsPath = request.gcsPath,
+        gcsToken = uploadToken,
+        bytesUploaded = 0L,
+        totalBytes = s3Metadata.contentLength
       )
     }
 
@@ -64,6 +75,8 @@ class AwsToGcpRunner(
     * check as an early fail-fast mechanism. Ideally we'd be able to do
     * the same thing with md5s, but S3 doesn't generate those for
     * multipart uploads.
+    *
+    * @see https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectHEAD.html
     */
   private def getS3Metadata(
     bucket: String,
@@ -112,6 +125,15 @@ class AwsToGcpRunner(
     }
   }
 
+  /**
+    * Initialize a GCS resumable upload using object metadata pulled from S3.
+    *
+    * If an expected md5 was provided with the transfer request, it will be included
+    * as metadata in the upload-creation request. This will trigger server-side
+    * content validation when all bytes are uploaded.
+    *
+    * @see https://cloud.google.com/storage/docs/json_api/v1/how-tos/resumable-upload#start-resumable
+    */
   private def initGcsResumableUpload(
     bucket: String,
     path: String,
@@ -120,7 +142,6 @@ class AwsToGcpRunner(
   ): IO[String] = {
     // Object metadata is used by Google to register the upload to the correct pseudo-path.
     val baseObjectMetadata = JsonObject("name" -> path.asJson)
-    // Including the "md5Hash" metadata triggers server-side validation on upload.
     val objectMetadata = expectedMd5
       .fold(baseObjectMetadata) { hexMd5 =>
         baseObjectMetadata.add(
@@ -165,29 +186,36 @@ class AwsToGcpRunner(
   ): Either[AwsToGcpProgress, AwsToGcpOutput] = {
     val doStep = for {
       chunk <- getS3Chunk(
-        progress.s3Bucket,
-        progress.s3Region,
-        progress.s3Path,
-        progress.bytesUploaded,
-        math.min(progress.bytesUploaded + ChunkSize, progress.totalBytes) - 1
+        bucket = progress.s3Bucket,
+        region = progress.s3Region,
+        path = progress.s3Path,
+        rangeStart = progress.bytesUploaded,
+        // 'min' to avoid an "illegal range" error when pulling a 5MB chunk would
+        // drive us over the total size of the file.
+        rangeEnd = math.min(progress.bytesUploaded + ChunkSize, progress.totalBytes) - 1
       )
       nextOrDone <- uploadChunk(
-        progress.gcsBucket,
-        progress.gcsPath,
-        progress.gcsToken,
-        progress.bytesUploaded,
-        chunk
+        bucket = progress.gcsBucket,
+        path = progress.gcsPath,
+        uploadToken = progress.gcsToken,
+        rangeStart = progress.bytesUploaded,
+        chunk = chunk
       )
     } yield {
       nextOrDone.bimap(
         bytesUploaded => progress.copy(bytesUploaded = bytesUploaded),
-        _ => AwsToGcpOutput(progress.gcsBucket, progress.gcsPath)
+        _ => AwsToGcpOutput(gcsBucket = progress.gcsBucket, gcsPath = progress.gcsPath)
       )
     }
 
     doStep.unsafeRunSync()
   }
 
+  /**
+    * Download a chunk of bytes from an object in S3.
+    *
+    * @see https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectGET.html
+    */
   private def getS3Chunk(
     bucket: String,
     region: String,
@@ -215,6 +243,11 @@ class AwsToGcpRunner(
     }
   }
 
+  /**
+    * Upload a chunk of bytes to an ongoing GCS resumable upload.
+    *
+    * @see https://cloud.google.com/storage/docs/json_api/v1/how-tos/resumable-upload#upload-resumable
+    */
   private def uploadChunk(
     bucket: String,
     path: String,
@@ -247,7 +280,9 @@ class AwsToGcpRunner(
           IO.pure(Right(()))
         } else {
           IO.raiseError(
-            new RuntimeException(s"Failed to upload chunk to bucket gs://$bucket/$path")
+            new RuntimeException(
+              s"Failed to upload chunk to bucket gs://$bucket/$path, got status: ${response.status}"
+            )
           )
         }
       }
@@ -255,9 +290,11 @@ class AwsToGcpRunner(
       nextOrDone
     }
 
+  /** Build the REST API endpoint for a bucket/path in S3. */
   private def s3Uri(bucket: String, path: String): Uri =
     Uri.unsafeFromString(s"https://$bucket.s3.amazonaws.com/$path")
 
+  /** Build the REST API endpoint for a resumable upload to a GCS bucket. */
   private def baseGcsUploadUri(bucket: String): Uri =
     Uri
       .unsafeFromString(s"https://www.googleapis.com/upload/storage/v1/b/$bucket/o")
@@ -276,6 +313,7 @@ object AwsToGcpRunner {
     */
   val ChunkSize: Int = 5 * bytesPerMib
 
+  /** Construct an AWS -> GCP transfer runner, wrapped in setup/teardown logic for supporting clients. */
   def resource(config: RunnerConfig, ec: ExecutionContext)(
     implicit cs: ContextShift[IO]
   ): Resource[IO, AwsToGcpRunner] =
@@ -291,19 +329,36 @@ object AwsToGcpRunner {
       )
     }
 
+  /** Subset of metadata we pull from objects in S3 to initialize the uploads of GCS copies. */
   case class S3Metadata(contentLength: Long, contentType: Option[`Content-Type`])
 
+  /**
+    * Error raised when an object in S3 does not report a size.
+    *
+    * S3 objects should always have a known size, so if we get a response without that data
+    * it's a sign that something went wrong in the request/response cycle.
+    */
   case class NoFileSize(uri: String)
       extends IllegalStateException(
         s"Object $uri doesn't have a recorded size"
       )
 
-  /** Exception raised when the size of the source S3 object doesn't match a request's expectations. */
+  /**
+    * Error raised when the size of the source S3 object doesn't match a request's expectations.
+    *
+    * We use a size check as a fail-fast when initializing transfers.
+    */
   case class UnexpectedFileSize(uri: String, expected: Long, actual: Long)
       extends IllegalStateException(
         s"Object $uri has size $actual, but expected $expected"
       )
 
+  /**
+    * Error raised when initializing a GCS upload doesn't return an upload token.
+    *
+    * If you see this error, it means Google made a backwards-incompatible change to
+    * their upload APIs.
+    */
   case class NoToken(uri: String)
       extends IllegalStateException(
         s"Initiating resumable upload for $uri did not return an upload token"
