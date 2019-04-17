@@ -53,7 +53,7 @@ class S3AuthProviderSpec extends FlatSpec with Matchers {
     val (canonicalized, headerNames) = S3AuthProvider.canonicalize(
       method = Method.GET,
       uri = Uri.uri("https://bucket.s3.amazonaws.com/?Param2=value2&Param1=value1"),
-      headers = Headers(Host("example.amazonaws.com"), Header("x-amz-date", nowAmz)),
+      headers = Headers.of(Host("example.amazonaws.com"), Header("x-amz-date", nowAmz)),
       hashedPayload = emptyStringHash
     )
 
@@ -65,7 +65,7 @@ class S3AuthProviderSpec extends FlatSpec with Matchers {
     val (canonicalized, _) = S3AuthProvider.canonicalize(
       method = Method.PUT,
       uri = Uri.uri("https://bucket.s3.amazonaws.com/thing1/thing2.file"),
-      headers = Headers(Header("x-amz-date", nowAmz)),
+      headers = Headers.of(Header("x-amz-date", nowAmz)),
       hashedPayload = emptyStringHash
     )
 

@@ -93,7 +93,7 @@ class AwsToGcpRunner(
           uri = s3HttpUri,
           headers = s3HttpUri.authority
             .fold(Headers.empty) { authority =>
-              Headers(Host(authority.host.renderString, authority.port))
+              Headers.of(Host(authority.host.renderString, authority.port))
             }
         )
       }
@@ -155,7 +155,7 @@ class AwsToGcpRunner(
 
     for {
       initSize <- initBody.covary[IO].compile.fold(0L)((s, _) => s + 1)
-      initHeaders = Headers(
+      initHeaders = Headers.of(
         `Content-Length`.unsafeFromLong(initSize),
         `Content-Type`(MediaType.application.json, Charset.`UTF-8`),
         Header("X-Upload-Content-Length", s3Metadata.contentLength.toString)
@@ -232,7 +232,7 @@ class AwsToGcpRunner(
           uri = s3HttpUri,
           headers = s3HttpUri.authority
             .fold(Headers.empty) { authority =>
-              Headers(Host(authority.host.renderString, authority.port))
+              Headers.of(Host(authority.host.renderString, authority.port))
             }
             .put(Range(rangeStart, rangeEnd))
         )
@@ -260,7 +260,7 @@ class AwsToGcpRunner(
         Request[IO](
           method = Method.PUT,
           uri = baseGcsUploadUri(bucket).withQueryParam("upload_id", uploadToken),
-          headers = Headers(
+          headers = Headers.of(
             `Content-Length`.unsafeFromLong(chunk.size.toLong),
             `Content-Range`(rangeStart, rangeStart + chunk.size - 1)
           ),
