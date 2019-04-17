@@ -3,7 +3,7 @@ package org.broadinstitute.transporter.transfer
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
 import fs2.{Chunk, Stream}
-import io.circe.{Json, JsonObject}
+import io.circe.JsonObject
 import io.circe.syntax._
 import org.apache.commons.codec.binary.{Base64, Hex}
 import org.broadinstitute.transporter.config.RunnerConfig
@@ -21,26 +21,8 @@ class AwsToGcpRunner(
   httpClient: Client[IO],
   googleAuth: GcsAuthProvider,
   s3Auth: S3AuthProvider
-) extends TransferRunner {
+) extends TransferRunner[AwsToGcpRequest, AwsToGcpProgress, AwsToGcpOutput] {
   import AwsToGcpRunner._
-
-  /*--- BOILERPLATE ---*/
-
-  override type In = AwsToGcpRequest
-  override type Progress = AwsToGcpProgress
-  override type Out = AwsToGcpOutput
-
-  override def decodeInput(json: Json): Either[Throwable, AwsToGcpRequest] =
-    json.as[AwsToGcpRequest]
-
-  override def decodeProgress(json: Json): Either[Throwable, AwsToGcpProgress] =
-    json.as[AwsToGcpProgress]
-
-  override def encodeProgress(progress: AwsToGcpProgress): Json = progress.asJson
-
-  override def encodeOutput(output: AwsToGcpOutput): Json = output.asJson
-
-  /*--- END BOILERPLATE ---*/
 
   override def initialize(request: AwsToGcpRequest): AwsToGcpProgress = {
 

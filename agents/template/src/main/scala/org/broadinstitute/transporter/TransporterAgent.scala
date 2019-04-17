@@ -5,6 +5,7 @@ import java.util.concurrent.{ExecutorService, Executors}
 import cats.effect._
 import cats.implicits._
 import io.chrisdavenport.log4cats.log4s.Log4sLogger
+import io.circe.{Decoder, Encoder}
 import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.kafka.{KStreamsConfig, TransferStreamBuilder}
 import org.broadinstitute.transporter.queue.{Queue, QueueConfig}
@@ -24,8 +25,12 @@ import scala.concurrent.ExecutionContext
   * the full framework needed to hook into Transporter's Kafka infrastructure
   * and run data transfers.
   */
-abstract class TransporterAgent[RC: ConfigReader]
-    extends IOApp.WithContext
+abstract class TransporterAgent[
+  Config: ConfigReader,
+  In: Decoder,
+  Progress: Encoder: Decoder,
+  Out: Encoder
+] extends IOApp.WithContext
     with CirceEntityDecoder {
 
   private val logger = Log4sLogger.createLocal[IO]
@@ -45,24 +50,25 @@ abstract class TransporterAgent[RC: ConfigReader]
     * Modeled as a `Resource` so agent programs can hook in setup / teardown
     * logic for config, thread pools, etc.
     */
-  def runnerResource(config: RC): Resource[IO, TransferRunner]
+  def runnerResource(config: Config): Resource[IO, TransferRunner[In, Progress, Out]]
 
   /** [[IOApp]] equivalent of `main`. */
   final override def run(args: List[String]): IO[ExitCode] =
-    loadConfigF[IO, AgentConfig[RC]]("org.broadinstitute.transporter").flatMap { config =>
-      for {
-        maybeQueue <- lookupQueue(config.queue)
-        retCode <- maybeQueue match {
-          case Some(queue) =>
-            runnerResource(config.runnerConfig).use { runner =>
-              runStream(new TransferStreamBuilder(queue), runner, config.kafka)
-            }
-          case None =>
-            logger.error(s"No such queue: ${config.queue.queueName}").as(ExitCode.Error)
+    loadConfigF[IO, AgentConfig[Config]]("org.broadinstitute.transporter").flatMap {
+      config =>
+        for {
+          maybeQueue <- lookupQueue(config.queue)
+          retCode <- maybeQueue match {
+            case Some(queue) =>
+              runnerResource(config.runnerConfig).use { runner =>
+                runStream(new TransferStreamBuilder(queue), runner, config.kafka)
+              }
+            case None =>
+              logger.error(s"No such queue: ${config.queue.queueName}").as(ExitCode.Error)
+          }
+        } yield {
+          retCode
         }
-      } yield {
-        retCode
-      }
     }
 
   /** Query the configured Transporter manager for information about a queue. */
@@ -87,7 +93,7 @@ abstract class TransporterAgent[RC: ConfigReader]
     */
   private def runStream(
     builder: TransferStreamBuilder,
-    runner: TransferRunner,
+    runner: TransferRunner[In, Progress, Out],
     kafkaConfig: KStreamsConfig
   ): IO[ExitCode] =
     for {

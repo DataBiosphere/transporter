@@ -1,7 +1,7 @@
 package org.broadinstitute.transporter
 
 import cats.effect.{IO, Resource}
-import org.broadinstitute.transporter.transfer.{EchoRunner, TransferRunner}
+import org.broadinstitute.transporter.transfer.{EchoInput, EchoRunner, TransferRunner}
 
 /**
   * Transporter agent which doesn't actually transfer data,
@@ -9,8 +9,10 @@ import org.broadinstitute.transporter.transfer.{EchoRunner, TransferRunner}
   *
   * Useful for manual plumbing tests.
   */
-object EchoAgent extends TransporterAgent[EchoConfig] {
+object EchoAgent extends TransporterAgent[EchoConfig, EchoInput, EchoInput, String] {
 
-  override def runnerResource(config: EchoConfig): Resource[IO, TransferRunner] =
+  override def runnerResource(
+    config: EchoConfig
+  ): Resource[IO, TransferRunner[EchoInput, EchoInput, String]] =
     Resource.pure(EchoRunner)
 }

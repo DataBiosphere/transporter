@@ -1,28 +1,12 @@
 package org.broadinstitute.transporter.transfer
 
-import io.circe.Json
-
 /**
   * Component capable of actually running data transfers.
   *
   * Agents are expected to "fill in" an instance of this interface
   * to handle specific storage source / destination pairs.
   */
-trait TransferRunner {
-
-  type In
-
-  type Progress
-
-  type Out
-
-  def decodeInput(json: Json): Either[Throwable, In]
-
-  def decodeProgress(json: Json): Either[Throwable, Progress]
-
-  def encodeProgress(progress: Progress): Json
-
-  def encodeOutput(output: Out): Json
+trait TransferRunner[In, Progress, Out] {
 
   /**
     * Initialize the transfer described by the given request, and

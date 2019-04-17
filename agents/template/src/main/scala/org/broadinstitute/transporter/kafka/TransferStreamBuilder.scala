@@ -26,7 +26,9 @@ class TransferStreamBuilder(queue: Queue) {
     * from a Transporter queue, execute the requests using a runner,
     * then push the results back to the Transporter manager.
     */
-  def build(runner: TransferRunner): IO[Topology] = {
+  def build[In: Decoder, Progress: Encoder: Decoder, Out: Encoder](
+    runner: TransferRunner[In, Progress, Out]
+  ): IO[Topology] = {
     val builder = new StreamsBuilder()
 
     for {
@@ -50,9 +52,9 @@ class TransferStreamBuilder(queue: Queue) {
 
   private val parser = new JawnParser()
 
-  private def buildInitStream(
+  private def buildInitStream[In: Decoder, Progress: Encoder](
     builder: StreamsBuilder,
-    runner: TransferRunner
+    runner: TransferRunner[In, Progress, _]
   ): IO[StreamsBuilder] = {
     val logger = org.log4s.getLogger(s"${queue.name}-transfer-init-logger")
 
@@ -68,7 +70,7 @@ class TransferStreamBuilder(queue: Queue) {
               _ = logger.debug(
                 s"Successfully parsed JSON for request $id: ${json.spaces2}"
               )
-              request <- runner.decodeInput(json)
+              request <- json.as[In]
               zeroProgress <- Either.catchNonFatal(runner.initialize(request))
             } yield {
               zeroProgress
@@ -94,7 +96,7 @@ class TransferStreamBuilder(queue: Queue) {
       _ <- IO.delay {
         successes.mapValues { (id, s) =>
           logger.info(s"Enqueueing zero progress for request with ID: $id")
-          runner.encodeProgress(s.right.get).noSpaces
+          s.right.get.asJson.noSpaces
         }.to(queue.progressTopic)
       }
     } yield {
@@ -102,9 +104,9 @@ class TransferStreamBuilder(queue: Queue) {
     }
   }
 
-  private def buildStepStream(
+  private def buildStepStream[Progress: Encoder: Decoder, Out: Encoder](
     builder: StreamsBuilder,
-    runner: TransferRunner
+    runner: TransferRunner[_, Progress, Out]
   ): IO[StreamsBuilder] = {
     val logger = org.log4s.getLogger(s"${queue.name}-transfer-step-logger")
 
@@ -118,7 +120,7 @@ class TransferStreamBuilder(queue: Queue) {
             val runStep = for {
               json <- parser.parseByteBuffer(ByteBuffer.wrap(progressBytes))
               _ = logger.debug(s"Successfully parsed progress $id: ${json.spaces2}")
-              progress <- runner.decodeProgress(json)
+              progress <- json.as[Progress]
               _ = logger.debug(s"Running next step of $id: ${json.spaces2}")
               stepResult <- Either.catchNonFatal(runner.step(progress))
               _ = logger.info(s"Successfully ran transfer step for request $id")
@@ -145,16 +147,14 @@ class TransferStreamBuilder(queue: Queue) {
                   )
                 )
               },
-              _.map { out =>
-                TransferSummary(TransferResult.Success, runner.encodeOutput(out))
-              }
+              _.map(out => TransferSummary(TransferResult.Success, out.asJson))
             )
           }
           .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
       }
       _ <- IO.delay {
         progresses
-          .mapValues(p => runner.encodeProgress(p.left.get).noSpaces)
+          .mapValues(p => p.left.get.asJson.noSpaces)
           .to(queue.progressTopic)
       }
       _ <- IO.delay {

@@ -222,21 +222,8 @@ object TransferStreamBuilderSpec {
   implicit val progressDecoder: Decoder[LoopProgress] = deriveDecoder
   implicit val progressEncoder: Encoder[LoopProgress] = deriveEncoder
 
-  class LoopRunner(failInit: Boolean, failStep: Boolean) extends TransferRunner {
-
-    override type In = LoopRequest
-    override type Progress = Out
-    override type Out = LoopProgress
-
-    override def decodeInput(json: Json): Either[Throwable, LoopRequest] =
-      json.as[LoopRequest]
-
-    override def encodeProgress(progress: LoopProgress): Json = progress.asJson
-
-    override def decodeProgress(json: Json): Either[Throwable, LoopProgress] =
-      json.as[LoopProgress]
-
-    override def encodeOutput(output: LoopProgress): Json = output.asJson
+  class LoopRunner(failInit: Boolean, failStep: Boolean)
+      extends TransferRunner[LoopRequest, LoopProgress, LoopProgress] {
 
     override def initialize(request: LoopRequest): LoopProgress =
       if (failInit) {
