@@ -141,6 +141,12 @@ lazy val `transporter-common` = project
     ).map(_ % Test)
   )
 
+/**
+  * Database migrations needed by the manager.
+  *
+  * Pulled into a separate project to make it easy to package them into a
+  * liquibase Docker image.
+  */
 lazy val `transporter-manager-migrations` = project
   .in(file("./manager/db-migrations"))
   .enablePlugins(TransporterDockerPlugin)
@@ -169,6 +175,7 @@ lazy val `transporter-manager-migrations` = project
     Compile / run := {
       import scala.sys.process._
 
+      // Build the migration Docker image locally before running.
       val _ = (Compile / publishLocal).value
       val image = dockerAlias.value.toString()
 
@@ -180,11 +187,13 @@ lazy val `transporter-manager-migrations` = project
         "LIQUIBASE_USERNAME" -> "whoami".!!
       )
 
-      Seq.concat(
-        Seq("docker", "run", "--rm"),
-        envVars.flatMap { case (k, v) => Seq("-e", s"$k=$v") },
-        Seq(image, "liquibase", "update")
-      ).!!
+      Seq
+        .concat(
+          Seq("docker", "run", "--rm"),
+          envVars.flatMap { case (k, v) => Seq("-e", s"$k=$v") },
+          Seq(image, "liquibase", "update")
+        )
+        .!!
 
     }
   )
@@ -272,12 +281,14 @@ lazy val `transporter-agent-template` = project
     )
   )
 
+/** Dummy agent to test framework plumbing. */
 lazy val `transporter-echo-agent` = project
   .in(file("./agents/echo"))
   .enablePlugins(TransporterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(commonSettings)
 
+/** Agent which can transfer files from AWS to GCP. */
 lazy val `transporter-aws-to-gcp-agent` = project
   .in(file("./agents/aws-to-gcp"))
   .enablePlugins(TransporterDockerPlugin)
