@@ -173,10 +173,11 @@ lazy val `transporter-manager-migrations` = project
     },
     // Override 'run' to migrate a local database, for easy manual testing.
     Compile / run := {
+      // Build the migration Docker image locally before running.
+      (Docker / publishLocal).value
+
       import scala.sys.process._
 
-      // Build the migration Docker image locally before running.
-      val _ = (Compile / publishLocal).value
       val image = dockerAlias.value.toString()
 
       val envVars = Map(
@@ -300,6 +301,6 @@ lazy val `transporter-aws-to-gcp-agent` = project
       "com.google.auth" % "google-auth-library-oauth2-http" % googleAuthVersion
     ),
     libraryDependencies ++= Seq(
-      "org.scalatest" %% "scalatest" % scalaTestVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test)
   )
