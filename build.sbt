@@ -141,11 +141,69 @@ lazy val `transporter-common` = project
     ).map(_ % Test)
   )
 
+/**
+  * Database migrations needed by the manager.
+  *
+  * Pulled into a separate project to make it easy to package them into a
+  * liquibase Docker image.
+  */
+lazy val `transporter-manager-migrations` = project
+  .in(file("./manager/db-migrations"))
+  .enablePlugins(TransporterDockerPlugin)
+  .settings(commonSettings)
+  .settings(
+    // Rewrite the Docker mappings to only include changelog files stored at /working.
+    // Relative structure of the changelogs is preserved.
+    Universal / mappings := (Compile / resourceDirectory).map { resourceDir =>
+      val makeRelative = NativePackagerHelper.relativeTo(resourceDir)
+      NativePackagerHelper.directory(resourceDir).flatMap {
+        case (f, _) => makeRelative(f).map(relative => f -> s"/db/$relative")
+      }
+    }.value,
+    // Build off an existing "liquibase-postgres" Docker image.
+    dockerCommands := {
+      import com.typesafe.sbt.packager.docker._
+
+      Seq(
+        Cmd("FROM", "kilna/liquibase-postgres"),
+        Cmd("LABEL", s"MAINTAINER=${(Docker / maintainer).value}"),
+        Cmd("LABEL", s"TRANSPORTER_VERSION=${version.value}"),
+        Cmd("COPY", "app/db /workspace")
+      )
+    },
+    // Override 'run' to migrate a local database, for easy manual testing.
+    Compile / run := {
+      // Build the migration Docker image locally before running.
+      (Docker / publishLocal).value
+
+      import scala.sys.process._
+
+      val image = dockerAlias.value.toString()
+
+      val envVars = Map(
+        // NOTE: Only works on Docker for OS X.
+        // Assumes default Postgres install from Homebrew.
+        "LIQUIBASE_HOST" -> "host.docker.internal",
+        "LIQUIBASE_DATABASE" -> "postgres",
+        "LIQUIBASE_USERNAME" -> "whoami".!!
+      )
+
+      Seq
+        .concat(
+          Seq("docker", "run", "--rm"),
+          envVars.flatMap { case (k, v) => Seq("-e", s"$k=$v") },
+          Seq(image, "liquibase", "update")
+        )
+        .!!
+
+    }
+  )
+
 /** Web service which receives, distributes, and tracks transfer requests. */
 lazy val `transporter-manager` = project
   .in(file("./manager"))
   .enablePlugins(BuildInfoPlugin, TransporterDockerPlugin)
-  .dependsOn(`transporter-common`)
+  .dependsOn(`transporter-common`, `transporter-manager-migrations` % Test)
   .settings(commonSettings)
   .settings(
     libraryDependencies ++= Seq(
@@ -224,12 +282,14 @@ lazy val `transporter-agent-template` = project
     )
   )
 
+/** Dummy agent to test framework plumbing. */
 lazy val `transporter-echo-agent` = project
   .in(file("./agents/echo"))
   .enablePlugins(TransporterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(commonSettings)
 
+/** Agent which can transfer files from AWS to GCP. */
 lazy val `transporter-aws-to-gcp-agent` = project
   .in(file("./agents/aws-to-gcp"))
   .enablePlugins(TransporterDockerPlugin)
@@ -241,6 +301,6 @@ lazy val `transporter-aws-to-gcp-agent` = project
       "com.google.auth" % "google-auth-library-oauth2-http" % googleAuthVersion
     ),
     libraryDependencies ++= Seq(
-      "org.scalatest" %% "scalatest" % scalaTestVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test)
   )
