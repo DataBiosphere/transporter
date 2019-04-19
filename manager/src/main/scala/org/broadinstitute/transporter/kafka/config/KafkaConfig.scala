@@ -12,8 +12,8 @@ import scala.concurrent.ExecutionContext
 case class KafkaConfig(
   bootstrapServers: NonEmptyList[String],
   clientId: String,
+  replicationFactor: Short,
   batchParams: ConsumerBatchConfig,
-  topicDefaults: TopicConfig,
   timeouts: TimeoutConfig
 ) {
 
@@ -119,10 +119,25 @@ object KafkaConfig {
   val RequestTopicPrefix = "transporter.requests."
 
   /**
+    * Prefix used for all Kafka topics created by Transporter for tracking
+    * incremental transfer progress.
+    */
+  val ProgressTopicPrefix = "transporter.progress."
+
+  /**
     * Prefix used for all Kafka topics created by Transporter for receiving
     * transfer results from agents.
     */
   val ResponseTopicPrefix = "transporter.responses."
+
+  /**
+    * Number of partitions to initialize in topics created by Transporter.
+    *
+    * NOTE: This sets a max parallelism for all transfer queues. We should move
+    * this into the DB as a per-queue parameter, and allow users to increase it
+    * as necessary.
+    */
+  val TopicPartitions = 3
 
   implicit val reader: ConfigReader[KafkaConfig] = deriveReader
 }

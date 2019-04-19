@@ -1,17 +1,23 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.IO
-
 /**
   * Component capable of actually running data transfers.
   *
   * Agents are expected to "fill in" an instance of this interface
   * to handle specific storage source / destination pairs.
   */
-abstract class TransferRunner[R] {
+trait TransferRunner[In, Progress, Out] {
 
   /**
-    * Run the transfer described by the given request.
+    * Initialize the transfer described by the given request, and
+    * emit enough information to push the first chunk of data.
     */
-  def transfer(request: R): IO[TransferSummary]
+  def initialize(request: In): Progress
+
+  /**
+    * Push the next chunk of data into an initialized transfer, either
+    * completing the transfer or emitting enough information to push the
+    * following chunk.
+    */
+  def step(progress: Progress): Either[Progress, Out]
 }

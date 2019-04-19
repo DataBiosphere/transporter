@@ -9,13 +9,14 @@ Use this JSON schema to initialize Transporter queues for this agent:
   "type": "object",
   "properties": {
     "s3Bucket": { "type": "string" },
+    "s3Region": { "type":  "string" },
     "s3Path": { "type": "string" },
     "gcsBucket": { "type": "string" },
     "gcsPath": { "type": "string" },
     "expectedSize": { "type": "integer" },
-    "expectedMd5": { "type": "string", "pattern": "[0-9a-fA-F]+" }
+    "expectedMd5": { "type": "string", "pattern": "[0-9a-f]+" }
   },
-  "required": ["s3Bucket", "s3Path", "gcsBucket", "gcsPath"],
+  "required": ["s3Bucket", "s3Region", "s3Path", "gcsBucket", "gcsPath"],
   "additionalProperties": false
 }
 ```

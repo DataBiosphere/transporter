@@ -1,10 +1,11 @@
 package org.broadinstitute.transporter.queue
 
 import cats.effect.{ExitCase, IO}
-import cats.implicits._
+import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 
 /** Component responsible for handling all queue-related web requests. */
 trait QueueController {
@@ -24,9 +25,8 @@ trait QueueController {
     */
   final def lookupQueue(name: String): IO[Queue] =
     lookupQueueInfo(name).flatMap {
-      case Some((_, req, res, schema)) =>
-        IO.pure(Queue(name, req, res, schema))
-      case None => IO.raiseError(QueueController.NoSuchQueue(name))
+      case Some((_, queue)) => IO.pure(queue)
+      case None             => IO.raiseError(QueueController.NoSuchQueue(name))
     }
 
   /**
@@ -37,7 +37,7 @@ trait QueueController {
     * getting into a state where we report existing info from the DB but always
     * fail to submit transfers because of nonexistent Kafka topics.
     */
-  def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]]
+  def lookupQueueInfo(name: String): IO[Option[(FUUID, Queue)]]
 }
 
 object QueueController {
@@ -72,15 +72,19 @@ object QueueController {
         queue <- (preexisting, topicsExist) match {
           case (Some(_), true) =>
             IO.raiseError(QueueAlreadyExists(name))
-          case (Some((id, req, res, _)), false) =>
+          case (Some((id, queue)), false) =>
             for {
               _ <- logger.warn(
                 s"Attempting to correct inconsistent state for queue: $name"
               )
               _ <- dbClient.patchQueueSchema(id, request.schema)
-              _ <- kafkaClient.createTopics(req, res)
+              _ <- kafkaClient.createTopics(
+                queue.requestTopic,
+                queue.progressTopic,
+                queue.responseTopic
+              )
             } yield {
-              Queue(name, req, res, request.schema)
+              queue.copy(schema = request.schema)
             }
           case (None, _) =>
             logger
@@ -92,7 +96,7 @@ object QueueController {
       }
     }
 
-    override def lookupQueueInfo(name: String): IO[Option[DbClient.QueueInfo]] =
+    override def lookupQueueInfo(name: String): IO[Option[(FUUID, Queue)]] =
       for {
         _ <- logger.info(s"Looking up info for queue with name '$name'")
         (maybeInfo, topicsExist) <- checkDbAndKafkaForQueue(name)
@@ -110,11 +114,16 @@ object QueueController {
       */
     private def checkDbAndKafkaForQueue(
       name: String
-    ): IO[(Option[DbClient.QueueInfo], Boolean)] =
+    ): IO[(Option[(FUUID, Queue)], Boolean)] =
       for {
-        queueInfo <- dbClient.lookupQueueInfo(name)
+        queueInfo <- dbClient.lookupQueue(name)
         topicsExist <- queueInfo.fold(IO.pure(false)) {
-          case (_, reqTopic, resTopic, _) => kafkaClient.topicsExist(reqTopic, resTopic)
+          case (_, queue) =>
+            kafkaClient.topicsExist(
+              queue.requestTopic,
+              queue.progressTopic,
+              queue.responseTopic
+            )
         }
         _ <- if (queueInfo.isDefined && !topicsExist) {
           logger.warn(
@@ -145,33 +154,46 @@ object QueueController {
       */
     private def initializeQueue(request: QueueRequest): IO[Queue] = {
       val name = request.name
-      // `bracketCase` is like try-catch-finally for the FP libs.
-      // It schedules cleanup code in a way that prevents it from
-      // being skipped by cancellation.
-      dbClient
-        .createQueue(request)
-        .bracketCase {
-          case (_, req, res, schema) =>
-            kafkaClient.createTopics(req, res).as(Queue(name, req, res, schema))
-        } { (_, status) =>
-          status match {
-            case ExitCase.Completed =>
-              logger.info(s"Successfully created queue: $name")
+      for {
+        uuid <- FUUID.randomFUUID[IO]
+        queue = Queue(
+          name = request.name,
+          requestTopic = s"${KafkaConfig.RequestTopicPrefix}$uuid",
+          progressTopic = s"${KafkaConfig.ProgressTopicPrefix}$uuid",
+          responseTopic = s"${KafkaConfig.ResponseTopicPrefix}$uuid",
+          schema = request.schema
+        )
+        // `bracketCase` is like try-catch-finally for the FP libs.
+        // It schedules cleanup code in a way that prevents it from
+        // being skipped by cancellation.
+        _ <- dbClient
+          .createQueue(uuid, queue)
+          .bracketCase { _ =>
+            kafkaClient.createTopics(
+              queue.requestTopic,
+              queue.progressTopic,
+              queue.responseTopic
+            )
+          } { (_, status) =>
+            status match {
+              case ExitCase.Completed =>
+                logger.info(s"Successfully created queue: $name")
 
-            case ExitCase.Canceled =>
-              for {
-                _ <- logger.warn(s"Creation of topics for queue $name was canceled")
-                _ <- dbClient.deleteQueue(name)
-              } yield ()
+              case ExitCase.Canceled =>
+                for {
+                  _ <- logger.warn(s"Creation of topics for queue $name was canceled")
+                  _ <- dbClient.deleteQueue(uuid)
+                } yield ()
 
-            case ExitCase.Error(e) =>
-              for {
-                _ <- logger
-                  .error(e)(s"Failed to create topics for queue $name, rolling back")
-                _ <- dbClient.deleteQueue(name)
-              } yield ()
+              case ExitCase.Error(e) =>
+                for {
+                  _ <- logger
+                    .error(e)(s"Failed to create topics for queue $name, rolling back")
+                  _ <- dbClient.deleteQueue(uuid)
+                } yield ()
+            }
           }
-        }
+      } yield queue
     }
   }
 }

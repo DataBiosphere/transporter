@@ -6,8 +6,7 @@ import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.broadinstitute.transporter.kafka.config.{
   ConsumerBatchConfig,
   KafkaConfig,
-  TimeoutConfig,
-  TopicConfig
+  TimeoutConfig
 }
 import org.scalatest.{FlatSpec, Matchers}
 
@@ -18,10 +17,7 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
 
   protected implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  protected val topicConfig = TopicConfig(
-    partitions = 1,
-    replicationFactor = 1
-  )
+  protected val replicationFactor: Short = 1
 
   protected val timingConfig = TimeoutConfig(
     requestTimeout = 2.seconds,
@@ -39,8 +35,8 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
   protected def appConfig(embeddedConfig: EmbeddedKafkaConfig) = KafkaConfig(
     NonEmptyList.of(s"localhost:${embeddedConfig.kafkaPort}"),
     "kafka-test",
+    replicationFactor,
     batchConfig,
-    topicConfig,
     timingConfig
   )
 

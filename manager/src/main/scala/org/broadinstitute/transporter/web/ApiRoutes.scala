@@ -3,6 +3,7 @@ package org.broadinstitute.transporter.web
 import java.util.UUID
 
 import cats.effect.IO
+import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.queue.{Queue, QueueController, QueueRequest}
 import org.broadinstitute.transporter.transfer.{
@@ -96,7 +97,7 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   }
 
   lookupTransfers.bindAction { (name: String, id: UUID) =>
-    transferController.lookupTransferStatus(name, id).attempt.map {
+    transferController.lookupTransferStatus(name, FUUID.fromUUID(id)).attempt.map {
       case Right(status) => Ok(status)
       case Left(QueueController.NoSuchQueue(_)) =>
         NotFound(ErrorResponse(s"Queue $name does not exist"))

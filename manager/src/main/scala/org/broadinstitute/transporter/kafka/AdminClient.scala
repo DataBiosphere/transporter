@@ -8,7 +8,7 @@ import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => JAdminClient}
 import org.apache.kafka.common.KafkaFuture
-import org.broadinstitute.transporter.kafka.config.{KafkaConfig, TopicConfig}
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
 
 import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
@@ -101,7 +101,7 @@ object AdminClient {
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
   ): Resource[IO, AdminClient] =
-    adminResource(config, blockingEc).map(new Impl(_, config.topicDefaults))
+    adminResource(config, blockingEc).map(new Impl(_, config.replicationFactor))
 
   /** Construct a Kafka admin client, wrapped in setup and teardown logic. */
   private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
@@ -126,14 +126,14 @@ object AdminClient {
     * the functionality we need.
     *
     * @param adminClient client which can execute "raw" Kafka requests
-    * @param topicConfig configuration to apply to all topics created
-    *                    by the client
+    * @param newTopicReplicationFactor replication factor to use for all topics
+    *                                  created by the client
     * @param cs proof of the ability to shift IO-wrapped computations
     *           onto other threads
     */
   private[kafka] class Impl(
     adminClient: JAdminClient,
-    topicConfig: TopicConfig
+    newTopicReplicationFactor: Short
   )(implicit cs: ContextShift[IO])
       extends AdminClient {
 
@@ -192,7 +192,7 @@ object AdminClient {
       */
     private def attemptCreateTopics(topicNames: List[String]): IO[Unit] = {
       val newTopics = topicNames.map { name =>
-        new NewTopic(name, topicConfig.partitions, topicConfig.replicationFactor)
+        new NewTopic(name, KafkaConfig.TopicPartitions, newTopicReplicationFactor)
       }
 
       val attempts = IO.suspend {

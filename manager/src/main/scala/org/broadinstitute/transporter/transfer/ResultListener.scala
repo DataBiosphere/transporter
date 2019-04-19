@@ -1,14 +1,12 @@
 package org.broadinstitute.transporter.transfer
 
-import java.util.UUID
-
-import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
+import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.{KafkaConsumer, KafkaProducer}
+import org.broadinstitute.transporter.kafka.KafkaConsumer
 
 /**
   * Component responsible for processing summary messages received
@@ -33,24 +31,21 @@ object ResultListener {
 
   // Pseudo-constructor for the Impl subclass.
   def apply(
-    consumer: KafkaConsumer[UUID, TransferSummary],
-    producer: KafkaProducer[UUID, Json],
+    consumer: KafkaConsumer[FUUID, TransferSummary[Option[Json]]],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO]): ResultListener =
-    new Impl(consumer, producer, dbClient)
+    new Impl(consumer, dbClient)
 
   /**
     * Concrete listener implementation used by mainline app code.
     *
     * @param consumer Kafka consumer subscribed to Transporter result topics
-    * @param producer Kafka producer to use for resubmitting transient failures
     * @param dbClient DB client to use for persisting transfer results
     * @param cs proof of the ability to shift IO-wrapped computations
     *           onto other threads
     */
   private[transfer] class Impl(
-    consumer: KafkaConsumer[UUID, TransferSummary],
-    producer: KafkaProducer[UUID, Json],
+    consumer: KafkaConsumer[FUUID, TransferSummary[Option[Json]]],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO])
       extends ResultListener {
@@ -61,7 +56,7 @@ object ResultListener {
 
     /** Process a single batch of results received from some number of Transporter agents. */
     private[transfer] def processBatch(
-      batch: List[KafkaConsumer.Attempt[(UUID, TransferSummary)]]
+      batch: List[KafkaConsumer.Attempt[(FUUID, TransferSummary[Option[Json]])]]
     ): IO[Unit] = {
       val (numMalformed, results) = batch.foldMap {
         case Right(res) => (0, List(res))
@@ -77,34 +72,7 @@ object ResultListener {
           logger.info(logPrefix)
         }
         _ <- dbClient.updateTransfers(results)
-        _ <- resubmitTransientFailures(results)
       } yield ()
-    }
-
-    /**
-      * Resubmit transfers which failed on transient errors.
-      *
-      * Whether or not an error is transient is determined by the reporting agent,
-      * not the manager service.
-      */
-    private def resubmitTransientFailures(
-      results: List[(UUID, TransferSummary)]
-    ): IO[Unit] = {
-      val transientFailures = results.collect {
-        case (id, TransferSummary(TransferResult.TransientFailure, _)) => id
-      }
-
-      NonEmptyList.fromList(transientFailures).fold(IO.unit) { toRetry =>
-        for {
-          _ <- logger.info(s"Resubmitting ${toRetry.length} transient failures")
-          resubmitInfo <- dbClient.getResubmitInfoForTransfers(toRetry)
-          resubmissionsByTopic = resubmitInfo.groupBy(_._2)
-          _ <- resubmissionsByTopic.toList.parTraverse {
-            case (topic, messages) =>
-              producer.submit(topic, messages.map { case (id, _, body) => id -> body })
-          }
-        } yield ()
-      }
     }
   }
 }

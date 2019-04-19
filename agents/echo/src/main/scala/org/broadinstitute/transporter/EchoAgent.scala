@@ -9,10 +9,10 @@ import org.broadinstitute.transporter.transfer.{EchoInput, EchoRunner, TransferR
   *
   * Useful for manual plumbing tests.
   */
-object EchoAgent extends TransporterAgent[EchoConfig, EchoInput] {
+object EchoAgent extends TransporterAgent[EchoConfig, EchoInput, EchoInput, String] {
 
   override def runnerResource(
     config: EchoConfig
-  ): Resource[IO, TransferRunner[EchoInput]] =
-    Resource.pure(new EchoRunner(config.transientFailureRate))
+  ): Resource[IO, TransferRunner[EchoInput, EchoInput, String]] =
+    Resource.pure(EchoRunner)
 }

@@ -1,17 +1,14 @@
 package org.broadinstitute.transporter.db
 
-import java.util.UUID
-
-import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
-import cats.implicits._
 import doobie.implicits._
 import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
+import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
-import org.broadinstitute.transporter.queue.{QueueRequest, QueueSchema}
+import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
 import org.broadinstitute.transporter.transfer.{
   TransferRequest,
   TransferResult,
@@ -39,6 +36,7 @@ class DbClientSpec
     )
 
   private val schema = json"{}".as[QueueSchema].right.value
+  private val queue = Queue("test-queue", "requests", "progress", "responses", schema)
 
   behavior of "DbClient"
 
@@ -53,20 +51,21 @@ class DbClientSpec
   }
 
   it should "create, lookup, and delete transfer queues" in {
-    val request = QueueRequest("test-queue", schema)
 
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val check = for {
-      res <- client.lookupQueueInfo(request.name)
-      _ <- client.createQueue(request)
-      res2 <- client.lookupQueueInfo(request.name)
-      _ <- client.deleteQueue(request.name)
-      res3 <- client.lookupQueueInfo(request.name)
+      id <- FUUID.randomFUUID[IO]
+      res <- client.lookupQueue(queue.name)
+      _ <- client.createQueue(id, queue)
+      res2 <- client.lookupQueue(queue.name)
+      _ <- client.deleteQueue(id)
+      res3 <- client.lookupQueue(queue.name)
     } yield {
       res shouldBe None
-      val (_, _, _, schema) = res2.value
-      schema shouldBe request.schema
+      val (outId, outQueue) = res2.value
+      outId shouldBe id
+      outQueue shouldBe queue
       res3 shouldBe None
     }
 
@@ -74,13 +73,12 @@ class DbClientSpec
   }
 
   it should "fail to double-create a queue by name" in {
-    val request = QueueRequest("test-queue2", schema)
-
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val tryInsert = for {
-      _ <- client.createQueue(request)
-      _ <- client.createQueue(request)
+      id <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(id, queue)
+      _ <- client.createQueue(id, queue)
     } yield ()
 
     tryInsert.attempt.unsafeRunSync().isLeft shouldBe true
@@ -88,7 +86,10 @@ class DbClientSpec
 
   it should "no-op when deleting a nonexistent queue" in {
     val client = new DbClient.Impl(testTransactor(container.password))
-    client.deleteQueue("nope").unsafeRunSync()
+    for {
+      id <- FUUID.randomFUUID[IO]
+      _ <- client.deleteQueue(id)
+    } yield succeed
   }
 
   it should "record and delete new transfer requests under a queue" in {
@@ -105,13 +106,14 @@ class DbClientSpec
     }
 
     val checks = for {
-      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
+      queueId <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(queueId, queue)
       (initReqs, initTransfers) <- countsQuery.transact(transactor)
       (requestId, _) <- client.recordTransferRequest(queueId, requests)
       (postReqs, postTransfers) <- countsQuery.transact(transactor)
       _ <- client.deleteTransferRequest(requestId)
       (finalReqs, finalTransfers) <- countsQuery.transact(transactor)
-      _ <- client.deleteQueue("foo")
+      _ <- client.deleteQueue(queueId)
     } yield {
       initReqs shouldBe 0
       initTransfers shouldBe 0
@@ -132,88 +134,35 @@ class DbClientSpec
     val results =
       List.tabulate(10) { i =>
         TransferSummary(
-          // Success: 0, 3, 6, 9
-          // TransientFailure: 1, 4, 7
-          // FatalFailure: 2, 5, 8
-          TransferResult.values(i % 3),
+          // Success: 0, 2, 4, 6, 8
+          // FatalFailure: 1, 3, 5, 7, 9
+          TransferResult.values(i % 2),
           // Success: 0+1, 6+1
-          // TransientFailure: 4+1
-          // FatalFailure: 2+1, 8+1
-          Some(json"""{ "i+1": ${i + 1} }""").filter(_ => i % 2 == 0)
+          // FatalFailure: 3+1, 9+1
+          Some(json"""{ "i+1": ${i + 1} }""").filter(_ => i % 3 == 0)
         )
       }
 
     val checks = for {
-      (queueId, _, _, _) <- client.createQueue(QueueRequest("foo", schema))
+      queueId <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(queueId, queue)
       (reqId, reqs) <- client.recordTransferRequest(queueId, requests)
       preResults <- client.lookupTransfers(queueId, reqId)
       _ <- client.updateTransfers(reqs.map(_._1).zip(results))
       postResults <- client.lookupTransfers(queueId, reqId)
-      _ <- client.deleteQueue("foo")
+      _ <- client.deleteQueue(queueId)
     } yield {
       preResults shouldBe Map((TransferStatus.Submitted, (10, Vector.empty[Json])))
-      postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Retrying, TransferStatus.Failed)
+      postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Failed)
 
       val (successCount, successInfo) = postResults(TransferStatus.Succeeded)
-      val (retryCount, retryInfo) = postResults(TransferStatus.Retrying)
       val (failCount, failInfo) = postResults(TransferStatus.Failed)
 
-      successCount shouldBe 4
-      retryCount shouldBe 3
-      failCount shouldBe 3
+      successCount shouldBe 5
+      failCount shouldBe 5
 
       successInfo should contain only (json"""{ "i+1": 1 }""", json"""{ "i+1": 7 }""")
-      retryInfo should contain only json"""{ "i+1": 5 }"""
-      failInfo should contain only (json"""{ "i+1": 3 }""", json"""{ "i+1": 9 }""")
-    }
-
-    checks.unsafeRunSync()
-  }
-
-  it should "get info needed to resubmit transient failures" in {
-    val transactor = testTransactor(container.password)
-    val client = new DbClient.Impl(transactor)
-
-    val transfers = List.tabulate(10)(i => json"""{ "i": $i }""")
-    val queues = List("foo", "bar", "baz")
-    val requests =
-      transfers
-        .grouped((transfers.length / queues.length) + 1)
-        .toList
-        .mapWithIndex {
-          case (ts, i) => queues(i) -> TransferRequest(ts)
-        }
-
-    val checks = for {
-      queueInfo <- queues.traverse { q =>
-        client.createQueue(QueueRequest(q, schema)).map {
-          case (id, reqTopic, _, _) => (q, (id, reqTopic))
-        }
-      }.map(_.toMap)
-      transferIdsToSubmitInfo <- requests.flatTraverse {
-        case (queue, req) =>
-          val (queueId, reqTopic) = queueInfo(queue)
-          client.recordTransferRequest(queueId, req).map {
-            case (_, transfersWithId) =>
-              transfersWithId.map {
-                case (id, json) => (id, (reqTopic, json))
-              }
-          }
-      }
-      resubmitIds <- NonEmptyList
-        .fromList(transferIdsToSubmitInfo)
-        .fold(IO.raiseError[NonEmptyList[UUID]](new IllegalStateException("???"))) {
-          ids =>
-            IO.pure(ids.map(_._1))
-        }
-      resubmitInfo <- client.getResubmitInfoForTransfers(resubmitIds)
-      _ <- queues.traverse_(client.deleteQueue)
-    } yield {
-      val infoById = resubmitInfo.map {
-        case (id, reqTopic, json) => (id, (reqTopic, json))
-      }
-
-      infoById should contain theSameElementsAs transferIdsToSubmitInfo
+      failInfo should contain only (json"""{ "i+1": 4 }""", json"""{ "i+1": 10 }""")
     }
 
     checks.unsafeRunSync()

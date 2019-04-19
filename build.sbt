@@ -38,7 +38,7 @@ inThisBuild(
 )
 
 // Compiler plugins.
-val betterMonadicForVersion = "0.2.4"
+val betterMonadicForVersion = "0.3.0"
 
 // Configuration.
 val pureConfigVersion = "0.10.2"
@@ -65,26 +65,26 @@ val kafkaVersion = "2.2.0"
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
+val log4sVersion = "1.7.0"
 
 // Transfer.
-val s3Version = "2.5.23"
-val gcsVersion = "1.68.0"
+val googleAuthVersion = "0.15.0"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
-val fuuidVersion = "0.2.0-M7"
+val fuuidVersion = "0.2.0-M8"
 
 // Web.
-val http4sVersion = "0.20.0-M7"
-val rhoVersion = "0.19.0-M6"
+val http4sVersion = "0.20.0-RC1"
+val rhoVersion = "0.19.0-M7"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.20.9"
+val swaggerUiVersion = "3.22.0"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
 val scalaMockVersion = "4.1.0"
 val scalaTestVersion = "3.0.7"
-val testcontainersVersion = "1.11.1"
+val testcontainersVersion = "1.11.2"
 val testcontainersScalaVersion = "0.24.0"
 
 // Settings to apply to all sub-projects.
@@ -204,10 +204,11 @@ lazy val `transporter-agent-template` = project
       "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-http4s" % pureConfigVersion,
-      "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
+      "io.chrisdavenport" %% "log4cats-log4s" % log4catsVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
       "org.http4s" %% "http4s-blaze-client" % http4sVersion,
-      "org.http4s" %% "http4s-circe" % http4sVersion
+      "org.http4s" %% "http4s-circe" % http4sVersion,
+      "org.log4s" %% "log4s" % log4sVersion
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
@@ -235,8 +236,11 @@ lazy val `transporter-aws-to-gcp-agent` = project
   .dependsOn(`transporter-agent-template`)
   .settings(commonSettings)
   .settings(
+    resolvers += Resolver.jcenterRepo,
     libraryDependencies ++= Seq(
-      "com.google.cloud" % "google-cloud-storage" % gcsVersion,
-      "software.amazon.awssdk" % "s3" % s3Version
-    )
+      "com.google.auth" % "google-auth-library-oauth2-http" % googleAuthVersion
+    ),
+    libraryDependencies ++= Seq(
+      "org.scalatest" %% "scalatest" % scalaTestVersion,
+    ).map(_ % Test)
   )

@@ -4,7 +4,6 @@ import cats.data.NonEmptyList
 import cats.effect._
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import fs2.kafka.{Deserializer, Serializer}
 import io.circe.Json
 import org.broadinstitute.transporter.web.{
   ApiRoutes,
@@ -98,14 +97,14 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
       producer <- KafkaProducer.resource(
         config.kafka,
-        Serializer.uuid,
+        Serdes.fuuidSerializer,
         Serdes.encodingSerializer[Json]
       )
       consumer <- KafkaConsumer.resource(
         s"${KafkaConfig.ResponseTopicPrefix}.+".r,
         config.kafka,
-        Deserializer.uuid,
-        Serdes.decodingDeserializer[TransferSummary]
+        Serdes.fuuidDeserializer,
+        Serdes.decodingDeserializer[TransferSummary[Option[Json]]]
       )
     } yield {
       val queueController = QueueController(dbClient, adminClient)
@@ -118,7 +117,7 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       )
       val appRoutes = SwaggerMiddleware(routes, info, blockingEc).orNotFound
       val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
-      val listener = ResultListener(consumer, producer, dbClient)
+      val listener = ResultListener(consumer, dbClient)
 
       (http, listener)
     }
