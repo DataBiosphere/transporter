@@ -101,7 +101,9 @@ object AdminClient {
   def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
   ): Resource[IO, AdminClient] =
-    adminResource(config, blockingEc).map(new Impl(_, config.replicationFactor))
+    adminResource(config, blockingEc).map(
+      new Impl(_, KafkaConfig.TopicPartitions, config.replicationFactor)
+    )
 
   /** Construct a Kafka admin client, wrapped in setup and teardown logic. */
   private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
@@ -126,6 +128,8 @@ object AdminClient {
     * the functionality we need.
     *
     * @param adminClient client which can execute "raw" Kafka requests
+    * @param newTopicPartitionCount partition count to use for all topics
+    *                               created by the client
     * @param newTopicReplicationFactor replication factor to use for all topics
     *                                  created by the client
     * @param cs proof of the ability to shift IO-wrapped computations
@@ -133,6 +137,7 @@ object AdminClient {
     */
   private[kafka] class Impl(
     adminClient: JAdminClient,
+    newTopicPartitionCount: Int,
     newTopicReplicationFactor: Short
   )(implicit cs: ContextShift[IO])
       extends AdminClient {
@@ -192,7 +197,7 @@ object AdminClient {
       */
     private def attemptCreateTopics(topicNames: List[String]): IO[Unit] = {
       val newTopics = topicNames.map { name =>
-        new NewTopic(name, KafkaConfig.TopicPartitions, newTopicReplicationFactor)
+        new NewTopic(name, newTopicPartitionCount, newTopicReplicationFactor)
       }
 
       val attempts = IO.suspend {

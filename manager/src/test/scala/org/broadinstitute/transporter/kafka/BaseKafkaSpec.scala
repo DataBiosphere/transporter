@@ -17,6 +17,7 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
 
   protected implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
+  protected val partitionCount: Int = 3
   protected val replicationFactor: Short = 1
 
   protected val timingConfig = TimeoutConfig(
