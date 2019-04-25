@@ -137,7 +137,7 @@ object KafkaConfig {
     * this into the DB as a per-queue parameter, and allow users to increase it
     * as necessary.
     */
-  val TopicPartitions = 64
+  val TopicPartitions = 16
 
   implicit val reader: ConfigReader[KafkaConfig] = deriveReader
 }
