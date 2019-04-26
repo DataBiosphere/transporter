@@ -317,7 +317,7 @@ object DbClient extends PostgresInstances with JsonInstances {
 
       val insertTransfers = Update[(FUUID, Json)](
         s"""insert into transfers (id, request_id, status, body, info, submitted_at)
-            values (?, '$requestId', '${TransferStatus.Submitted.entryName}', ?, NULL, TO_TIMESTAMP($nowMillis::double precision / 1000))"""
+            values (?, '$requestId', '${TransferStatus.Submitted.entryName.toLowerCase}', ?, NULL, TO_TIMESTAMP($nowMillis::double precision / 1000))"""
       ).updateMany(transfersById).void
 
       insertRequest.flatMap(_ => insertTransfers)
