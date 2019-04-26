@@ -1,6 +1,11 @@
 package org.broadinstitute.transporter.db
 
-import cats.effect.{ContextShift, IO}
+import java.sql.Timestamp
+
+import cats.data.NonEmptyList
+import cats.effect.{Clock, ContextShift, IO}
+import cats.implicits._
+import doobie._
 import doobie.implicits._
 import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
@@ -18,6 +23,7 @@ import org.broadinstitute.transporter.transfer.{
 import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.TimeUnit
 
 class DbClientSpec
     extends PostgresSpec
@@ -26,6 +32,7 @@ class DbClientSpec
     with JsonInstances {
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  private implicit val clk: Clock[IO] = Clock.create
 
   private def testTransactor(password: String): Transactor[IO] =
     Transactor.fromDriverManager[IO](
@@ -121,6 +128,37 @@ class DbClientSpec
       postTransfers shouldBe 10
       finalReqs shouldBe 0
       finalTransfers shouldBe 0
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "add submission times to new transfers" in {
+    import DbClient.fuuidPut
+
+    val transactor = testTransactor(container.password)
+    implicit val clk: Clock[IO] = new Clock[IO] {
+      override def realTime(unit: TimeUnit): IO[Long] = IO.pure(12345L)
+      override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(12345L)
+    }
+    val client = new DbClient.Impl(transactor)
+
+    val requests = TransferRequest(List.fill(10)(json"{}"))
+
+    val checks = for {
+      queueId <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(queueId, queue)
+      (_, reqs) <- client.recordTransferRequest(queueId, requests)
+      ids <- NonEmptyList
+        .fromList(reqs.map(_._1))
+        .liftTo[IO](new IllegalStateException("No IDs returned"))
+      submitTimes <- Fragments
+        .in(fr"select submitted_at from transfers where id", ids)
+        .query[Timestamp]
+        .to[List]
+        .transact(transactor)
+    } yield {
+      submitTimes.map(_.getTime) shouldBe List.fill(10)(12345L)
     }
 
     checks.unsafeRunSync()
