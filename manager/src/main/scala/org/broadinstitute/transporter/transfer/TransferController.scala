@@ -115,12 +115,12 @@ object TransferController {
             .flatMap(_._3)
             .toList
             .minimumOption
-            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.systemDefault())),
+            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.of("UTC"))),
           updatedAt = flattenedInfo
             .flatMap(_._4)
             .toList
             .maximumOption
-            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.systemDefault())),
+            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.of("UTC"))),
           info = flattenedInfo.flatMap(_._2).toList
         )
       }
