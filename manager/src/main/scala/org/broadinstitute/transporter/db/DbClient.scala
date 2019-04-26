@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.db
 
 import java.sql.Timestamp
+import java.time.{OffsetDateTime, ZoneId}
 import java.util.UUID
 
 import cats.effect.{Clock, ContextShift, IO, Resource}
@@ -69,10 +70,10 @@ trait DbClient {
   ): IO[(FUUID, List[(FUUID, Json)])]
 
   /** Fetch summary info for transfers registered under a queue/request pair. */
-  def lookupTransfers(
-    queueId: FUUID,
-    requestId: FUUID
-  ): IO[Map[TransferStatus, (Long, Vector[Json], Option[Timestamp], Option[Timestamp])]]
+  def lookupTransfers(queueId: FUUID, requestId: FUUID): IO[Map[
+    TransferStatus,
+    (Long, Vector[Json], Option[OffsetDateTime], Option[OffsetDateTime])
+  ]]
 
   /**
     * Delete the top-level description, and individual transfer descriptions,
@@ -161,6 +162,10 @@ object DbClient extends PostgresInstances with JsonInstances {
   implicit val fuuidGet: Get[FUUID] = Get[UUID].map(FUUID.fromUUID)
   implicit val fuuidPut: Put[FUUID] = Put[UUID].contramap(FUUID.Unsafe.toUUID)
 
+  implicit val odtGet: Get[OffsetDateTime] = Get[Timestamp].map { ts =>
+    OffsetDateTime.ofInstant(ts.toInstant, ZoneId.of("UTC"))
+  }
+
   /**
     * Concrete implementation of our DB client used by mainline code.
     *
@@ -241,12 +246,10 @@ object DbClient extends PostgresInstances with JsonInstances {
         (requestId, transfersById)
       }
 
-    override def lookupTransfers(
-      queueId: FUUID,
-      requestId: FUUID
-    ): IO[
-      Map[TransferStatus, (Long, Vector[Json], Option[Timestamp], Option[Timestamp])]
-    ] =
+    override def lookupTransfers(queueId: FUUID, requestId: FUUID): IO[Map[
+      TransferStatus,
+      (Long, Vector[Json], Option[OffsetDateTime], Option[OffsetDateTime])
+    ]] =
       // 'coalesce' needed to strip the nulls out of the results.
       sql"""select
               t.status,
@@ -259,7 +262,9 @@ object DbClient extends PostgresInstances with JsonInstances {
             left join queues q on r.queue_id = q.id
             where q.id = $queueId and r.id = $requestId
             group by t.status"""
-        .query[(TransferStatus, Long, Json, Option[Timestamp], Option[Timestamp])]
+        .query[
+          (TransferStatus, Long, Json, Option[OffsetDateTime], Option[OffsetDateTime])
+        ]
         .to[List]
         .map(
           // Ideally we could pull `Vector[Json]` from the DB directly, but doobie
@@ -299,7 +304,7 @@ object DbClient extends PostgresInstances with JsonInstances {
       nowMillis: Long
     ): ConnectionIO[Unit] =
       Update[(TransferStatus, Option[Json], FUUID)](
-        s"update transfers set status = ?, info = ?, updated_at = TO_TIMESTAMP($nowMillis::double precision / 1000) where id = ?"
+        s"update transfers set status = ?, info = ?, updated_at = ${timestampSql(nowMillis)} where id = ?"
       ).updateMany(newStatuses).void
 
     /**
@@ -316,11 +321,20 @@ object DbClient extends PostgresInstances with JsonInstances {
         sql"""insert into transfer_requests (id, queue_id) values ($requestId, $queueId)""".update.run.void
 
       val insertTransfers = Update[(FUUID, Json)](
-        s"""insert into transfers (id, request_id, status, body, info, submitted_at)
-            values (?, '$requestId', '${TransferStatus.Submitted.entryName.toLowerCase}', ?, NULL, TO_TIMESTAMP($nowMillis::double precision / 1000))"""
+        s"""insert into transfers (id, request_id, status, body, info, submitted_at) values (
+          ?,
+          '$requestId',
+          '${TransferStatus.Submitted.entryName.toLowerCase}',
+          ?,
+          NULL,
+          ${timestampSql(nowMillis)}
+        )"""
       ).updateMany(transfersById).void
 
       insertRequest.flatMap(_ => insertTransfers)
     }
+
+    private def timestampSql(millis: Long): String =
+      s"TO_TIMESTAMP($millis::double precision / 1000)"
   }
 }

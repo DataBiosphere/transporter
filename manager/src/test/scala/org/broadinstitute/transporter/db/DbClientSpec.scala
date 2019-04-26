@@ -1,7 +1,6 @@
 package org.broadinstitute.transporter.db
 
-import java.sql.Timestamp
-import java.time.Instant
+import java.time.{Instant, OffsetDateTime}
 
 import cats.data.NonEmptyList
 import cats.effect.{Clock, ContextShift, IO}
@@ -11,7 +10,6 @@ import doobie.implicits._
 import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
 import io.chrisdavenport.fuuid.FUUID
-import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
@@ -141,6 +139,7 @@ class DbClientSpec
 
   it should "add submission times to new transfers" in {
     import DbClient.fuuidPut
+    import DbClient.odtGet
 
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
@@ -156,11 +155,11 @@ class DbClientSpec
         .liftTo[IO](new IllegalStateException("No IDs returned"))
       submitTimes <- Fragments
         .in(fr"select submitted_at from transfers where id", ids)
-        .query[Timestamp]
+        .query[OffsetDateTime]
         .to[List]
         .transact(transactor)
     } yield {
-      submitTimes.map(_.getTime) shouldBe List.fill(10)(fakeNow)
+      submitTimes.map(_.toInstant) shouldBe List.fill(10)(Instant.ofEpochMilli(fakeNow))
     }
 
     checks.unsafeRunSync()
@@ -192,17 +191,13 @@ class DbClientSpec
       postResults <- client.lookupTransfers(queueId, reqId)
       _ <- client.deleteQueue(queueId)
     } yield {
-      preResults shouldBe Map(
-        (
-          TransferStatus.Submitted,
-          (
-            10,
-            Vector.empty[Json],
-            Some(Timestamp.from(Instant.ofEpochMilli(fakeNow))),
-            None
-          )
-        )
-      )
+      preResults.keySet shouldBe Set(TransferStatus.Submitted)
+      val (preCount, preInfo, preSubmitTime, preUpdateTime) =
+        preResults(TransferStatus.Submitted)
+      preCount shouldBe 10
+      preInfo shouldBe empty
+      preSubmitTime.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
+      preUpdateTime shouldBe None
       postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Failed)
 
       val (successCount, successInfo, _, successUpdated) =
@@ -215,8 +210,8 @@ class DbClientSpec
       successInfo should contain only (json"""{ "i+1": 1 }""", json"""{ "i+1": 7 }""")
       failInfo should contain only (json"""{ "i+1": 4 }""", json"""{ "i+1": 10 }""")
 
-      successUpdated.value.getTime shouldBe fakeNow
-      failUpdated.value.getTime shouldBe fakeNow
+      successUpdated.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
+      failUpdated.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
     }
 
     checks.unsafeRunSync()

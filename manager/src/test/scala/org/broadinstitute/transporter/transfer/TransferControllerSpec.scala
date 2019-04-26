@@ -1,6 +1,5 @@
 package org.broadinstitute.transporter.transfer
 
-import java.sql.Timestamp
 import java.time.{Instant, OffsetDateTime, ZoneId}
 
 import cats.effect.IO
@@ -236,12 +235,16 @@ class TransferControllerSpec
       TransferStatus.Failed -> 1L
     )
 
-    def ts(millis: Long) = Timestamp.from(Instant.ofEpochMilli(millis))
+    def odt(millis: Long) =
+      OffsetDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.of("UTC"))
+
+    val minSubmitted = odt(12344L)
+    val maxUpdated = odt(12347L)
 
     val timestamps = Map(
-      (TransferStatus.Submitted, (Some(ts(12345L)), None)),
-      (TransferStatus.Succeeded, (Some(ts(12344L)), Some(ts(12347L)))),
-      (TransferStatus.Failed, (Some(ts(12346L)), Some(ts(12343L))))
+      (TransferStatus.Submitted, (Some(odt(12345L)), None)),
+      (TransferStatus.Succeeded, (Some(minSubmitted), Some(odt(12346L)))),
+      (TransferStatus.Failed, (Some(odt(12346L)), Some(maxUpdated)))
     )
 
     val lookup =
@@ -262,13 +265,7 @@ class TransferControllerSpec
       .unsafeRunSync()
 
     status.overallStatus shouldBe TransferStatus.Submitted
-    status.submittedAt.value shouldBe OffsetDateTime.ofInstant(
-      Instant.ofEpochMilli(12344L),
-      ZoneId.of("UTC")
-    )
-    status.updatedAt.value shouldBe OffsetDateTime.ofInstant(
-      Instant.ofEpochMilli(12347L),
-      ZoneId.of("UTC")
-    )
+    status.submittedAt.value shouldBe minSubmitted
+    status.updatedAt.value shouldBe maxUpdated
   }
 }

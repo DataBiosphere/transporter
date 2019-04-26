@@ -1,7 +1,6 @@
 package org.broadinstitute.transporter.transfer
 
-import java.sql.Timestamp
-import java.time.{OffsetDateTime, ZoneId}
+import java.time.OffsetDateTime
 
 import cats.Order
 import cats.data.NonEmptyList
@@ -89,7 +88,7 @@ object TransferController {
 
     private val baselineCounts = TransferStatus.values.map(_ -> 0L).toMap
 
-    private implicit val timestampOrder: Order[Timestamp] = _.compareTo(_)
+    private implicit val odtOrder: Order[OffsetDateTime] = _.compareTo(_)
 
     override def lookupTransferStatus(
       queueName: String,
@@ -114,13 +113,11 @@ object TransferController {
           submittedAt = flattenedInfo
             .flatMap(_._3)
             .toList
-            .minimumOption
-            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.of("UTC"))),
+            .minimumOption,
           updatedAt = flattenedInfo
             .flatMap(_._4)
             .toList
-            .maximumOption
-            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.of("UTC"))),
+            .maximumOption,
           info = flattenedInfo.flatMap(_._2).toList
         )
       }
