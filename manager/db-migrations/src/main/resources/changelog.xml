@@ -5,4 +5,5 @@
     <include file="changesets/01-init-queues-table.xml" relativeToChangelogFile="true" />
     <include file="changesets/02-init-transfer-requests-table.xml" relativeToChangelogFile="true" />
     <include file="changesets/03-add-progress-topic.xml" relativeToChangelogFile="true" />
+    <include file="changesets/04-add-submitted-updated-times.xml" relativeToChangelogFile="true" />
 </databaseChangeLog>
