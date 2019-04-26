@@ -1,6 +1,6 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.{ContextShift, IO, Resource}
+import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import fs2.{Chunk, Stream}
 import io.circe.JsonObject
@@ -11,7 +11,7 @@ import org.broadinstitute.transporter.transfer.auth.{GcsAuthProvider, S3AuthProv
 import org.http4s._
 import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
-import org.http4s.client.middleware.Logger
+import org.http4s.client.middleware.{Logger, Retry, RetryPolicy}
 import org.http4s.headers._
 import org.http4s.util.CaseInsensitiveString
 
@@ -315,15 +315,25 @@ object AwsToGcpRunner {
 
   /** Construct an AWS -> GCP transfer runner, wrapped in setup/teardown logic for supporting clients. */
   def resource(config: RunnerConfig, ec: ExecutionContext)(
-    implicit cs: ContextShift[IO]
+    implicit cs: ContextShift[IO],
+    t: Timer[IO]
   ): Resource[IO, AwsToGcpRunner] =
     for {
-      httpClient <- BlazeClientBuilder[IO](ec).resource
+      httpClient <- BlazeClientBuilder[IO](ec)
+        .withResponseHeaderTimeout(config.timeouts.responseHeaderTimeout)
+        .withRequestTimeout(config.timeouts.requestTimeout)
+        .resource
       gcsAuth <- Resource.liftF(GcsAuthProvider.build(config.gcp))
     } yield {
       val s3Auth = new S3AuthProvider(config.aws)
+
+      val retryPolicy = RetryPolicy[IO](
+        RetryPolicy.exponentialBackoff(config.retries.maxDelay, config.retries.maxRetries)
+      )
+      val retryingClient = Retry(retryPolicy)(httpClient)
+
       new AwsToGcpRunner(
-        Logger(logHeaders = true, logBody = false)(httpClient),
+        Logger(logHeaders = true, logBody = false)(retryingClient),
         gcsAuth,
         s3Auth
       )
