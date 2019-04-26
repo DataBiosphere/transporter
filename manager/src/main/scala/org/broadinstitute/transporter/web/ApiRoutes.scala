@@ -69,7 +69,9 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
     request: QueueRequest =>
       queueController.createQueue(request).attempt.map {
         case Right(queue) => Ok(queue)
-        case Left(err)    => ISE(s"Failed to create queue ${request.name}", err)
+        case Left(QueueController.QueueAlreadyExists(_)) =>
+          Conflict(ErrorResponse(s"Queue ${request.name} already exists"))
+        case Left(err) => ISE(s"Failed to create queue ${request.name}", err)
       }
   }
 

@@ -76,7 +76,7 @@ val fuuidVersion = "0.2.0-RC1"
 
 // Web.
 val http4sVersion = "0.20.0"
-val rhoVersion = "0.19.0-M7"
+val rhoVersion = "0.19.0-M8"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.22.0"
 
