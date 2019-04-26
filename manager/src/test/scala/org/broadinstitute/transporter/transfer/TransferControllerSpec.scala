@@ -264,11 +264,11 @@ class TransferControllerSpec
     status.overallStatus shouldBe TransferStatus.Submitted
     status.submittedAt.value shouldBe OffsetDateTime.ofInstant(
       Instant.ofEpochMilli(12344L),
-      ZoneId.systemDefault()
+      ZoneId.of("UTC")
     )
     status.updatedAt.value shouldBe OffsetDateTime.ofInstant(
       Instant.ofEpochMilli(12347L),
-      ZoneId.systemDefault()
+      ZoneId.of("UTC")
     )
   }
 }
