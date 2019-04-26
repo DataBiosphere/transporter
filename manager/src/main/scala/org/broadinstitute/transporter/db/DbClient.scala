@@ -1,8 +1,10 @@
 package org.broadinstitute.transporter.db
 
+import java.sql.Timestamp
+import java.time.{OffsetDateTime, ZoneId}
 import java.util.UUID
 
-import cats.effect.{ContextShift, IO, Resource}
+import cats.effect.{Clock, ContextShift, IO, Resource}
 import cats.implicits._
 import doobie.hi._
 import doobie.hikari.HikariTransactor
@@ -68,10 +70,10 @@ trait DbClient {
   ): IO[(FUUID, List[(FUUID, Json)])]
 
   /** Fetch summary info for transfers registered under a queue/request pair. */
-  def lookupTransfers(
-    queueId: FUUID,
-    requestId: FUUID
-  ): IO[Map[TransferStatus, (Long, Vector[Json])]]
+  def lookupTransfers(queueId: FUUID, requestId: FUUID): IO[Map[
+    TransferStatus,
+    (Long, Vector[Json], Option[OffsetDateTime], Option[OffsetDateTime])
+  ]]
 
   /**
     * Delete the top-level description, and individual transfer descriptions,
@@ -89,7 +91,7 @@ trait DbClient {
   def updateTransfers(results: List[(FUUID, TransferSummary[Option[Json]])]): IO[Unit]
 }
 
-object DbClient {
+object DbClient extends PostgresInstances with JsonInstances {
 
   // Recommendation from Hikari docs:
   // https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing#the-formula
@@ -107,7 +109,8 @@ object DbClient {
     *           onto other threads
     */
   def resource(config: DbConfig, blockingEc: ExecutionContext)(
-    implicit cs: ContextShift[IO]
+    implicit cs: ContextShift[IO],
+    clk: Clock[IO]
   ): Resource[IO, DbClient] =
     for {
       // Recommended by doobie docs: use a fixed-size thread pool to avoid flooding the DB.
@@ -144,6 +147,25 @@ object DbClient {
       new Impl(transactor)
     }
 
+  /*
+   * "Orphan" instances describing how to get/put our custom JSON schema
+   * type from/into the DB.
+   *
+   * We define them here instead of in the schema class' companion object
+   * because the schema class lives in our "common" subproject, which doesn't
+   * need to depend on anything doobie-related.
+   */
+  implicit val schemaGet: Get[QueueSchema] = pgDecoderGet
+  implicit val schemaPut: Put[QueueSchema] = pgEncoderPut
+
+  // Glue for the "safe" UUID type our lib generates.
+  implicit val fuuidGet: Get[FUUID] = Get[UUID].map(FUUID.fromUUID)
+  implicit val fuuidPut: Put[FUUID] = Put[UUID].contramap(FUUID.Unsafe.toUUID)
+
+  implicit val odtGet: Get[OffsetDateTime] = Get[Timestamp].map { ts =>
+    OffsetDateTime.ofInstant(ts.toInstant, ZoneId.of("UTC"))
+  }
+
   /**
     * Concrete implementation of our DB client used by mainline code.
     *
@@ -155,28 +177,12 @@ object DbClient {
     *      documentation on `doobie`, the library used for DB access
     */
   private[db] class Impl(transactor: Transactor[IO])(
-    implicit cs: ContextShift[IO]
-  ) extends DbClient
-      with PostgresInstances
-      with JsonInstances {
+    implicit cs: ContextShift[IO],
+    clk: Clock[IO]
+  ) extends DbClient {
 
     private val logger = Slf4jLogger.getLogger[IO]
     private implicit val logHandler: LogHandler = DbLogHandler(logger)
-
-    /*
-     * "Orphan" instances describing how to get/put our custom JSON schema
-     * type from/into the DB.
-     *
-     * We define them here instead of in the schema class' companion object
-     * because the schema class lives in our "common" subproject, which doesn't
-     * need to depend on anything doobie-related.
-     */
-    implicit val schemaGet: Get[QueueSchema] = pgDecoderGet
-    implicit val schemaPut: Put[QueueSchema] = pgEncoderPut
-
-    // Glue for the "safe" UUID type our lib generates.
-    implicit val fuuidGet: Get[FUUID] = Get[UUID].map(FUUID.fromUUID)
-    implicit val fuuidPut: Put[FUUID] = Put[UUID].contramap(FUUID.Unsafe.toUUID)
 
     override def checkReady: IO[Boolean] = {
       val check = for {
@@ -234,28 +240,39 @@ object DbClient {
         transfersById <- request.transfers.traverse { transfer =>
           FUUID.randomFUUID[IO].map(_ -> transfer)
         }
-        _ <- insertRequest(queueId, requestId, transfersById).transact(transactor)
+        now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
+        _ <- insertRequest(queueId, requestId, transfersById, now).transact(transactor)
       } yield {
         (requestId, transfersById)
       }
 
-    override def lookupTransfers(
-      queueId: FUUID,
-      requestId: FUUID
-    ): IO[Map[TransferStatus, (Long, Vector[Json])]] =
+    override def lookupTransfers(queueId: FUUID, requestId: FUUID): IO[Map[
+      TransferStatus,
+      (Long, Vector[Json], Option[OffsetDateTime], Option[OffsetDateTime])
+    ]] =
       // 'coalesce' needed to strip the nulls out of the results.
-      sql"""select t.status, count(*), coalesce(json_agg(t.info) filter (where t.info is not null), '[]')
+      sql"""select
+              t.status,
+              count(*),
+              coalesce(json_agg(t.info) filter (where t.info is not null), '[]'),
+              min(t.submitted_at),
+              max(t.updated_at)
             from transfers t
             left join transfer_requests r on t.request_id = r.id
             left join queues q on r.queue_id = q.id
             where q.id = $queueId and r.id = $requestId
             group by t.status"""
-        .query[(TransferStatus, Long, Json)]
+        .query[
+          (TransferStatus, Long, Json, Option[OffsetDateTime], Option[OffsetDateTime])
+        ]
         .to[List]
         .map(
           // Ideally we could pull `Vector[Json]` from the DB directly, but doobie
           // can't handle mapping PG arrays of complex types.
-          _.map { case (s, i, j) => (s, (i, j.asArray.getOrElse(Vector.empty))) }.toMap
+          _.map {
+            case (status, count, json, submitted, updated) =>
+              (status, (count, json.asArray.getOrElse(Vector.empty), submitted, updated))
+          }.toMap
         )
         .transact(transactor)
 
@@ -275,12 +292,20 @@ object DbClient {
           (status, s.info, id)
       }
 
-      Update[(TransferStatus, Option[Json], FUUID)](
-        "update transfers set status = ?, info = ? where id = ?"
-      ).updateMany(newStatuses)
-        .void
-        .transact(transactor)
+      for {
+        now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
+        _ <- updateTransfers(newStatuses, now).transact(transactor)
+      } yield ()
     }
+
+    /** Build a transaction which will update info stored for in-flight transfers. */
+    private def updateTransfers(
+      newStatuses: List[(TransferStatus, Option[Json], FUUID)],
+      nowMillis: Long
+    ): ConnectionIO[Unit] =
+      Update[(TransferStatus, Option[Json], FUUID)](
+        s"update transfers set status = ?, info = ?, updated_at = ${timestampSql(nowMillis)} where id = ?"
+      ).updateMany(newStatuses).void
 
     /**
       * Build a transaction which will insert all of the rows (top-level and individual)
@@ -289,17 +314,27 @@ object DbClient {
     private def insertRequest(
       queueId: FUUID,
       requestId: FUUID,
-      transfersById: List[(FUUID, Json)]
+      transfersById: List[(FUUID, Json)],
+      nowMillis: Long
     ): ConnectionIO[Unit] = {
       val insertRequest =
         sql"""insert into transfer_requests (id, queue_id) values ($requestId, $queueId)""".update.run.void
 
       val insertTransfers = Update[(FUUID, Json)](
-        s"""insert into transfers (id, request_id, status, body, info)
-            values (?, '$requestId', '${TransferStatus.Submitted.entryName}', ?, NULL)"""
+        s"""insert into transfers (id, request_id, status, body, info, submitted_at) values (
+          ?,
+          '$requestId',
+          '${TransferStatus.Submitted.entryName.toLowerCase}',
+          ?,
+          NULL,
+          ${timestampSql(nowMillis)}
+        )"""
       ).updateMany(transfersById).void
 
       insertRequest.flatMap(_ => insertTransfers)
     }
+
+    private def timestampSql(millis: Long): String =
+      s"TO_TIMESTAMP($millis::double precision / 1000)"
   }
 }

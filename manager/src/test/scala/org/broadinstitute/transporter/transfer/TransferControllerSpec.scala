@@ -1,5 +1,7 @@
 package org.broadinstitute.transporter.transfer
 
+import java.time.{Instant, OffsetDateTime, ZoneId}
+
 import cats.effect.IO
 import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
@@ -8,13 +10,14 @@ import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.queue.{Queue, QueueController, QueueSchema}
 import org.scalamock.scalatest.MockFactory
-import org.scalatest.{EitherValues, FlatSpec, Matchers}
+import org.scalatest.{EitherValues, FlatSpec, Matchers, OptionValues}
 
 class TransferControllerSpec
     extends FlatSpec
     with Matchers
     with MockFactory
-    with EitherValues {
+    with EitherValues
+    with OptionValues {
 
   private val db = mock[DbClient]
   private val queueController = mock[QueueController]
@@ -100,7 +103,7 @@ class TransferControllerSpec
       .returning(IO.pure(Some(queueInfo)))
     (db.lookupTransfers _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json]))))
+      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
 
     controller
       .lookupTransferStatus(queueName, requestId)
@@ -110,6 +113,8 @@ class TransferControllerSpec
         TransferStatus.Failed -> 0L,
         TransferStatus.Submitted -> 0L
       ),
+      None,
+      None,
       Nil
     )
   }
@@ -139,7 +144,7 @@ class TransferControllerSpec
       .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
   }
 
-  it should "prioritize failures over all in request summaries" in {
+  it should "prioritize submissions over all in request summaries" in {
     val counts = Map(
       TransferStatus.Submitted -> 10L,
       TransferStatus.Succeeded -> 5L,
@@ -151,16 +156,22 @@ class TransferControllerSpec
       .returning(IO.pure(Some(queueInfo)))
     (db.lookupTransfers _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json]))))
+      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
 
     controller
       .lookupTransferStatus(queueName, requestId)
-      .unsafeRunSync() shouldBe RequestStatus(TransferStatus.Failed, counts, Nil)
+      .unsafeRunSync() shouldBe RequestStatus(
+      TransferStatus.Submitted,
+      counts,
+      None,
+      None,
+      Nil
+    )
   }
 
-  it should "prioritize in-progress submissions over successes in request summaries" in {
+  it should "prioritize failures over successes in request summaries" in {
     val counts = Map(
-      TransferStatus.Submitted -> 10L,
+      TransferStatus.Failed -> 10L,
       TransferStatus.Succeeded -> 5L
     )
 
@@ -169,15 +180,17 @@ class TransferControllerSpec
       .returning(IO.pure(Some(queueInfo)))
     (db.lookupTransfers _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json]))))
+      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
 
     controller
       .lookupTransferStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
-      TransferStatus.Submitted,
+      TransferStatus.Failed,
       counts ++ Map(
-        TransferStatus.Failed -> 0L
+        TransferStatus.Submitted -> 0L
       ),
+      None,
+      None,
       Nil
     )
   }
@@ -197,7 +210,8 @@ class TransferControllerSpec
       TransferStatus.Failed -> Vector(json"""{ "wot": "I BROKE" }""")
     )
 
-    val lookup = TransferStatus.values.map(s => (s, (counts(s), infos(s)))).toMap
+    val lookup =
+      TransferStatus.values.map(s => (s, (counts(s), infos(s), None, None))).toMap
 
     (queueController.lookupQueueInfo _)
       .expects(queueName)
@@ -210,7 +224,48 @@ class TransferControllerSpec
       .lookupTransferStatus(queueName, requestId)
       .unsafeRunSync()
 
-    status.overallStatus shouldBe TransferStatus.Failed
+    status.overallStatus shouldBe TransferStatus.Submitted
     status.info should contain theSameElementsAs infos.flatMap(_._2)
+  }
+
+  it should "include overall submission and updated times in request summaries" in {
+    val counts = Map(
+      TransferStatus.Submitted -> 10L,
+      TransferStatus.Succeeded -> 5L,
+      TransferStatus.Failed -> 1L
+    )
+
+    def odt(millis: Long) =
+      OffsetDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.of("UTC"))
+
+    val minSubmitted = odt(12344L)
+    val maxUpdated = odt(12347L)
+
+    val timestamps = Map(
+      (TransferStatus.Submitted, (Some(odt(12345L)), None)),
+      (TransferStatus.Succeeded, (Some(minSubmitted), Some(odt(12346L)))),
+      (TransferStatus.Failed, (Some(odt(12346L)), Some(maxUpdated)))
+    )
+
+    val lookup =
+      TransferStatus.values.map { s =>
+        val (submit, update) = timestamps(s)
+        (s, (counts(s), Vector.empty[Json], submit, update))
+      }.toMap
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransfers _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(lookup))
+
+    val status = controller
+      .lookupTransferStatus(queueName, requestId)
+      .unsafeRunSync()
+
+    status.overallStatus shouldBe TransferStatus.Submitted
+    status.submittedAt.value shouldBe minSubmitted
+    status.updatedAt.value shouldBe maxUpdated
   }
 }

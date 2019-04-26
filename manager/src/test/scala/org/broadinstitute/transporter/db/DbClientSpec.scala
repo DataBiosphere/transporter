@@ -1,11 +1,15 @@
 package org.broadinstitute.transporter.db
 
-import cats.effect.{ContextShift, IO}
+import java.time.{Instant, OffsetDateTime}
+
+import cats.data.NonEmptyList
+import cats.effect.{Clock, ContextShift, IO}
+import cats.implicits._
+import doobie._
 import doobie.implicits._
 import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
 import io.chrisdavenport.fuuid.FUUID
-import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
@@ -18,6 +22,7 @@ import org.broadinstitute.transporter.transfer.{
 import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.TimeUnit
 
 class DbClientSpec
     extends PostgresSpec
@@ -25,7 +30,13 @@ class DbClientSpec
     with OptionValues
     with JsonInstances {
 
+  private val fakeNow = 12345L
+
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  private implicit val clk: Clock[IO] = new Clock[IO] {
+    override def realTime(unit: TimeUnit): IO[Long] = IO.pure(fakeNow)
+    override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(fakeNow)
+  }
 
   private def testTransactor(password: String): Transactor[IO] =
     Transactor.fromDriverManager[IO](
@@ -126,7 +137,35 @@ class DbClientSpec
     checks.unsafeRunSync()
   }
 
-  it should "update recorded status and info for transfers" in {
+  it should "add submission times to new transfers" in {
+    import DbClient.fuuidPut
+    import DbClient.odtGet
+
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val requests = TransferRequest(List.fill(10)(json"{}"))
+
+    val checks = for {
+      queueId <- FUUID.randomFUUID[IO]
+      _ <- client.createQueue(queueId, queue)
+      (_, reqs) <- client.recordTransferRequest(queueId, requests)
+      ids <- NonEmptyList
+        .fromList(reqs.map(_._1))
+        .liftTo[IO](new IllegalStateException("No IDs returned"))
+      submitTimes <- Fragments
+        .in(fr"select submitted_at from transfers where id", ids)
+        .query[OffsetDateTime]
+        .to[List]
+        .transact(transactor)
+    } yield {
+      submitTimes.map(_.toInstant) shouldBe List.fill(10)(Instant.ofEpochMilli(fakeNow))
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "update recorded status, info, and updated times for transfers" in {
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
@@ -152,17 +191,27 @@ class DbClientSpec
       postResults <- client.lookupTransfers(queueId, reqId)
       _ <- client.deleteQueue(queueId)
     } yield {
-      preResults shouldBe Map((TransferStatus.Submitted, (10, Vector.empty[Json])))
+      preResults.keySet shouldBe Set(TransferStatus.Submitted)
+      val (preCount, preInfo, preSubmitTime, preUpdateTime) =
+        preResults(TransferStatus.Submitted)
+      preCount shouldBe 10
+      preInfo shouldBe empty
+      preSubmitTime.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
+      preUpdateTime shouldBe None
       postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Failed)
 
-      val (successCount, successInfo) = postResults(TransferStatus.Succeeded)
-      val (failCount, failInfo) = postResults(TransferStatus.Failed)
+      val (successCount, successInfo, _, successUpdated) =
+        postResults(TransferStatus.Succeeded)
+      val (failCount, failInfo, _, failUpdated) = postResults(TransferStatus.Failed)
 
       successCount shouldBe 5
       failCount shouldBe 5
 
       successInfo should contain only (json"""{ "i+1": 1 }""", json"""{ "i+1": 7 }""")
       failInfo should contain only (json"""{ "i+1": 4 }""", json"""{ "i+1": 10 }""")
+
+      successUpdated.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
+      failUpdated.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
     }
 
     checks.unsafeRunSync()

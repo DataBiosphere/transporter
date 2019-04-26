@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="4" author="danmoran">
+
+        <addColumn tableName="transfers">
+            <column name="submitted_at" type="timestamp" />
+        </addColumn>
+
+        <addColumn tableName="transfers">
+            <column name="updated_at" type="timestamp" />
+        </addColumn>
+
+        <createIndex tableName="transfers" indexName="transfers_submitted_at">
+            <column name="submitted_at" />
+        </createIndex>
+
+        <createIndex tableName="transfers" indexName="transfers_updated_at">
+            <column name="updated_at" />
+        </createIndex>
+
+        <rollback>
+            <dropColumn tableName="transfers" columnName="updated_at" />
+            <dropColumn tableName="transfers" columnName="submitted_at" />
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>
