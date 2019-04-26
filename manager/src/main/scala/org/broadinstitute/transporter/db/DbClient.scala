@@ -1,5 +1,6 @@
 package org.broadinstitute.transporter.db
 
+import java.sql.Timestamp
 import java.util.UUID
 
 import cats.effect.{Clock, ContextShift, IO, Resource}
@@ -71,7 +72,7 @@ trait DbClient {
   def lookupTransfers(
     queueId: FUUID,
     requestId: FUUID
-  ): IO[Map[TransferStatus, (Long, Vector[Json])]]
+  ): IO[Map[TransferStatus, (Long, Vector[Json], Option[Timestamp], Option[Timestamp])]]
 
   /**
     * Delete the top-level description, and individual transfer descriptions,
@@ -243,20 +244,30 @@ object DbClient extends PostgresInstances with JsonInstances {
     override def lookupTransfers(
       queueId: FUUID,
       requestId: FUUID
-    ): IO[Map[TransferStatus, (Long, Vector[Json])]] =
+    ): IO[
+      Map[TransferStatus, (Long, Vector[Json], Option[Timestamp], Option[Timestamp])]
+    ] =
       // 'coalesce' needed to strip the nulls out of the results.
-      sql"""select t.status, count(*), coalesce(json_agg(t.info) filter (where t.info is not null), '[]')
+      sql"""select
+              t.status,
+              count(*),
+              coalesce(json_agg(t.info) filter (where t.info is not null), '[]'),
+              min(t.submitted_at),
+              max(t.updated_at)
             from transfers t
             left join transfer_requests r on t.request_id = r.id
             left join queues q on r.queue_id = q.id
             where q.id = $queueId and r.id = $requestId
             group by t.status"""
-        .query[(TransferStatus, Long, Json)]
+        .query[(TransferStatus, Long, Json, Option[Timestamp], Option[Timestamp])]
         .to[List]
         .map(
           // Ideally we could pull `Vector[Json]` from the DB directly, but doobie
           // can't handle mapping PG arrays of complex types.
-          _.map { case (s, i, j) => (s, (i, j.asArray.getOrElse(Vector.empty))) }.toMap
+          _.map {
+            case (status, count, json, submitted, updated) =>
+              (status, (count, json.asArray.getOrElse(Vector.empty), submitted, updated))
+          }.toMap
         )
         .transact(transactor)
 
@@ -276,12 +287,20 @@ object DbClient extends PostgresInstances with JsonInstances {
           (status, s.info, id)
       }
 
-      Update[(TransferStatus, Option[Json], FUUID)](
-        "update transfers set status = ?, info = ? where id = ?"
-      ).updateMany(newStatuses)
-        .void
-        .transact(transactor)
+      for {
+        now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
+        _ <- updateTransfers(newStatuses, now).transact(transactor)
+      } yield ()
     }
+
+    /** Build a transaction which will update info stored for in-flight transfers. */
+    private def updateTransfers(
+      newStatuses: List[(TransferStatus, Option[Json], FUUID)],
+      nowMillis: Long
+    ): ConnectionIO[Unit] =
+      Update[(TransferStatus, Option[Json], FUUID)](
+        s"update transfers set status = ?, info = ?, updated_at = TO_TIMESTAMP($nowMillis::double precision / 1000) where id = ?"
+      ).updateMany(newStatuses).void
 
     /**
       * Build a transaction which will insert all of the rows (top-level and individual)

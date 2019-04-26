@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.db
 
 import java.sql.Timestamp
+import java.time.Instant
 
 import cats.data.NonEmptyList
 import cats.effect.{Clock, ContextShift, IO}
@@ -31,8 +32,13 @@ class DbClientSpec
     with OptionValues
     with JsonInstances {
 
+  private val fakeNow = 12345L
+
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
-  private implicit val clk: Clock[IO] = Clock.create
+  private implicit val clk: Clock[IO] = new Clock[IO] {
+    override def realTime(unit: TimeUnit): IO[Long] = IO.pure(fakeNow)
+    override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(fakeNow)
+  }
 
   private def testTransactor(password: String): Transactor[IO] =
     Transactor.fromDriverManager[IO](
@@ -137,10 +143,6 @@ class DbClientSpec
     import DbClient.fuuidPut
 
     val transactor = testTransactor(container.password)
-    implicit val clk: Clock[IO] = new Clock[IO] {
-      override def realTime(unit: TimeUnit): IO[Long] = IO.pure(12345L)
-      override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(12345L)
-    }
     val client = new DbClient.Impl(transactor)
 
     val requests = TransferRequest(List.fill(10)(json"{}"))
@@ -158,13 +160,13 @@ class DbClientSpec
         .to[List]
         .transact(transactor)
     } yield {
-      submitTimes.map(_.getTime) shouldBe List.fill(10)(12345L)
+      submitTimes.map(_.getTime) shouldBe List.fill(10)(fakeNow)
     }
 
     checks.unsafeRunSync()
   }
 
-  it should "update recorded status and info for transfers" in {
+  it should "update recorded status, info, and updated times for transfers" in {
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
@@ -190,17 +192,31 @@ class DbClientSpec
       postResults <- client.lookupTransfers(queueId, reqId)
       _ <- client.deleteQueue(queueId)
     } yield {
-      preResults shouldBe Map((TransferStatus.Submitted, (10, Vector.empty[Json])))
+      preResults shouldBe Map(
+        (
+          TransferStatus.Submitted,
+          (
+            10,
+            Vector.empty[Json],
+            Some(Timestamp.from(Instant.ofEpochMilli(fakeNow))),
+            None
+          )
+        )
+      )
       postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Failed)
 
-      val (successCount, successInfo) = postResults(TransferStatus.Succeeded)
-      val (failCount, failInfo) = postResults(TransferStatus.Failed)
+      val (successCount, successInfo, _, successUpdated) =
+        postResults(TransferStatus.Succeeded)
+      val (failCount, failInfo, _, failUpdated) = postResults(TransferStatus.Failed)
 
       successCount shouldBe 5
       failCount shouldBe 5
 
       successInfo should contain only (json"""{ "i+1": 1 }""", json"""{ "i+1": 7 }""")
       failInfo should contain only (json"""{ "i+1": 4 }""", json"""{ "i+1": 10 }""")
+
+      successUpdated.value.getTime shouldBe fakeNow
+      failUpdated.value.getTime shouldBe fakeNow
     }
 
     checks.unsafeRunSync()

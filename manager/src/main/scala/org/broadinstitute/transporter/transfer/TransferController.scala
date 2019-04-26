@@ -1,5 +1,9 @@
 package org.broadinstitute.transporter.transfer
 
+import java.sql.Timestamp
+import java.time.{OffsetDateTime, ZoneId}
+
+import cats.Order
 import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.{ExitCase, IO}
@@ -85,6 +89,8 @@ object TransferController {
 
     private val baselineCounts = TransferStatus.values.map(_ -> 0L).toMap
 
+    private implicit val timestampOrder: Order[Timestamp] = _.compareTo(_)
+
     override def lookupTransferStatus(
       queueName: String,
       requestId: FUUID
@@ -95,16 +101,27 @@ object TransferController {
           .lookupTransfers(queueId, requestId)
         counts = transfersByStatus.mapValues(_._1)
         maybeStatus = List(
-          TransferStatus.Failed,
           TransferStatus.Submitted,
+          TransferStatus.Failed,
           TransferStatus.Succeeded
         ).find(counts.getOrElse(_, 0L) > 0L)
         status <- maybeStatus.liftTo[IO](NoSuchRequest(requestId))
       } yield {
+        val flattenedInfo = transfersByStatus.values
         RequestStatus(
           status,
           baselineCounts.combine(counts),
-          transfersByStatus.flatMap(_._2._2).toList
+          submittedAt = flattenedInfo
+            .flatMap(_._3)
+            .toList
+            .minimumOption
+            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.systemDefault())),
+          updatedAt = flattenedInfo
+            .flatMap(_._4)
+            .toList
+            .maximumOption
+            .map(ts => OffsetDateTime.ofInstant(ts.toInstant, ZoneId.systemDefault())),
+          info = flattenedInfo.flatMap(_._2).toList
         )
       }
 
