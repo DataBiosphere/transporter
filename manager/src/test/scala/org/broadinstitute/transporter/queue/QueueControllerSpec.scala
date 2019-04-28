@@ -1,7 +1,8 @@
 package org.broadinstitute.transporter.queue
 
+import java.util.UUID
+
 import cats.effect.IO
-import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
@@ -22,7 +23,7 @@ class QueueControllerSpec
 
   private val request = QueueRequest("test-queue", Json.obj().as[QueueSchema].right.value)
 
-  private val id = FUUID.randomFUUID[IO].unsafeRunSync()
+  private val id = UUID.randomUUID()
   private val queue =
     Queue(request.name, "requests", "progress", "responses", request.schema)
   private val dbInfo = (id, queue)

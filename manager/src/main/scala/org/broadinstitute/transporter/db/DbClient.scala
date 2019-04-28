@@ -89,7 +89,7 @@ trait DbClient {
     * @param results batch of ID -> result pairs pulled from Kafka which
     *                should be pushed into the DB
     */
-  def updateTransfers(results: List[TransferSummary[Option[Json]]]): IO[Unit]
+  def updateTransfers(results: List[TransferSummary[Json]]): IO[Unit]
 }
 
 object DbClient extends PostgresInstances with JsonInstances {
@@ -268,9 +268,7 @@ object DbClient extends PostgresInstances with JsonInstances {
       sql"""delete from transfer_requests where id = $id""".update.run.void
         .transact(transactor)
 
-    override def updateTransfers(
-      summaries: List[TransferSummary[Option[Json]]]
-    ): IO[Unit] =
+    override def updateTransfers(summaries: List[TransferSummary[Json]]): IO[Unit] =
       for {
         now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
         _ <- updateTransfers(summaries, now).transact(transactor)
@@ -278,7 +276,7 @@ object DbClient extends PostgresInstances with JsonInstances {
 
     /** Build a transaction which will update info stored for in-flight transfers. */
     private def updateTransfers(
-      summaries: List[TransferSummary[Option[Json]]],
+      summaries: List[TransferSummary[Json]],
       nowMillis: Long
     ): ConnectionIO[Unit] = {
       val newStatuses = summaries.map { s =>
@@ -290,7 +288,7 @@ object DbClient extends PostgresInstances with JsonInstances {
         (status, s.info, s.id, s.requestId)
       }
 
-      Update[(TransferStatus, Option[Json], UUID, UUID)](
+      Update[(TransferStatus, Json, UUID, UUID)](
         s"""update transfers
            |set status = ?, info = ?, updated_at = ${timestampSql(nowMillis)}
            |where id = ? and request_id = ?""".stripMargin

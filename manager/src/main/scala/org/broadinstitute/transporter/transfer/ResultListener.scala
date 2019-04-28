@@ -30,7 +30,7 @@ object ResultListener {
 
   // Pseudo-constructor for the Impl subclass.
   def apply(
-    consumer: KafkaConsumer[TransferSummary[Option[Json]]],
+    consumer: KafkaConsumer[TransferSummary[Json]],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO]): ResultListener =
     new Impl(consumer, dbClient)
@@ -44,7 +44,7 @@ object ResultListener {
     *           onto other threads
     */
   private[transfer] class Impl(
-    consumer: KafkaConsumer[TransferSummary[Option[Json]]],
+    consumer: KafkaConsumer[TransferSummary[Json]],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO])
       extends ResultListener {
@@ -55,7 +55,7 @@ object ResultListener {
 
     /** Process a single batch of results received from some number of Transporter agents. */
     private[transfer] def processBatch(
-      batch: List[KafkaConsumer.Attempt[TransferSummary[Option[Json]]]]
+      batch: List[KafkaConsumer.Attempt[TransferSummary[Json]]]
     ): IO[Unit] = {
       val (numMalformed, results) = batch.foldMap {
         case Right(res) => (0, List(res))

@@ -1,16 +1,20 @@
 package org.broadinstitute.transporter.transfer
 
 import java.time.{Instant, OffsetDateTime, ZoneId}
+import java.util.UUID
 
 import cats.effect.IO
-import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
-import org.broadinstitute.transporter.transfer.api.{RequestAck, BulkRequest}
+import org.broadinstitute.transporter.transfer.api.{
+  BulkRequest,
+  RequestAck,
+  RequestStatus
+}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers, OptionValues}
 
@@ -23,10 +27,10 @@ class TransferControllerSpec
 
   private val db = mock[DbClient]
   private val queueController = mock[QueueController]
-  private val kafka = mock[KafkaProducer[FUUID, Json]]
+  private val kafka = mock[KafkaProducer[TransferRequest[Json]]]
 
   private val queueName = "queue"
-  private val queueId = FUUID.randomFUUID[IO].unsafeRunSync()
+  private val queueId = UUID.randomUUID()
   private val reqTopic = "requests"
   private val progressTopic = "progress"
   private val resTopic = "results"
@@ -37,9 +41,11 @@ class TransferControllerSpec
   private val goodRequest = BulkRequest(
     List(json"""{ "a": "b" }""", json"""{ "c": "d" }""", json"""{ "e": "f" }""")
   )
-  private val requestId = FUUID.randomFUUID[IO].unsafeRunSync()
-  private val transfersWithIds =
-    goodRequest.transfers.map(FUUID.randomFUUID[IO].unsafeRunSync() -> _)
+  private val requestId = UUID.randomUUID()
+  private val transfersWithIds = goodRequest.transfers.map(UUID.randomUUID() -> _)
+  private val transferRequests = transfersWithIds.map {
+    case (id, transferJson) => TransferRequest(transferJson, id, requestId)
+  }
 
   private def controller = new TransferController.Impl(queueController, db, kafka)
 
@@ -52,7 +58,7 @@ class TransferControllerSpec
     (db.recordTransferRequest _)
       .expects(queueId, goodRequest)
       .returning(IO.pure((requestId, transfersWithIds)))
-    (kafka.submit _).expects(reqTopic, transfersWithIds).returning(IO.unit)
+    (kafka.submit _).expects(reqTopic, transferRequests).returning(IO.unit)
 
     controller
       .submitTransfer(queueName, goodRequest)
@@ -88,7 +94,7 @@ class TransferControllerSpec
     (db.recordTransferRequest _)
       .expects(queueId, goodRequest)
       .returning(IO.pure((requestId, transfersWithIds)))
-    (kafka.submit _).expects(reqTopic, transfersWithIds).returning(IO.raiseError(err))
+    (kafka.submit _).expects(reqTopic, transferRequests).returning(IO.raiseError(err))
     (db.deleteTransferRequest _).expects(requestId).returning(IO.unit)
 
     controller
@@ -105,7 +111,7 @@ class TransferControllerSpec
       .returning(IO.pure(Some(queueInfo)))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
+      .returning(IO.pure(counts.mapValues(c => (c, None, None))))
 
     controller
       .lookupRequestStatus(queueName, requestId)
@@ -116,8 +122,7 @@ class TransferControllerSpec
         TransferStatus.Submitted -> 0L
       ),
       None,
-      None,
-      Nil
+      None
     )
   }
 
@@ -158,7 +163,7 @@ class TransferControllerSpec
       .returning(IO.pure(Some(queueInfo)))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
+      .returning(IO.pure(counts.mapValues(c => (c, None, None))))
 
     controller
       .lookupRequestStatus(queueName, requestId)
@@ -166,8 +171,7 @@ class TransferControllerSpec
       TransferStatus.Submitted,
       counts,
       None,
-      None,
-      Nil
+      None
     )
   }
 
@@ -182,7 +186,7 @@ class TransferControllerSpec
       .returning(IO.pure(Some(queueInfo)))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
-      .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
+      .returning(IO.pure(counts.mapValues(c => (c, None, None))))
 
     controller
       .lookupRequestStatus(queueName, requestId)
@@ -192,42 +196,8 @@ class TransferControllerSpec
         TransferStatus.Submitted -> 0L
       ),
       None,
-      None,
-      Nil
+      None
     )
-  }
-
-  it should "include associated transfer info in request summaries" in {
-    val counts = Map(
-      TransferStatus.Submitted -> 10L,
-      TransferStatus.Succeeded -> 5L,
-      TransferStatus.Failed -> 1L
-    )
-
-    val infos = Map(
-      TransferStatus.Submitted -> Vector.empty[Json],
-      TransferStatus.Succeeded -> Vector.tabulate(5)(
-        i => json"""{ "wat": "I worked!", "i": $i }"""
-      ),
-      TransferStatus.Failed -> Vector(json"""{ "wot": "I BROKE" }""")
-    )
-
-    val lookup =
-      TransferStatus.values.map(s => (s, (counts(s), infos(s), None, None))).toMap
-
-    (queueController.lookupQueueInfo _)
-      .expects(queueName)
-      .returning(IO.pure(Some(queueInfo)))
-    (db.summarizeTransfersByStatus _)
-      .expects(queueId, requestId)
-      .returning(IO.pure(lookup))
-
-    val status = controller
-      .lookupRequestStatus(queueName, requestId)
-      .unsafeRunSync()
-
-    status.overallStatus shouldBe TransferStatus.Submitted
-    status.info should contain theSameElementsAs infos.flatMap(_._2)
   }
 
   it should "include overall submission and updated times in request summaries" in {
@@ -252,7 +222,7 @@ class TransferControllerSpec
     val lookup =
       TransferStatus.values.map { s =>
         val (submit, update) = timestamps(s)
-        (s, (counts(s), Vector.empty[Json], submit, update))
+        (s, (counts(s), submit, update))
       }.toMap
 
     (queueController.lookupQueueInfo _)

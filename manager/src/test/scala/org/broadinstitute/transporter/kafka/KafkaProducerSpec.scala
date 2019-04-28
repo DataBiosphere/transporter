@@ -1,7 +1,6 @@
 package org.broadinstitute.transporter.kafka
 
 import cats.effect.IO
-import cats.implicits._
 import fs2.kafka.{Deserializer, Serializer}
 
 class KafkaProducerSpec extends BaseKafkaSpec {
@@ -11,19 +10,18 @@ class KafkaProducerSpec extends BaseKafkaSpec {
   it should "submit messages" in {
     val topic = "the-topic"
 
-    val messages = List(1 -> "foo", 2 -> "bar", 3 -> "baz")
+    val messages = List("foo", "bar", "baz")
 
     val published = withKafka { (config, embeddedConfig) =>
       KafkaProducer
-        .resource(config, Serializer.int, Serializer.string)
+        .resource(config, Serializer.string)
         .use { producer =>
           for {
             _ <- IO.delay(createCustomTopic(topic)(embeddedConfig))
             _ <- producer.submit(topic, messages)
             consumed <- IO.delay {
-              consumeNumberKeyedMessagesFrom(topic, messages.length)(
+              consumeNumberMessagesFrom(topic, messages.length)(
                 embeddedConfig,
-                Deserializer.int.map(_.valueOr(throw _)),
                 Deserializer.string
               )
             }

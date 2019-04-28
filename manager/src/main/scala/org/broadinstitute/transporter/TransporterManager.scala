@@ -103,7 +103,7 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       consumer <- KafkaConsumer.resource(
         s"${KafkaConfig.ResponseTopicPrefix}.+".r,
         config.kafka,
-        Serdes.decodingDeserializer[TransferSummary[Option[Json]]]
+        Serdes.decodingDeserializer[TransferSummary[Json]]
       )
     } yield {
       val queueController = QueueController(dbClient, adminClient)

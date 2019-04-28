@@ -1,38 +1,51 @@
 package org.broadinstitute.transporter.db
 
 import java.time.{Instant, OffsetDateTime}
+import java.util.UUID
 
 import cats.data.NonEmptyList
+import cats.effect.concurrent.Ref
 import cats.effect.{Clock, ContextShift, IO}
 import cats.implicits._
 import doobie._
 import doobie.implicits._
-import doobie.postgres.circe.Instances.JsonInstances
 import doobie.util.transactor.Transactor
-import io.chrisdavenport.fuuid.FUUID
+import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer.api.BulkRequest
-import org.broadinstitute.transporter.transfer.{TransferResult, TransferStatus, TransferSummary}
+import org.broadinstitute.transporter.transfer.{
+  TransferResult,
+  TransferStatus,
+  TransferSummary
+}
 import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.TimeUnit
 
-class DbClientSpec
-    extends PostgresSpec
-    with EitherValues
-    with OptionValues
-    with JsonInstances {
+class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
-  private val fakeNow = 12345L
+  import DbClient._
+
+  private val initNow = 12345L
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
-  private implicit val clk: Clock[IO] = new Clock[IO] {
-    override def realTime(unit: TimeUnit): IO[Long] = IO.pure(fakeNow)
-    override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(fakeNow)
+  private implicit def clk: Clock[IO] = new Clock[IO] {
+    private[this] val now = Ref.unsafe[IO, Long](initNow)
+
+    private[this] def getNow =
+      for {
+        current <- now.get
+        _ <- now.set(current + 1)
+      } yield {
+        current
+      }
+
+    override def realTime(unit: TimeUnit): IO[Long] = getNow
+    override def monotonic(unit: TimeUnit): IO[Long] = getNow
   }
 
   private def testTransactor(password: String): Transactor[IO] =
@@ -45,6 +58,7 @@ class DbClientSpec
 
   private val schema = json"{}".as[QueueSchema].right.value
   private val queue = Queue("test-queue", "requests", "progress", "responses", schema)
+  private val queueId = UUID.randomUUID()
 
   behavior of "DbClient"
 
@@ -63,16 +77,15 @@ class DbClientSpec
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val check = for {
-      id <- FUUID.randomFUUID[IO]
       res <- client.lookupQueue(queue.name)
-      _ <- client.createQueue(id, queue)
+      _ <- client.createQueue(queueId, queue)
       res2 <- client.lookupQueue(queue.name)
-      _ <- client.deleteQueue(id)
+      _ <- client.deleteQueue(queueId)
       res3 <- client.lookupQueue(queue.name)
     } yield {
       res shouldBe None
       val (outId, outQueue) = res2.value
-      outId shouldBe id
+      outId shouldBe queueId
       outQueue shouldBe queue
       res3 shouldBe None
     }
@@ -84,9 +97,8 @@ class DbClientSpec
     val client = new DbClient.Impl(testTransactor(container.password))
 
     val tryInsert = for {
-      id <- FUUID.randomFUUID[IO]
-      _ <- client.createQueue(id, queue)
-      _ <- client.createQueue(id, queue)
+      _ <- client.createQueue(queueId, queue)
+      _ <- client.createQueue(queueId, queue)
     } yield ()
 
     tryInsert.attempt.unsafeRunSync().isLeft shouldBe true
@@ -94,10 +106,7 @@ class DbClientSpec
 
   it should "no-op when deleting a nonexistent queue" in {
     val client = new DbClient.Impl(testTransactor(container.password))
-    for {
-      id <- FUUID.randomFUUID[IO]
-      _ <- client.deleteQueue(id)
-    } yield succeed
+    client.deleteQueue(queueId).unsafeRunSync()
   }
 
   it should "record and delete new transfer requests under a queue" in {
@@ -114,14 +123,12 @@ class DbClientSpec
     }
 
     val checks = for {
-      queueId <- FUUID.randomFUUID[IO]
       _ <- client.createQueue(queueId, queue)
       (initReqs, initTransfers) <- countsQuery.transact(transactor)
       (requestId, _) <- client.recordTransferRequest(queueId, requests)
       (postReqs, postTransfers) <- countsQuery.transact(transactor)
       _ <- client.deleteTransferRequest(requestId)
       (finalReqs, finalTransfers) <- countsQuery.transact(transactor)
-      _ <- client.deleteQueue(queueId)
     } yield {
       initReqs shouldBe 0
       initTransfers shouldBe 0
@@ -135,18 +142,15 @@ class DbClientSpec
   }
 
   it should "add submission times to new transfers" in {
-    import DbClient.fuuidPut
-    import DbClient.odtGet
 
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
-    val requests = BulkRequest(List.fill(10)(json"{}"))
+    val request = BulkRequest(List.fill(10)(json"{}"))
 
     val checks = for {
-      queueId <- FUUID.randomFUUID[IO]
       _ <- client.createQueue(queueId, queue)
-      (_, reqs) <- client.recordTransferRequest(queueId, requests)
+      (_, reqs) <- client.recordTransferRequest(queueId, request)
       ids <- NonEmptyList
         .fromList(reqs.map(_._1))
         .liftTo[IO](new IllegalStateException("No IDs returned"))
@@ -156,7 +160,7 @@ class DbClientSpec
         .to[List]
         .transact(transactor)
     } yield {
-      submitTimes.map(_.toInstant) shouldBe List.fill(10)(Instant.ofEpochMilli(fakeNow))
+      submitTimes.map(_.toInstant) shouldBe List.fill(10)(Instant.ofEpochMilli(initNow))
     }
 
     checks.unsafeRunSync()
@@ -166,56 +170,108 @@ class DbClientSpec
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
-    val requests = BulkRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
-    val results =
-      List.tabulate(10) { i =>
-        TransferSummary(
-          // Success: 0, 2, 4, 6, 8
-          // FatalFailure: 1, 3, 5, 7, 9
-          TransferResult.values(i % 2),
-          // Success: 0+1, 6+1
-          // FatalFailure: 3+1, 9+1
-          Some(json"""{ "i+1": ${i + 1} }""").filter(_ => i % 3 == 0)
-        )
-      }
+    val request = BulkRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
 
     val checks = for {
-      queueId <- FUUID.randomFUUID[IO]
+      // Setup rows for request.
       _ <- client.createQueue(queueId, queue)
-      (reqId, reqs) <- client.recordTransferRequest(queueId, requests)
-      preResults <- client.summarizeTransfersByStatus(queueId, reqId)
-      _ <- client.updateTransfers(reqs.map(_._1).zip(results))
-      postResults <- client.summarizeTransfersByStatus(queueId, reqId)
-      _ <- client.deleteQueue(queueId)
+      (reqId, reqs) <- client.recordTransferRequest(queueId, request)
+      query = sql"""select id, status, info, updated_at from transfers where request_id = $reqId"""
+        .query[(UUID, TransferStatus, Option[Json], Option[OffsetDateTime])]
+        .to[List]
+        .transact(transactor)
+
+      // Get "before" info.
+      preInfo <- query
+
+      // Run a fake update on parts of the request.
+      results = reqs.zipWithIndex.collect {
+        case ((id, _), i) if i % 3 == 0 =>
+          TransferSummary(
+            TransferResult.values(i % 2),
+            json"""{ "i+1": ${i + 1} }""",
+            id,
+            reqId
+          )
+      }
+      _ <- client.updateTransfers(results)
+
+      // Get "after" info.
+      postInfo <- query
     } yield {
-      preResults.keySet shouldBe Set(TransferStatus.Submitted)
-      val (preCount, preInfo, preSubmitTime, preUpdateTime) =
-        preResults(TransferStatus.Submitted)
-      preCount shouldBe 10
-      preInfo shouldBe empty
-      preSubmitTime.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
-      preUpdateTime shouldBe None
-      postResults.keys should contain only (TransferStatus.Succeeded, TransferStatus.Failed)
+      // IDs should match before and after update.
+      preInfo.map(_._1) should contain theSameElementsAs postInfo.map(_._1)
 
-      val (successCount, successInfo, _, successUpdated) =
-        postResults(TransferStatus.Succeeded)
-      val (failCount, failInfo, _, failUpdated) = postResults(TransferStatus.Failed)
+      // Statuses, infos, and update times should have been updated.
+      preInfo.map(_._2).toSet should contain only TransferStatus.Submitted
+      postInfo.map(_._2).toSet should contain theSameElementsAs TransferStatus.values
 
-      successCount shouldBe 5
-      failCount shouldBe 5
+      preInfo.flatMap(_._3) shouldBe empty
+      postInfo.flatMap(_._3) should contain theSameElementsAs results.map(_.info)
 
-      successInfo should contain only (json"""{ "i+1": 1 }""", json"""{ "i+1": 7 }""")
-      failInfo should contain only (json"""{ "i+1": 4 }""", json"""{ "i+1": 10 }""")
-
-      successUpdated.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
-      failUpdated.value.toInstant shouldBe Instant.ofEpochMilli(fakeNow)
+      preInfo.flatMap(_._4) shouldBe empty
+      postInfo
+        .flatMap(_._4)
+        .map(_.toInstant) shouldBe Iterable.fill(4)(Instant.ofEpochMilli(initNow + 1))
     }
 
     checks.unsafeRunSync()
   }
 
   it should "summarize transfers in a request by status" in {
-    ???
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      (reqId, reqs) <- client.recordTransferRequest(queueId, request)
+      results1 = reqs.zipWithIndex.collect {
+        case ((id, _), i) if i % 3 == 0 =>
+          TransferSummary(
+            TransferResult.values(i % 2),
+            json"""{ "i+1": ${i + 1} }""",
+            id,
+            reqId
+          )
+      }
+      _ <- client.updateTransfers(results1)
+      results2 = reqs.zipWithIndex.collect {
+        case ((id, _), i) if i % 3 == 2 =>
+          TransferSummary(
+            TransferResult.values(i % 2),
+            json"""{ "i+1": ${i + 1} }""",
+            id,
+            reqId
+          )
+      }
+      _ <- client.updateTransfers(results2)
+      summary <- client.summarizeTransfersByStatus(queueId, reqId)
+    } yield {
+      summary.keySet shouldBe TransferStatus.values.toSet
+
+      val (submittedCount, firstSubmittedSubmission, lastSubmittedUpdated) =
+        summary(TransferStatus.Submitted)
+      val (succeededCount, firstSucceededSubmitted, lastSucceededUpdated) =
+        summary(TransferStatus.Succeeded)
+      val (failedCount, firstFailedSubmitted, lastFailedUpdated) =
+        summary(TransferStatus.Failed)
+
+      submittedCount shouldBe 3
+      succeededCount shouldBe 4
+      failedCount shouldBe 3
+
+      Set(firstSubmittedSubmission, firstSucceededSubmitted, firstFailedSubmitted).flatten
+        .map(_.toInstant) shouldBe Set(Instant.ofEpochMilli(initNow))
+
+      lastSubmittedUpdated shouldBe None
+
+      Set(lastSucceededUpdated, lastFailedUpdated).flatten
+        .map(_.toInstant) shouldBe Set(Instant.ofEpochMilli(initNow + 2))
+    }
+
+    checks.unsafeRunSync()
   }
 
 }
