@@ -5,6 +5,7 @@ import io.chrisdavenport.fuuid.FUUID
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
+import org.broadinstitute.transporter.queue.api.{Queue, QueueRequest}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 

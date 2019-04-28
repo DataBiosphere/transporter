@@ -72,7 +72,6 @@ val googleAuthVersion = "0.15.0"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
-val fuuidVersion = "0.2.0-RC1"
 
 // Web.
 val http4sVersion = "0.20.0"
@@ -212,7 +211,6 @@ lazy val `transporter-manager` = project
       "com.github.pureconfig" %% "pureconfig-cats" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
-      "io.chrisdavenport" %% "fuuid" % fuuidVersion,
       "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
       "org.http4s" %% "http4s-blaze-server" % http4sVersion,
       "org.http4s" %% "http4s-circe" % http4sVersion,

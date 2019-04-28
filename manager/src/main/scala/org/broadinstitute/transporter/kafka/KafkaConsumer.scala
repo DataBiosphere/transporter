@@ -15,10 +15,9 @@ import scala.util.matching.Regex
   * Raw Kafka consumer instances are configured to work with specific key/value types,
   * so this class does the same.
   *
-  * @tparam K type which keys pulled from Kafka should be parsed into
-  * @tparam V type which values pulled from Kafka should be parsed into
+  * @tparam M type which messages pulled from Kafka should be parsed into
   */
-trait KafkaConsumer[K, V] {
+trait KafkaConsumer[M] {
 
   /**
     * Run an effecting operation on every batch of key/value pairs pulled
@@ -27,7 +26,7 @@ trait KafkaConsumer[K, V] {
     * The returned `IO` will run until cancelled. Messages will be committed
     * in batches as they are successfully processed by `f`.
     */
-  def runForeach(f: List[KafkaConsumer.Attempt[(K, V)]] => IO[Unit]): IO[Unit]
+  def runForeach(f: List[KafkaConsumer.Attempt[M]] => IO[Unit]): IO[Unit]
 }
 
 object KafkaConsumer {
@@ -48,18 +47,17 @@ object KafkaConsumer {
     *                     onto other threads
     * @param t            proof of the ability to schedule tasks for later execution
     */
-  def resource[K, V](
+  def resource[M](
     topicPattern: Regex,
     config: KafkaConfig,
-    kd: Deserializer.Attempt[K],
-    vd: Deserializer.Attempt[V]
+    d: Deserializer.Attempt[M]
   )(
     implicit cs: ContextShift[IO],
     t: Timer[IO]
-  ): Resource[IO, KafkaConsumer[K, V]] = {
+  ): Resource[IO, KafkaConsumer[M]] = {
     val underlyingConsumer = for {
       ec <- fs2.kafka.consumerExecutionContextResource[IO]
-      settings = config.consumerSettings(ec, kd, vd)
+      settings = config.consumerSettings(ec, Deserializer.unit, d)
       consumer <- fs2.kafka.consumerResource[IO].using(settings)
     } yield {
       consumer
@@ -77,29 +75,23 @@ object KafkaConsumer {
     *                 NOTE: This class assumes a subscription has already
     *                 been initialized in the consumer
     */
-  private[kafka] class Impl[K, V](
-    consumer: KConsumer[IO, Attempt[K], Attempt[V]],
+  private[kafka] class Impl[M](
+    consumer: KConsumer[IO, Unit, Attempt[M]],
     batchConfig: ConsumerBatchConfig
   )(implicit cs: ContextShift[IO], t: Timer[IO])
-      extends KafkaConsumer[K, V] {
+      extends KafkaConsumer[M] {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def runForeach(f: List[Attempt[(K, V)]] => IO[Unit]): IO[Unit] =
+    override def runForeach(f: List[Attempt[M]] => IO[Unit]): IO[Unit] =
       consumer.stream.evalTap { message =>
-        for {
-          _ <- logger.info(s"Got message from topic ${message.record.topic}")
-          _ <- logger.debug(s"Key: ${message.record.key}")
-          _ <- logger.debug(s"Value: ${message.record.value}")
-        } yield ()
-      }.map { message =>
-        (message.record.key(), message.record.value()).tupled -> message.committableOffset
-      }.evalTap {
-        case (Right((k, v)), _) =>
-          logger.debug(s"Decoded key-value record from Kafka: [$k: $v]")
-        case (Left(err), _) =>
-          logger.warn(err)("Failed to decode Kafka record")
-      }.groupWithin(batchConfig.maxRecords, batchConfig.waitTime)
+        logger.info(s"Got message from topic ${message.record.topic}")
+      }.map(message => message.record.value() -> message.committableOffset)
+        .evalTap {
+          case (Right(m), _)  => logger.debug(s"Decoded message from Kafka: $m")
+          case (Left(err), _) => logger.warn(err)("Failed to decode Kafka message")
+        }
+        .groupWithin(batchConfig.maxRecords, batchConfig.waitTime)
         .evalMap { chunk =>
           // There's probably a more efficient way to do this, but I doubt
           // it'll have noticeable impact unless `maxRecords` is huge.

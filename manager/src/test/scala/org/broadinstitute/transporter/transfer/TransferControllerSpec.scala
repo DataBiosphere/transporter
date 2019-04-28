@@ -8,7 +8,9 @@ import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaProducer
-import org.broadinstitute.transporter.queue.{Queue, QueueController, QueueSchema}
+import org.broadinstitute.transporter.queue.api.Queue
+import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
+import org.broadinstitute.transporter.transfer.api.{RequestAck, BulkRequest}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers, OptionValues}
 
@@ -32,7 +34,7 @@ class TransferControllerSpec
   private val queue = Queue(queueName, reqTopic, progressTopic, resTopic, schema)
   private val queueInfo = (queueId, queue)
 
-  private val goodRequest = TransferRequest(
+  private val goodRequest = BulkRequest(
     List(json"""{ "a": "b" }""", json"""{ "c": "d" }""", json"""{ "e": "f" }""")
   )
   private val requestId = FUUID.randomFUUID[IO].unsafeRunSync()
@@ -54,7 +56,7 @@ class TransferControllerSpec
 
     controller
       .submitTransfer(queueName, goodRequest)
-      .unsafeRunSync() shouldBe TransferAck(requestId)
+      .unsafeRunSync() shouldBe RequestAck(requestId)
   }
 
   it should "raise errors on submissions to nonexistent queues" in {
@@ -71,7 +73,7 @@ class TransferControllerSpec
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
 
-    val badRequest = TransferRequest(List(json"[1, 2, 3]", json""""hello world!""""))
+    val badRequest = BulkRequest(List(json"[1, 2, 3]", json""""hello world!""""))
     a[TransferController.InvalidRequest] shouldBe thrownBy {
       controller.submitTransfer(queueName, badRequest).unsafeRunSync()
     }
@@ -101,12 +103,12 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransfers _)
+    (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
 
     controller
-      .lookupTransferStatus(queueName, requestId)
+      .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
       TransferStatus.Succeeded,
       counts ++ Map(
@@ -123,12 +125,12 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransfers _)
+    (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(Map.empty))
 
     controller
-      .lookupTransferStatus(queueName, requestId)
+      .lookupRequestStatus(queueName, requestId)
       .attempt
       .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
   }
@@ -139,7 +141,7 @@ class TransferControllerSpec
       .returning(IO.pure(None))
 
     controller
-      .lookupTransferStatus(queueName, requestId)
+      .lookupRequestStatus(queueName, requestId)
       .attempt
       .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
   }
@@ -154,12 +156,12 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransfers _)
+    (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
 
     controller
-      .lookupTransferStatus(queueName, requestId)
+      .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
       TransferStatus.Submitted,
       counts,
@@ -178,12 +180,12 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransfers _)
+    (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(counts.mapValues(c => (c, Vector.empty[Json], None, None))))
 
     controller
-      .lookupTransferStatus(queueName, requestId)
+      .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
       TransferStatus.Failed,
       counts ++ Map(
@@ -216,12 +218,12 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransfers _)
+    (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(lookup))
 
     val status = controller
-      .lookupTransferStatus(queueName, requestId)
+      .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync()
 
     status.overallStatus shouldBe TransferStatus.Submitted
@@ -256,12 +258,12 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransfers _)
+    (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(lookup))
 
     val status = controller
-      .lookupTransferStatus(queueName, requestId)
+      .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync()
 
     status.overallStatus shouldBe TransferStatus.Submitted

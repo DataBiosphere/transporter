@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.transfer
+package org.broadinstitute.transporter.transfer.api
 
 import io.circe.{Decoder, Json}
 
@@ -9,8 +9,8 @@ import io.circe.{Decoder, Json}
   *                  submission. The exact schema of each transfer is set (and validated)
   *                  on a per-queue basis
   */
-case class TransferRequest(transfers: List[Json])
+case class BulkRequest(transfers: List[Json])
 
-object TransferRequest {
-  implicit val decoder: Decoder[TransferRequest] = io.circe.derivation.deriveDecoder
+object BulkRequest {
+  implicit val decoder: Decoder[BulkRequest] = io.circe.derivation.deriveDecoder
 }

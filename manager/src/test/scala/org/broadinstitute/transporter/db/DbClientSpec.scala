@@ -12,13 +12,10 @@ import doobie.util.transactor.Transactor
 import io.chrisdavenport.fuuid.FUUID
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
-import org.broadinstitute.transporter.queue.{Queue, QueueSchema}
-import org.broadinstitute.transporter.transfer.{
-  TransferRequest,
-  TransferResult,
-  TransferStatus,
-  TransferSummary
-}
+import org.broadinstitute.transporter.queue.QueueSchema
+import org.broadinstitute.transporter.queue.api.Queue
+import org.broadinstitute.transporter.transfer.api.BulkRequest
+import org.broadinstitute.transporter.transfer.{TransferResult, TransferStatus, TransferSummary}
 import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
@@ -107,7 +104,7 @@ class DbClientSpec
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
-    val requests = TransferRequest(List.fill(10)(json"{}"))
+    val requests = BulkRequest(List.fill(10)(json"{}"))
 
     val countsQuery = for {
       requestCount <- sql"select count(*) from transfer_requests".query[Long].unique
@@ -144,7 +141,7 @@ class DbClientSpec
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
-    val requests = TransferRequest(List.fill(10)(json"{}"))
+    val requests = BulkRequest(List.fill(10)(json"{}"))
 
     val checks = for {
       queueId <- FUUID.randomFUUID[IO]
@@ -169,7 +166,7 @@ class DbClientSpec
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
-    val requests = TransferRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
+    val requests = BulkRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
     val results =
       List.tabulate(10) { i =>
         TransferSummary(
@@ -186,9 +183,9 @@ class DbClientSpec
       queueId <- FUUID.randomFUUID[IO]
       _ <- client.createQueue(queueId, queue)
       (reqId, reqs) <- client.recordTransferRequest(queueId, requests)
-      preResults <- client.lookupTransfers(queueId, reqId)
+      preResults <- client.summarizeTransfersByStatus(queueId, reqId)
       _ <- client.updateTransfers(reqs.map(_._1).zip(results))
-      postResults <- client.lookupTransfers(queueId, reqId)
+      postResults <- client.summarizeTransfersByStatus(queueId, reqId)
       _ <- client.deleteQueue(queueId)
     } yield {
       preResults.keySet shouldBe Set(TransferStatus.Submitted)
@@ -215,6 +212,10 @@ class DbClientSpec
     }
 
     checks.unsafeRunSync()
+  }
+
+  it should "summarize transfers in a request by status" in {
+    ???
   }
 
 }

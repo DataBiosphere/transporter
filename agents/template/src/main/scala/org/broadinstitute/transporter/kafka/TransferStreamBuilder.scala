@@ -7,18 +7,22 @@ import cats.implicits._
 import io.circe._
 import io.circe.jawn.JawnParser
 import io.circe.syntax._
+import org.apache.kafka.common.errors.SerializationException
+import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.Topology
-import org.apache.kafka.streams.scala.StreamsBuilder
-import org.broadinstitute.transporter.queue.Queue
+import org.apache.kafka.streams.scala.{Serdes, StreamsBuilder}
+import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer.{
-  TransferSummary,
+  TransferProgress,
+  TransferRequest,
+  TransferResult,
   TransferRunner,
-  TransferResult
+  TransferSummary
 }
 
 class TransferStreamBuilder(queue: Queue) {
-  import org.apache.kafka.streams.scala.Serdes._
   import org.apache.kafka.streams.scala.ImplicitConversions._
+  import Serdes._
   import TransferStreamBuilder._
 
   /**
@@ -40,18 +44,6 @@ class TransferStreamBuilder(queue: Queue) {
     }
   }
 
-  /*
-   * Kafka Streams supports deserializers for higher-level types than `Array[Byte]`,
-   * but the interface for those serializers doesn't allow for transforming decoding
-   * errors into output messages.
-   *
-   * Since we rely on the agent reporting a status for every message it processes,
-   * we use the lowest-level deserializer at the stream entrypoint, then roll our own
-   * decoding / error handling logic.
-   */
-
-  private val parser = new JawnParser()
-
   private def buildInitStream[In: Decoder, Progress: Encoder](
     builder: StreamsBuilder,
     runner: TransferRunner[In, Progress, _]
@@ -61,44 +53,53 @@ class TransferStreamBuilder(queue: Queue) {
     for {
       Array(failures, successes) <- IO.delay {
         builder
-          .stream[String, Array[Byte]](queue.requestTopic)
-          .mapValues { (id, requestBytes) =>
-            logger.info(s"Received initial transfer request with ID: $id")
+          .stream[Array[Byte], TransferRequest[Json]](queue.requestTopic)
+          .mapValues { transfer =>
+            logger.info(
+              s"Received transfer ${transfer.id} from request ${transfer.requestId}"
+            )
 
-            for {
-              json <- parser.parseByteBuffer(ByteBuffer.wrap(requestBytes))
-              _ = logger.debug(
-                s"Successfully parsed JSON for request $id: ${json.spaces2}"
+            val payload = transfer.transfer
+            logger.debug(
+              s"Attempting to parse payload for ${transfer.id} into expected model: ${payload.spaces2}"
+            )
+
+            val initializedOrError = for {
+              input <- payload.as[In]
+              _ = logger.info(
+                s"Initializing transfer ${transfer.id} from request ${transfer.requestId}"
               )
-              request <- json.as[In]
-              zeroProgress <- Either.catchNonFatal(runner.initialize(request))
+              zeroProgress <- Either.catchNonFatal(runner.initialize(input))
             } yield {
               zeroProgress
             }
+
+            initializedOrError.bimap(
+              err => {
+                val message =
+                  s"Failed to initialize transfer ${transfer.id} from request ${transfer.requestId}"
+                logger.error(err)(message)
+                TransferSummary(
+                  TransferResult.FatalFailure,
+                  UnhandledErrorInfo(message, err.getMessage),
+                  id = transfer.id,
+                  requestId = transfer.requestId
+                )
+              },
+              zero => {
+                logger.info(s"Enqueueing zero progress for transfer ${transfer.id}")
+                TransferProgress(
+                  zero,
+                  id = transfer.id,
+                  requestId = transfer.requestId
+                )
+              }
+            )
           }
           .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
       }
-      _ <- IO.delay {
-        failures.mapValues { (id, wrappedFailure) =>
-          val failure = wrappedFailure.left.get
-
-          val (log, detail) = failure match {
-            case p: ParsingFailure => (ParseFailureMsg, p.message)
-            case e                 => (UnhandledErrMsg, e.getMessage)
-          }
-          logger.error(failure)(log)
-          TransferSummary(
-            TransferResult.FatalFailure,
-            UnhandledErrorInfo(s"Failed to initialize request $id: $log", detail)
-          ).asJson.noSpaces
-        }.to(queue.responseTopic)
-      }
-      _ <- IO.delay {
-        successes.mapValues { (id, s) =>
-          logger.info(s"Enqueueing zero progress for request with ID: $id")
-          s.right.get.asJson.noSpaces
-        }.to(queue.progressTopic)
-      }
+      _ <- IO.delay(failures.mapValues(_.left.get.asJson).to(queue.responseTopic))
+      _ <- IO.delay(successes.mapValues(_.right.get.asJson).to(queue.progressTopic))
     } yield {
       builder
     }
@@ -113,53 +114,53 @@ class TransferStreamBuilder(queue: Queue) {
     for {
       Array(progresses, summaries) <- IO.delay {
         builder
-          .stream[String, Array[Byte]](queue.progressTopic)
-          .mapValues { (id, progressBytes) =>
-            logger.info(s"Received incremental progress for ID: $id")
-
-            val runStep = for {
-              json <- parser.parseByteBuffer(ByteBuffer.wrap(progressBytes))
-              _ = logger.debug(s"Successfully parsed progress $id: ${json.spaces2}")
-              progress <- json.as[Progress]
-              _ = logger.debug(s"Running next step of $id: ${json.spaces2}")
-              stepResult <- Either.catchNonFatal(runner.step(progress))
-              _ = logger.info(s"Successfully ran transfer step for request $id")
-            } yield {
-              stepResult
-            }
-
-            runStep.fold(
-              failure => {
-                val (log, detail) = failure match {
-                  case p: ParsingFailure => (ParseFailureMsg, p.message)
-                  case e                 => (UnhandledErrMsg, e.getMessage)
-                }
-
-                logger.error(failure)(log)
-
-                Either.right(
-                  TransferSummary(
-                    TransferResult.FatalFailure,
-                    UnhandledErrorInfo(
-                      s"Failed to run step on request $id: $log",
-                      detail
-                    ).asJson
-                  )
-                )
-              },
-              _.map(out => TransferSummary(TransferResult.Success, out.asJson))
+          .stream[Array[Byte], TransferProgress[Progress]](queue.progressTopic)
+          .mapValues { progress =>
+            logger.info(
+              s"Received incremental progress for transfer ${progress.id} from request ${progress.requestId}"
             )
+
+            Either
+              .catchNonFatal(runner.step(progress.progress))
+              .fold(
+                err => {
+                  val message =
+                    s"Failed to run step on transfer ${progress.id} from request ${progress.requestId}"
+                  logger.error(err)(message)
+                  val errSummary = TransferSummary(
+                    TransferResult.FatalFailure,
+                    UnhandledErrorInfo(message, err.getMessage).asJson,
+                    id = progress.id,
+                    requestId = progress.requestId
+                  )
+                  Either.right(errSummary)
+                },
+                nextStepOrOutput => {
+                  logger.info(
+                    s"Successfully ran transfer step for ${progress.id} from request ${progress.requestId}"
+                  )
+                  nextStepOrOutput.bimap(
+                    nextStep =>
+                      TransferProgress(
+                        nextStep,
+                        id = progress.id,
+                        requestId = progress.requestId
+                      ),
+                    output =>
+                      TransferSummary(
+                        TransferResult.Success,
+                        output.asJson,
+                        id = progress.id,
+                        requestId = progress.requestId
+                      )
+                  )
+                }
+              )
           }
           .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
       }
-      _ <- IO.delay {
-        progresses
-          .mapValues(p => p.left.get.asJson.noSpaces)
-          .to(queue.progressTopic)
-      }
-      _ <- IO.delay {
-        summaries.mapValues(_.right.get.asJson.noSpaces).to(queue.responseTopic)
-      }
+      _ <- IO.delay(progresses.mapValues(_.left.get.asJson).to(queue.progressTopic))
+      _ <- IO.delay(summaries.mapValues(_.right.get.asJson).to(queue.responseTopic))
     } yield {
       builder
     }
@@ -172,17 +173,18 @@ class TransferStreamBuilder(queue: Queue) {
   */
 object TransferStreamBuilder {
 
-  /**
-    * Error message returned to the manager when a non-JSON request is found
-    * on the request topic of a Transporter queue.
-    */
-  private val ParseFailureMsg = "Could not parse request as JSON"
+  private[this] val parser = new JawnParser()
 
-  /**
-    * Error message returned to the manager when an exception is raised by
-    * the Runner while trying to execute a received request.
-    */
-  private val UnhandledErrMsg = "Unhandled exception during transfer execution"
+  implicit def jsonSerde[A >: Null: Encoder: Decoder]: Serde[A] = Serdes.fromFn[A](
+    (message: A) => message.asJson.noSpaces.getBytes,
+    (bytes: Array[Byte]) =>
+      parser
+        .decodeByteBuffer[A](ByteBuffer.wrap(bytes))
+        .fold(
+          err => throw new SerializationException(err),
+          Some(_)
+        )
+  )
 
   /** Model used for capturing errors caught by the agent framework. */
   private[kafka] case class UnhandledErrorInfo(message: String, detail: String)

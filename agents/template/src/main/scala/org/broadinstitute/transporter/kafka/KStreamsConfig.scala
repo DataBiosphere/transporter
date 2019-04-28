@@ -3,6 +3,7 @@ package org.broadinstitute.transporter.kafka
 import java.util.Properties
 
 import org.apache.kafka.streams.StreamsConfig
+import org.apache.kafka.streams.errors.LogAndFailExceptionHandler
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
@@ -20,7 +21,16 @@ case class KStreamsConfig(applicationId: String, bootstrapServers: List[String])
   private[kafka] def asMap: Map[String, String] = Map(
     StreamsConfig.APPLICATION_ID_CONFIG -> applicationId,
     StreamsConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers.mkString(","),
-    StreamsConfig.PROCESSING_GUARANTEE_CONFIG -> StreamsConfig.EXACTLY_ONCE
+    StreamsConfig.PROCESSING_GUARANTEE_CONFIG -> StreamsConfig.EXACTLY_ONCE,
+    /*
+     * Kafka comes with two built-in mechanisms for handling messages of an unexpected
+     * shape in stream input: skip the malformed input, or halt processing with an error.
+     * We never want to lose track of a submitted transfer, so we use the halt-on-error
+     * approach to force us to deal with schema mismatches.
+     */
+    StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG -> classOf[
+      LogAndFailExceptionHandler
+    ].getName
   )
 
   /** Convert this config to the properties required by Kafka's Java API. */
