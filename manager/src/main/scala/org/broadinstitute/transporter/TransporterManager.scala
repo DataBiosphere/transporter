@@ -12,19 +12,13 @@ import org.broadinstitute.transporter.web.{
   WebConfig
 }
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.{
-  AdminClient,
-  KafkaConsumer,
-  KafkaProducer,
-  Serdes
-}
+import org.broadinstitute.transporter.kafka.{AdminClient, KafkaConsumer, Serdes}
 import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.kafka.config.KafkaConfig
 import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.{
   ResultListener,
   TransferController,
-  TransferRequest,
   TransferSummary
 }
 import org.http4s.HttpApp
@@ -96,10 +90,6 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       // across controllers in the app.
       dbClient <- DbClient.resource(config.db, blockingEc)
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
-      producer <- KafkaProducer.resource(
-        config.kafka,
-        Serdes.encodingSerializer[TransferRequest[Json]]
-      )
       consumer <- KafkaConsumer.resource(
         s"${KafkaConfig.ResponseTopicPrefix}.+".r,
         config.kafka,
@@ -111,7 +101,7 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
         new InfoRoutes(new InfoController(info.version, dbClient, adminClient)),
         new ApiRoutes(
           queueController,
-          TransferController(queueController, dbClient, producer)
+          TransferController(queueController, dbClient)
         )
       )
       val appRoutes = SwaggerMiddleware(routes, info, blockingEc).orNotFound

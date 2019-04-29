@@ -62,17 +62,13 @@ trait DbClient {
   def lookupQueue(name: String): IO[Option[(UUID, Queue)]]
 
   /**
-    * Insert a top-level "transfer request" row and corresponding
-    * per-request "transfer" rows into the DB, and return the generated
-    * unique IDs.
+    * Insert a top-level "transfer request" row and corresponding per-request "transfer"
+    * rows into the DB, returning the unique ID of the request.
     *
     * @param queueId ID of the queue to associate with the top-level transfer
     * @param request top-level description of the batch request to insert
     */
-  def recordTransferRequest(
-    queueId: UUID,
-    request: BulkRequest
-  ): IO[(UUID, List[(UUID, Json)])]
+  def recordTransferRequest(queueId: UUID, request: BulkRequest): IO[UUID]
 
   /** Fetch summary info for transfers in a request, grouped by current status. */
   def summarizeTransfersByStatus(
@@ -93,12 +89,6 @@ trait DbClient {
     requestId: UUID,
     transferId: UUID
   ): IO[Option[TransferDetails]]
-
-  /**
-    * Delete the top-level description, and individual transfer descriptions,
-    * of a batch transfer request.
-    */
-  def deleteTransferRequest(id: UUID): IO[Unit]
 
   /**
     * Update the current view of the status of a set of in-flight transfers
@@ -246,19 +236,20 @@ object DbClient extends PostgresInstances with JsonInstances {
         .option
         .transact(transactor)
 
-    override def recordTransferRequest(
-      queueId: UUID,
-      request: BulkRequest
-    ): IO[(UUID, List[(UUID, Json)])] = {
+    override def recordTransferRequest(queueId: UUID, request: BulkRequest): IO[UUID] = {
       val requestId = UUID.randomUUID()
-      val transfersById = request.transfers.map(UUID.randomUUID() -> _)
-
-      for {
-        now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
-        _ <- insertRequest(queueId, requestId, transfersById, now).transact(transactor)
-      } yield {
-        (requestId, transfersById)
+      val transferInfo = request.transfers.map { body =>
+        (UUID.randomUUID(), requestId, TransferStatus.Pending: TransferStatus, body)
       }
+
+      val insertRequest =
+        sql"insert into transfer_requests (id, queue_id) values ($requestId, $queueId)".update.run.void
+
+      val insertTransfers = Update[(UUID, UUID, TransferStatus, Json)](
+        "insert into transfers (id, request_id, status, body) values (?, ?, ?, ?)"
+      ).updateMany(transferInfo).void
+
+      insertRequest.flatMap(_ => insertTransfers).transact(transactor).as(requestId)
     }
 
     override def summarizeTransfersByStatus(
@@ -309,10 +300,6 @@ object DbClient extends PostgresInstances with JsonInstances {
         .option
         .transact(transactor)
 
-    override def deleteTransferRequest(id: UUID): IO[Unit] =
-      sql"""delete from transfer_requests where id = $id""".update.run.void
-        .transact(transactor)
-
     override def updateTransfers(summaries: List[TransferSummary[Json]]): IO[Unit] =
       for {
         now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
@@ -338,33 +325,6 @@ object DbClient extends PostgresInstances with JsonInstances {
            |set status = ?, info = ?, updated_at = ${timestampSql(nowMillis)}
            |where id = ? and request_id = ?""".stripMargin
       ).updateMany(newStatuses).void
-    }
-
-    /**
-      * Build a transaction which will insert all of the rows (top-level and individual)
-      * associated with a batch of transfer requests.
-      */
-    private def insertRequest(
-      queueId: UUID,
-      requestId: UUID,
-      transfersById: List[(UUID, Json)],
-      nowMillis: Long
-    ): ConnectionIO[Unit] = {
-      val insertRequest =
-        sql"insert into transfer_requests (id, queue_id) values ($requestId, $queueId)".update.run.void
-
-      val insertTransfers = Update[(UUID, Json)](
-        s"""insert into transfers (id, request_id, status, body, info, submitted_at) values (
-          ?,
-          '$requestId',
-          '${TransferStatus.Submitted.entryName.toLowerCase}',
-          ?,
-          NULL,
-          ${timestampSql(nowMillis)}
-        )"""
-      ).updateMany(transfersById).void
-
-      insertRequest.flatMap(_ => insertTransfers)
     }
 
     private def timestampSql(millis: Long): String =

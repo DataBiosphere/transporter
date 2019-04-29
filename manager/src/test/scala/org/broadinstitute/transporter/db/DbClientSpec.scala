@@ -1,15 +1,16 @@
 package org.broadinstitute.transporter.db
 
+import java.sql.Timestamp
 import java.time.{Instant, OffsetDateTime, ZoneId}
 import java.util.UUID
 
-import cats.data.NonEmptyList
 import cats.effect.concurrent.Ref
 import cats.effect.{Clock, ContextShift, IO}
 import cats.implicits._
-import doobie._
 import doobie.implicits._
+import doobie.util.Put
 import doobie.util.transactor.Transactor
+import doobie.util.update.Update
 import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
@@ -20,11 +21,7 @@ import org.broadinstitute.transporter.transfer.api.{
   TransferDetails,
   TransferMessage
 }
-import org.broadinstitute.transporter.transfer.{
-  TransferResult,
-  TransferStatus,
-  TransferSummary
-}
+import org.broadinstitute.transporter.transfer.TransferStatus
 import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
@@ -59,6 +56,16 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
       container.username,
       password
     )
+
+  private def odt(epochMillis: Long): OffsetDateTime =
+    OffsetDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.of("UTC"))
+
+  implicit val odtPut: Put[OffsetDateTime] = Put[Timestamp].contramap { odt =>
+    Timestamp.from(odt.toInstant)
+  }
+  // Work-around for a compiler bug: scalac doesn't believe the implicit is used for
+  // some reason, but when it's removed the downstream derivation steps fail.
+  private val _ = odtPut
 
   private val schema = json"{}".as[QueueSchema].right.value
   private val queue = Queue("test-queue", "requests", "progress", "responses", schema)
@@ -113,7 +120,7 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     client.deleteQueue(queueId).unsafeRunSync()
   }
 
-  it should "record and delete new transfer requests under a queue" in {
+  it should "record new transfer requests under a queue" in {
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
@@ -129,98 +136,31 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     val checks = for {
       _ <- client.createQueue(queueId, queue)
       (initReqs, initTransfers) <- countsQuery.transact(transactor)
-      (requestId, _) <- client.recordTransferRequest(queueId, requests)
+      requestId <- client.recordTransferRequest(queueId, requests)
       (postReqs, postTransfers) <- countsQuery.transact(transactor)
-      _ <- client.deleteTransferRequest(requestId)
-      (finalReqs, finalTransfers) <- countsQuery.transact(transactor)
+      statuses <- sql"select distinct status from transfers where request_id = $requestId"
+        .query[TransferStatus]
+        .to[Set]
+        .transact(transactor)
     } yield {
       initReqs shouldBe 0
       initTransfers shouldBe 0
       postReqs shouldBe 1
       postTransfers shouldBe 10
-      finalReqs shouldBe 0
-      finalTransfers shouldBe 0
+
+      statuses shouldBe Set(TransferStatus.Pending)
     }
 
     checks.unsafeRunSync()
   }
 
-  it should "add submission times to new transfers" in {
+  private val fakeSubmit = Update[(TransferStatus, OffsetDateTime, UUID)](
+    "update transfers set status = ?, submitted_at = ? where id = ?"
+  )
 
-    val transactor = testTransactor(container.password)
-    val client = new DbClient.Impl(transactor)
-
-    val request = BulkRequest(List.fill(10)(json"{}"))
-
-    val checks = for {
-      _ <- client.createQueue(queueId, queue)
-      (_, reqs) <- client.recordTransferRequest(queueId, request)
-      ids <- NonEmptyList
-        .fromList(reqs.map(_._1))
-        .liftTo[IO](new IllegalStateException("No IDs returned"))
-      submitTimes <- Fragments
-        .in(fr"select submitted_at from transfers where id", ids)
-        .query[OffsetDateTime]
-        .to[List]
-        .transact(transactor)
-    } yield {
-      submitTimes.map(_.toInstant) shouldBe List.fill(10)(Instant.ofEpochMilli(initNow))
-    }
-
-    checks.unsafeRunSync()
-  }
-
-  it should "update recorded status, info, and updated times for transfers" in {
-    val transactor = testTransactor(container.password)
-    val client = new DbClient.Impl(transactor)
-
-    val request = BulkRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
-
-    val checks = for {
-      // Setup rows for request.
-      _ <- client.createQueue(queueId, queue)
-      (reqId, reqs) <- client.recordTransferRequest(queueId, request)
-      query = sql"""select id, status, info, updated_at from transfers where request_id = $reqId"""
-        .query[(UUID, TransferStatus, Option[Json], Option[OffsetDateTime])]
-        .to[List]
-        .transact(transactor)
-
-      // Get "before" info.
-      preInfo <- query
-
-      // Run a fake update on parts of the request.
-      results = reqs.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 == 0 =>
-          TransferSummary(
-            TransferResult.values(i % 2),
-            json"""{ "i+1": ${i + 1} }""",
-            id,
-            reqId
-          )
-      }
-      _ <- client.updateTransfers(results)
-
-      // Get "after" info.
-      postInfo <- query
-    } yield {
-      // IDs should match before and after update.
-      preInfo.map(_._1) should contain theSameElementsAs postInfo.map(_._1)
-
-      // Statuses, infos, and update times should have been updated.
-      preInfo.map(_._2).toSet should contain only TransferStatus.Submitted
-      postInfo.map(_._2).toSet should contain theSameElementsAs TransferStatus.values
-
-      preInfo.flatMap(_._3) shouldBe empty
-      postInfo.flatMap(_._3) should contain theSameElementsAs results.map(_.info)
-
-      preInfo.flatMap(_._4) shouldBe empty
-      postInfo
-        .flatMap(_._4)
-        .map(_.toInstant) shouldBe Iterable.fill(4)(Instant.ofEpochMilli(initNow + 1))
-    }
-
-    checks.unsafeRunSync()
-  }
+  private val fakeUpdate = Update[(TransferStatus, OffsetDateTime, Json, UUID)](
+    "update transfers set status = ?, updated_at = ?, info = ? where id = ?"
+  )
 
   it should "summarize transfers in a request by status" in {
     val transactor = testTransactor(container.password)
@@ -228,51 +168,52 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
     val request = BulkRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
 
+    val submitTime = odt(initNow)
+    val succeedTime = odt(initNow + 1)
+
     val checks = for {
       _ <- client.createQueue(queueId, queue)
-      (reqId, reqs) <- client.recordTransferRequest(queueId, request)
-      results1 = reqs.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 == 0 =>
-          TransferSummary(
-            TransferResult.values(i % 2),
-            json"""{ "i+1": ${i + 1} }""",
-            id,
-            reqId
-          )
+      reqId <- client.recordTransferRequest(queueId, request)
+      initSummary <- client.summarizeTransfersByStatus(queueId, reqId)
+
+      ids <- sql"select id from transfers where request_id = $reqId"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+
+      submittedIds = ids.zipWithIndex.collect { case (id, i) if i % 2 == 0 => id }
+      _ <- fakeSubmit
+        .updateMany(
+          submittedIds.map(i => (TransferStatus.Submitted: TransferStatus, submitTime, i))
+        )
+        .void
+        .transact(transactor)
+      submitSummary <- client.summarizeTransfersByStatus(queueId, reqId)
+
+      succeededIds = submittedIds.zipWithIndex.collect {
+        case (id, i) if i % 2 == 0 => id
       }
-      _ <- client.updateTransfers(results1)
-      results2 = reqs.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 == 2 =>
-          TransferSummary(
-            TransferResult.values(i % 2),
-            json"""{ "i+1": ${i + 1} }""",
-            id,
-            reqId
-          )
-      }
-      _ <- client.updateTransfers(results2)
-      summary <- client.summarizeTransfersByStatus(queueId, reqId)
+      _ <- fakeUpdate
+        .updateMany(
+          succeededIds.map { i =>
+            (TransferStatus.Succeeded: TransferStatus, succeedTime, json"$i", i)
+          }
+        )
+        .void
+        .transact(transactor)
+      succeedSummary <- client.summarizeTransfersByStatus(queueId, reqId)
+
     } yield {
-      summary.keySet shouldBe TransferStatus.values.toSet
-
-      val (submittedCount, firstSubmittedSubmission, lastSubmittedUpdated) =
-        summary(TransferStatus.Submitted)
-      val (succeededCount, firstSucceededSubmitted, lastSucceededUpdated) =
-        summary(TransferStatus.Succeeded)
-      val (failedCount, firstFailedSubmitted, lastFailedUpdated) =
-        summary(TransferStatus.Failed)
-
-      submittedCount shouldBe 3
-      succeededCount shouldBe 4
-      failedCount shouldBe 3
-
-      Set(firstSubmittedSubmission, firstSucceededSubmitted, firstFailedSubmitted).flatten
-        .map(_.toInstant) shouldBe Set(Instant.ofEpochMilli(initNow))
-
-      lastSubmittedUpdated shouldBe None
-
-      Set(lastSucceededUpdated, lastFailedUpdated).flatten
-        .map(_.toInstant) shouldBe Set(Instant.ofEpochMilli(initNow + 2))
+      initSummary shouldBe Map((TransferStatus.Pending, (10L, None, None)))
+      submitSummary shouldBe Map(
+        (TransferStatus.Pending, (5L, None, None)),
+        (TransferStatus.Submitted, (5L, Some(submitTime), None))
+      )
+      succeedSummary shouldBe Map(
+        (TransferStatus.Pending, (5L, None, None)),
+        (TransferStatus.Submitted, (2L, Some(submitTime), None)),
+        (TransferStatus.Succeeded, (3L, Some(submitTime), Some(succeedTime)))
+      )
     }
 
     checks.unsafeRunSync()
@@ -287,48 +228,31 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     val checks = for {
       // Setup rows for request.
       _ <- client.createQueue(queueId, queue)
-      (reqId, reqs) <- client.recordTransferRequest(queueId, request)
-
-      // Get "before" info.
-      preOutputs <- client.lookupTransferMessages(
+      reqId <- client.recordTransferRequest(queueId, request)
+      initMessages <- client.lookupTransferMessages(
         queueId,
         reqId,
-        TransferStatus.Succeeded
+        TransferStatus.Failed
       )
-      preFailures <- client.lookupTransferMessages(queueId, reqId, TransferStatus.Failed)
 
-      // Run a fake update on parts of the request.
-      results = reqs.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 == 0 =>
-          TransferSummary(
-            TransferResult.values(i % 2),
-            json"""{ "i+1": ${i + 1} }""",
-            id,
-            reqId
-          )
-      }
-      _ <- client.updateTransfers(results)
-
-      // Get "after" info.
-      postOutputs <- client.lookupTransferMessages(
-        queueId,
-        reqId,
-        TransferStatus.Succeeded
-      )
-      postFailures <- client.lookupTransferMessages(queueId, reqId, TransferStatus.Failed)
+      ids <- sql"select id from transfers where request_id = $reqId"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+      _ <- fakeUpdate
+        .updateMany(
+          ids.map { i =>
+            (TransferStatus.Failed: TransferStatus, odt(initNow), json"$i", i)
+          }
+        )
+        .void
+        .transact(transactor)
+      postMessages <- client.lookupTransferMessages(queueId, reqId, TransferStatus.Failed)
     } yield {
-      val succeeded = results.filter(_.result == TransferResult.Success).map { res =>
-        TransferMessage(res.id, res.info)
+      initMessages shouldBe empty
+      postMessages should contain theSameElementsAs ids.map { i =>
+        TransferMessage(i, json"$i")
       }
-      val failed = results.filter(_.result == TransferResult.FatalFailure).map { res =>
-        TransferMessage(res.id, res.info)
-      }
-
-      preOutputs shouldBe empty
-      preFailures shouldBe empty
-
-      postOutputs should contain theSameElementsAs succeeded
-      postFailures should contain theSameElementsAs failed
     }
 
     checks.unsafeRunSync()
@@ -340,36 +264,57 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
     val request = json"""{ "i": 1 }"""
 
+    val submitTime = odt(initNow)
+    val updateTime = odt(initNow + 1)
+
     val checks = for {
       _ <- client.createQueue(queueId, queue)
-      (reqId, List((id, body))) <- client.recordTransferRequest(
-        queueId,
-        BulkRequest(List(request))
-      )
+      reqId <- client.recordTransferRequest(queueId, BulkRequest(List(request)))
+      id <- sql"select id from transfers where request_id = $reqId"
+        .query[UUID]
+        .unique
+        .transact(transactor)
       initDetails <- client.lookupTransferDetails(queueId, reqId, id)
-      result = TransferSummary(TransferResult.Success, json"""{ "i+1": 2 }""", id, reqId)
-      _ <- client.updateTransfers(List(result))
-      postDetails <- client.lookupTransferDetails(queueId, reqId, id)
+
+      _ <- fakeSubmit
+        .run((TransferStatus.Submitted, submitTime, id))
+        .void
+        .transact(transactor)
+      postSubmitDetails <- client.lookupTransferDetails(queueId, reqId, id)
+
+      _ <- fakeUpdate
+        .run((TransferStatus.Succeeded, updateTime, json"1", id))
+        .void
+        .transact(transactor)
+      postUpdateDetails <- client.lookupTransferDetails(queueId, reqId, id)
+
     } yield {
-      def odt(epochMillis: Long): OffsetDateTime =
-        OffsetDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.of("UTC"))
 
       initDetails.value shouldBe TransferDetails(
         id,
-        TransferStatus.Submitted,
+        TransferStatus.Pending,
         request,
-        Some(odt(initNow)),
+        None,
         None,
         None
       )
 
-      postDetails.value shouldBe TransferDetails(
+      postSubmitDetails.value shouldBe TransferDetails(
+        id,
+        TransferStatus.Submitted,
+        request,
+        Some(submitTime),
+        None,
+        None
+      )
+
+      postUpdateDetails.value shouldBe TransferDetails(
         id,
         TransferStatus.Succeeded,
         request,
-        Some(odt(initNow)),
-        Some(odt(initNow + 1)),
-        Some(result.info)
+        Some(submitTime),
+        Some(updateTime),
+        Some(json"1")
       )
     }
 
@@ -384,7 +329,7 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
     val checks = for {
       _ <- client.createQueue(queueId, queue)
-      (reqId, _) <- client.recordTransferRequest(queueId, request)
+      reqId <- client.recordTransferRequest(queueId, request)
       details <- client.lookupTransferDetails(queueId, reqId, UUID.randomUUID())
     } yield {
       details shouldBe None
