@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.transfer.api
 
 import java.time.OffsetDateTime
+import java.util.UUID
 
 import io.circe.Encoder
 import io.circe.derivation.deriveEncoder
@@ -20,6 +21,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   *                  under this request
   */
 case class RequestStatus(
+  id: UUID,
   overallStatus: TransferStatus,
   statusCounts: Map[TransferStatus, Long],
   submittedAt: Option[OffsetDateTime],

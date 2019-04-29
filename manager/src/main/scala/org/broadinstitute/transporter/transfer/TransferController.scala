@@ -14,11 +14,7 @@ import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
-import org.broadinstitute.transporter.transfer.api.{
-  BulkRequest,
-  RequestAck,
-  RequestStatus
-}
+import org.broadinstitute.transporter.transfer.api._
 
 /** Component responsible for handling all transfer-related web requests. */
 trait TransferController {
@@ -40,6 +36,10 @@ trait TransferController {
     *   3. Any "info" messages sent by agents about transfers in the request
     */
   def lookupRequestStatus(queueName: String, requestId: UUID): IO[RequestStatus]
+
+  def lookupRequestOutputs(queueName: String, requestId: UUID): IO[RequestMessages]
+
+  def lookupRequestFailures(queueName: String, requestId: UUID): IO[RequestMessages]
 }
 
 object TransferController {
@@ -117,7 +117,8 @@ object TransferController {
         status <- maybeStatus.liftTo[IO](NoSuchRequest(requestId))
       } yield {
         val flattenedInfo = summariesByStatus.values
-        api.RequestStatus(
+        RequestStatus(
+          requestId,
           status,
           baselineCounts.combine(counts),
           submittedAt = flattenedInfo
@@ -130,6 +131,18 @@ object TransferController {
             .maximumOption
         )
       }
+
+    override def lookupRequestOutputs(
+      queueName: String,
+      requestId: UUID
+    ): IO[RequestMessages] =
+      lookupRequestMessages(queueName, requestId, TransferStatus.Succeeded)
+
+    override def lookupRequestFailures(
+      queueName: String,
+      requestId: UUID
+    ): IO[RequestMessages] =
+      lookupRequestMessages(queueName, requestId, TransferStatus.Failed)
 
     private def getQueueInfo(queueName: String): IO[(UUID, Queue)] =
       for {
@@ -173,6 +186,19 @@ object TransferController {
           logger
             .error(err)(s"Failed to submit request $requestId")
             .flatMap(_ => dbClient.deleteTransferRequest(requestId))
+      }
+
+    private def lookupRequestMessages(
+      queueName: String,
+      requestId: UUID,
+      status: TransferStatus
+    ): IO[RequestMessages] =
+      for {
+        (queueId, _) <- getQueueInfo(queueName)
+        successMessages <- dbClient.lookupTransferMessages(queueId, requestId, status)
+        _ <- IO.raiseError(NoSuchRequest(requestId)).whenA(successMessages.isEmpty)
+      } yield {
+        RequestMessages(requestId, successMessages)
       }
   }
 }

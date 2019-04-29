@@ -7,9 +7,10 @@ import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.queue.api.{Queue, QueueRequest}
 import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.api.{
+  BulkRequest,
   RequestAck,
-  RequestStatus,
-  BulkRequest
+  RequestMessages,
+  RequestStatus
 }
 import org.broadinstitute.transporter.transfer.TransferController
 import org.http4s.circe.{CirceEntityDecoder, CirceInstances}
@@ -28,6 +29,7 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   private implicit val errEncoder: EntityEncoder[IO, ErrorResponse] = jsonEncoderOf
   private implicit val queueEncoder: EntityEncoder[IO, Queue] = jsonEncoderOf
   private implicit val statusEncoder: EntityEncoder[IO, RequestStatus] = jsonEncoderOf
+  private implicit val messagesEncoder: EntityEncoder[IO, RequestMessages] = jsonEncoderOf
 
   /** Build an API route prefix beginning with the given HTTP method. */
   private def api(m: Method) = m / "api" / "transporter" / "v1"
@@ -127,13 +129,31 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   }
 
   lookupRequestOutputs.bindAction { (queueName: String, requestId: UUID) =>
-    val _ = (queueName, requestId)
-    NotFound("o no")
+    transferController
+      .lookupRequestOutputs(queueName, requestId)
+      .attempt
+      .map {
+        case Right(messages) => Ok(messages)
+        case Left(QueueController.NoSuchQueue(_)) =>
+          NotFound(ErrorResponse(s"Queue $queueName does not exist"))
+        case Left(TransferController.NoSuchRequest(_)) =>
+          NotFound(ErrorResponse(s"Request with ID $requestId does not exist"))
+        case Left(err) => ISE(s"Failed to look up outputs for $requestId", err)
+      }
   }
 
   lookupRequestFailures.bindAction { (queueName: String, requestId: UUID) =>
-    val _ = (queueName, requestId)
-    NotFound("o no")
+    transferController
+      .lookupRequestFailures(queueName, requestId)
+      .attempt
+      .map {
+        case Right(messages) => Ok(messages)
+        case Left(QueueController.NoSuchQueue(_)) =>
+          NotFound(ErrorResponse(s"Queue $queueName does not exist"))
+        case Left(TransferController.NoSuchRequest(_)) =>
+          NotFound(ErrorResponse(s"Request with ID $requestId does not exist"))
+        case Left(err) => ISE(s"Failed to look up failures for $requestId", err)
+      }
   }
 
   lookupTransferDetail.bindAction {

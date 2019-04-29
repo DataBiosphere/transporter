@@ -21,7 +21,7 @@ import org.broadinstitute.transporter.db.config.DbConfig
 import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer._
-import org.broadinstitute.transporter.transfer.api.BulkRequest
+import org.broadinstitute.transporter.transfer.api.{BulkRequest, TransferMessage}
 
 import scala.concurrent.ExecutionContext
 
@@ -75,6 +75,12 @@ trait DbClient {
     queueId: UUID,
     requestId: UUID
   ): IO[Map[TransferStatus, (Long, Option[OffsetDateTime], Option[OffsetDateTime])]]
+
+  def lookupTransferMessages(
+    queueId: UUID,
+    requestId: UUID,
+    status: TransferStatus
+  ): IO[List[TransferMessage]]
 
   /**
     * Delete the top-level description, and individual transfer descriptions,
@@ -247,7 +253,6 @@ object DbClient extends PostgresInstances with JsonInstances {
       queueId: UUID,
       requestId: UUID
     ): IO[Map[TransferStatus, (Long, Option[OffsetDateTime], Option[OffsetDateTime])]] =
-      // 'coalesce' needed to strip the nulls out of the results.
       sql"""select t.status, count(*), min(t.submitted_at), max(t.updated_at)
             from transfers t
             left join transfer_requests r on t.request_id = r.id
@@ -262,6 +267,20 @@ object DbClient extends PostgresInstances with JsonInstances {
           case (status, count, firstSubmitted, lastUpdated) =>
             (status, (count, firstSubmitted, lastUpdated))
         }.toMap)
+        .transact(transactor)
+
+    override def lookupTransferMessages(
+      queueId: UUID,
+      requestId: UUID,
+      status: TransferStatus
+    ): IO[List[TransferMessage]] =
+      sql"""select t.id, t.info
+            from transfers t
+            left join transfer_requests r on t.request_id = r.id
+            left join queues q on r.queue_id = q.id
+            where q.id = $queueId and r.id = $requestId and t.status = $status and t.info is not null"""
+        .query[TransferMessage]
+        .to[List]
         .transact(transactor)
 
     override def deleteTransferRequest(id: UUID): IO[Unit] =
