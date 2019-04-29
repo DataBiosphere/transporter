@@ -68,7 +68,11 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
   private val _ = odtPut
 
   private val schema = json"{}".as[QueueSchema].right.value
-  private val queue = Queue("test-queue", "requests", "progress", "responses", schema)
+  private val queue = Queue("test-queue", "requests", "progress", "responses", schema, 2)
+  private val queue2 = queue.copy(
+    schema = json"""{ "type": "object" }""".as[QueueSchema].right.value,
+    maxConcurrentTransfers = 1
+  )
   private val queueId = UUID.randomUUID()
 
   behavior of "DbClient"
@@ -83,7 +87,7 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     client.checkReady.unsafeRunSync() shouldBe false
   }
 
-  it should "create, look up, and delete transfer queues" in {
+  it should "create, look up, update, and delete transfer queues" in {
 
     val client = new DbClient.Impl(testTransactor(container.password))
 
@@ -91,14 +95,26 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
       res <- client.lookupQueue(queue.name)
       _ <- client.createQueue(queueId, queue)
       res2 <- client.lookupQueue(queue.name)
-      _ <- client.deleteQueue(queueId)
+      (outId, outQueue) = res2.value
+      _ <- client.patchQueueParameters(
+        outId,
+        queue2.schema,
+        queue2.maxConcurrentTransfers
+      )
       res3 <- client.lookupQueue(queue.name)
+      (updatedId, updatedQueue) = res3.value
+      _ <- client.deleteQueue(queueId)
+      res4 <- client.lookupQueue(queue.name)
     } yield {
       res shouldBe None
-      val (outId, outQueue) = res2.value
+
       outId shouldBe queueId
       outQueue shouldBe queue
-      res3 shouldBe None
+
+      updatedId shouldBe queueId
+      updatedQueue shouldBe queue2
+
+      res4 shouldBe None
     }
 
     check.unsafeRunSync()

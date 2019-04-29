@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="6" author="danmoran">
+
+        <!-- Add the column as nullable to start for backwards-compat. -->
+        <addColumn tableName="queues">
+            <column name="max_in_flight" type="integer" />
+        </addColumn>
+
+        <!--
+            Fill in the column with the conventional pattern the app will use.
+            Use max int to simulate being effectively unbounded.
+        -->
+        <sql>
+            UPDATE queues SET max_in_flight = 2147483647
+        </sql>
+
+        <!-- Lock down nullability. -->
+        <addNotNullConstraint tableName="queues" columnName="max_in_flight" />
+
+        <rollback>
+            <dropColumn tableName="queues" columnName="max_in_flight" />
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>

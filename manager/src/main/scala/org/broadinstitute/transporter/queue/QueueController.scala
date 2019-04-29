@@ -3,11 +3,12 @@ package org.broadinstitute.transporter.queue
 import java.util.UUID
 
 import cats.effect.{ExitCase, IO}
+import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
 import org.broadinstitute.transporter.kafka.config.KafkaConfig
-import org.broadinstitute.transporter.queue.api.{Queue, QueueRequest}
+import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRequest}
 
 /** Component responsible for handling all queue-related web requests. */
 trait QueueController {
@@ -20,6 +21,9 @@ trait QueueController {
     * with a name that's already registered in the DB.
     */
   def createQueue(request: QueueRequest): IO[Queue]
+
+  /** Update the runtime parameters of an existing queue. */
+  def patchQueue(name: String, newParameters: QueueParameters): IO[Queue]
 
   /**
     * Fetch the queue model with the given name, if it exists
@@ -56,6 +60,11 @@ object QueueController {
   case class QueueAlreadyExists(name: String)
       extends IllegalArgumentException(s"Queue '$name' already exists")
 
+  case class InvalidQueueParameter(name: String, message: String)
+      extends IllegalArgumentException(
+        s"Invalid parameter given for queue '$name': $message"
+      )
+
   /**
     * Concrete implementation of the controller used by mainline code.
     *
@@ -79,7 +88,12 @@ object QueueController {
               _ <- logger.warn(
                 s"Attempting to correct inconsistent state for queue: $name"
               )
-              _ <- dbClient.patchQueueSchema(id, request.schema)
+              _ <- checkConcurrencyValid(request.name, request.maxConcurrentTransfers)
+              _ <- dbClient.patchQueueParameters(
+                id,
+                request.schema,
+                request.maxConcurrentTransfers
+              )
               _ <- kafkaClient.createTopics(
                 queue.requestTopic,
                 queue.progressTopic,
@@ -89,14 +103,30 @@ object QueueController {
               queue.copy(schema = request.schema)
             }
           case (None, _) =>
-            logger
-              .info(s"Initializing resources for queue ${request.name}")
-              .flatMap(_ => initializeQueue(request))
+            for {
+              _ <- checkConcurrencyValid(request.name, request.maxConcurrentTransfers)
+              _ <- logger.info(s"Initializing resources for queue ${request.name}")
+              initialized <- initializeQueue(request)
+            } yield initialized
         }
       } yield {
         queue
       }
     }
+
+    override def patchQueue(name: String, newParameters: QueueParameters): IO[Queue] =
+      for {
+        maybeInfo <- lookupQueueInfo(name)
+        (id, queue) <- maybeInfo.liftTo[IO](NoSuchQueue(name))
+        updatedQueue = queue.copy(
+          schema = newParameters.schema.getOrElse(queue.schema),
+          maxConcurrentTransfers =
+            newParameters.maxConcurrentTransfers.getOrElse(queue.maxConcurrentTransfers)
+        )
+        _ <- dbClient.patchQueueParameters(id, queue.schema, queue.maxConcurrentTransfers)
+      } yield {
+        updatedQueue
+      }
 
     override def lookupQueueInfo(name: String): IO[Option[(UUID, Queue)]] =
       for {
@@ -138,6 +168,12 @@ object QueueController {
         (queueInfo, topicsExist)
       }
 
+    private def checkConcurrencyValid(queueName: String, concurrency: Int): IO[Unit] =
+      IO.raiseError(
+          InvalidQueueParameter(queueName, "Max concurrent requests must be non-negative")
+        )
+        .whenA(concurrency < 0)
+
     /**
       * Initialize resources for a new queue matching the parameters
       * of the given request, returning all data for the new resource
@@ -162,7 +198,8 @@ object QueueController {
         requestTopic = s"${KafkaConfig.RequestTopicPrefix}$uuid",
         progressTopic = s"${KafkaConfig.ProgressTopicPrefix}$uuid",
         responseTopic = s"${KafkaConfig.ResponseTopicPrefix}$uuid",
-        schema = request.schema
+        schema = request.schema,
+        maxConcurrentTransfers = request.maxConcurrentTransfers
       )
 
       for {

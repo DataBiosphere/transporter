@@ -18,13 +18,16 @@ import org.broadinstitute.transporter.queue.QueueSchema
   *                      transfer summaries for transfers in this queue
   * @param schema JSON schema which Transporter should enforce for all new
   *               requests submitted to this transfer stream
+  * @param maxConcurrentTransfers maximum number of transfers in this queue which
+  *                               will be distributed to agents at a time
   */
 case class Queue(
   name: String,
   requestTopic: String,
   progressTopic: String,
   responseTopic: String,
-  schema: QueueSchema
+  schema: QueueSchema,
+  maxConcurrentTransfers: Int
 )
 
 object Queue {

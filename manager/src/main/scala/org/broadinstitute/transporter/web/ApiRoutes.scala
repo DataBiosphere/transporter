@@ -4,7 +4,7 @@ import java.util.UUID
 
 import cats.effect.IO
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.broadinstitute.transporter.queue.api.{Queue, QueueRequest}
+import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRequest}
 import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.TransferController
@@ -21,11 +21,11 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   private val log = Slf4jLogger.getLogger[IO]
 
   private implicit val ackEncoder: EntityEncoder[IO, RequestAck] = jsonEncoderOf
+  private implicit val detailsEncoder: EntityEncoder[IO, TransferDetails] = jsonEncoderOf
   private implicit val errEncoder: EntityEncoder[IO, ErrorResponse] = jsonEncoderOf
+  private implicit val messagesEncoder: EntityEncoder[IO, RequestMessages] = jsonEncoderOf
   private implicit val queueEncoder: EntityEncoder[IO, Queue] = jsonEncoderOf
   private implicit val statusEncoder: EntityEncoder[IO, RequestStatus] = jsonEncoderOf
-  private implicit val messagesEncoder: EntityEncoder[IO, RequestMessages] = jsonEncoderOf
-  private implicit val detailsEncoder: EntityEncoder[IO, TransferDetails] = jsonEncoderOf
 
   /** Build an API route prefix beginning with the given HTTP method. */
   private def api(m: Method) = m / "api" / "transporter" / "v1"
@@ -44,6 +44,9 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
 
   private val createQueue = (api(POST) / "queues")
     .withDescription("Create a new queue of transfer requests")
+
+  private val patchQueue = (api(PATCH) / "queues" / pathVar[String]("name"))
+    .withDescription("Update paramaters of an existing queue")
 
   private val lookupQueue = (api(GET) / "queues" / pathVar[String]("name"))
     .withDescription("Fetch information about an existing queue")
@@ -83,7 +86,21 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
         case Right(queue) => Ok(queue)
         case Left(e: QueueController.QueueAlreadyExists) =>
           Conflict(ErrorResponse(e.getMessage))
+        case Left(e: QueueController.InvalidQueueParameter) =>
+          BadRequest(ErrorResponse(e.getMessage))
         case Left(err) => ISE(s"Failed to create queue ${request.name}", err)
+      }
+  }
+
+  patchQueue.decoding(EntityDecoder[IO, QueueParameters]).bindAction {
+    (name: String, params: QueueParameters) =>
+      queueController.patchQueue(name, params).attempt.map {
+        case Right(queue) => Ok(queue)
+        case Left(e: QueueController.NoSuchQueue) =>
+          NotFound(ErrorResponse(e.getMessage))
+        case Left(e: QueueController.InvalidQueueParameter) =>
+          BadRequest(ErrorResponse(e.getMessage))
+        case Left(err) => ISE(s"Failed to update parameters for queue $name", err)
       }
   }
 
@@ -100,12 +117,10 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
     (name: String, request: BulkRequest) =>
       transferController.submitTransfer(name, request).attempt.map {
         case Right(ack) => Ok(ack)
-        case Left(QueueController.NoSuchQueue(_)) =>
-          NotFound(ErrorResponse(s"Queue $name does not exist"))
-        case Left(TransferController.InvalidRequest(_)) =>
-          BadRequest(
-            ErrorResponse(s"Submission does not match expected schema for queue $name")
-          )
+        case Left(e: QueueController.NoSuchQueue) =>
+          NotFound(ErrorResponse(e.getMessage))
+        case Left(e: TransferController.InvalidRequest) =>
+          BadRequest(ErrorResponse(e.getMessage))
         case Left(err) => ISE(s"Failed to submit request to $name", err)
       }
   }

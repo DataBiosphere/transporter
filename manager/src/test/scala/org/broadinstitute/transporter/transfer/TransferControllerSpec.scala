@@ -35,7 +35,7 @@ class TransferControllerSpec
   private val progressTopic = "progress"
   private val resTopic = "results"
   private val schema = json"""{ "type": "object" }""".as[QueueSchema].right.value
-  private val queue = Queue(queueName, reqTopic, progressTopic, resTopic, schema)
+  private val queue = Queue(queueName, reqTopic, progressTopic, resTopic, schema, 2)
   private val queueInfo = (queueId, queue)
 
   private val goodRequest = BulkRequest(

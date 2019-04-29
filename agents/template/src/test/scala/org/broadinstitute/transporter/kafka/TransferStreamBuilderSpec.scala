@@ -38,7 +38,8 @@ class TransferStreamBuilderSpec
     "request-topic",
     "progress-topic",
     "response-topic",
-    LoopSchema.as[QueueSchema].right.value
+    LoopSchema.as[QueueSchema].right.value,
+    2
   )
 
   private val builder = new TransferStreamBuilder(queue)
