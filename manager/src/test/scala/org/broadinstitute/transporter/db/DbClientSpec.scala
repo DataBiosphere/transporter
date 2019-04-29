@@ -1,6 +1,6 @@
 package org.broadinstitute.transporter.db
 
-import java.time.{Instant, OffsetDateTime}
+import java.time.{Instant, OffsetDateTime, ZoneId}
 import java.util.UUID
 
 import cats.data.NonEmptyList
@@ -15,7 +15,11 @@ import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.queue.api.Queue
-import org.broadinstitute.transporter.transfer.api.{BulkRequest, TransferMessage}
+import org.broadinstitute.transporter.transfer.api.{
+  BulkRequest,
+  TransferDetails,
+  TransferMessage
+}
 import org.broadinstitute.transporter.transfer.{
   TransferResult,
   TransferStatus,
@@ -72,7 +76,7 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     client.checkReady.unsafeRunSync() shouldBe false
   }
 
-  it should "create, lookup, and delete transfer queues" in {
+  it should "create, look up, and delete transfer queues" in {
 
     val client = new DbClient.Impl(testTransactor(container.password))
 
@@ -274,7 +278,7 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     checks.unsafeRunSync()
   }
 
-  it should "lookup messages for transfers with a certain status" in {
+  it should "look up messages for transfers with a certain status" in {
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
 
@@ -325,6 +329,65 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
       postOutputs should contain theSameElementsAs succeeded
       postFailures should contain theSameElementsAs failed
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "look up details for transfers" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = json"""{ "i": 1 }"""
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      (reqId, List((id, body))) <- client.recordTransferRequest(
+        queueId,
+        BulkRequest(List(request))
+      )
+      initDetails <- client.lookupTransferDetails(queueId, reqId, id)
+      result = TransferSummary(TransferResult.Success, json"""{ "i+1": 2 }""", id, reqId)
+      _ <- client.updateTransfers(List(result))
+      postDetails <- client.lookupTransferDetails(queueId, reqId, id)
+    } yield {
+      def odt(epochMillis: Long): OffsetDateTime =
+        OffsetDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.of("UTC"))
+
+      initDetails.value shouldBe TransferDetails(
+        id,
+        TransferStatus.Submitted,
+        request,
+        Some(odt(initNow)),
+        None,
+        None
+      )
+
+      postDetails.value shouldBe TransferDetails(
+        id,
+        TransferStatus.Succeeded,
+        request,
+        Some(odt(initNow)),
+        Some(odt(initNow + 1)),
+        Some(result.info)
+      )
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "not fail if querying details for a nonexistent transfer" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List(json"""{ "i": 1 }"""))
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      (reqId, _) <- client.recordTransferRequest(queueId, request)
+      details <- client.lookupTransferDetails(queueId, reqId, UUID.randomUUID())
+    } yield {
+      details shouldBe None
     }
 
     checks.unsafeRunSync()

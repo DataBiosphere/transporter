@@ -15,6 +15,7 @@ import org.broadinstitute.transporter.transfer.api.{
   RequestAck,
   RequestMessages,
   RequestStatus,
+  TransferDetails,
   TransferMessage
 }
 import org.scalamock.scalatest.MockFactory
@@ -140,7 +141,9 @@ class TransferControllerSpec
     controller
       .lookupRequestStatus(queueName, requestId)
       .attempt
-      .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
+      .unsafeRunSync() shouldBe Left(
+      TransferController.NoSuchRequest(queueName, requestId)
+    )
   }
 
   it should "return an error if looking up summaries for an unregistered queue name" in {
@@ -287,7 +290,9 @@ class TransferControllerSpec
     controller
       .lookupRequestOutputs(queueName, requestId)
       .attempt
-      .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
+      .unsafeRunSync() shouldBe Left(
+      TransferController.NoSuchRequest(queueName, requestId)
+    )
   }
 
   it should "return an error if looking up failures for an ID with no registered transfers" in {
@@ -301,7 +306,9 @@ class TransferControllerSpec
     controller
       .lookupRequestFailures(queueName, requestId)
       .attempt
-      .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
+      .unsafeRunSync() shouldBe Left(
+      TransferController.NoSuchRequest(queueName, requestId)
+    )
   }
 
   it should "return an error if looking up outputs for an unregistered queue name" in {
@@ -324,5 +331,57 @@ class TransferControllerSpec
       .lookupRequestFailures(queueName, requestId)
       .attempt
       .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+  }
+
+  it should "look up details for a transfer" in {
+    val transferId = UUID.randomUUID()
+    val details = TransferDetails(
+      transferId,
+      TransferStatus.Failed,
+      json"123",
+      Some(OffsetDateTime.now()),
+      Some(OffsetDateTime.now()),
+      Some(json"456")
+    )
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferDetails _)
+      .expects(queueId, requestId, transferId)
+      .returning(IO.pure(Some(details)))
+
+    controller
+      .lookupTransferDetails(queueName, requestId, transferId)
+      .unsafeRunSync() shouldBe details
+  }
+
+  it should "return an error if looking up details for an unregistered queue name" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(None))
+
+    controller
+      .lookupTransferDetails(queueName, requestId, UUID.randomUUID())
+      .attempt
+      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+  }
+
+  it should "return an error if looking up details for an unregistered transfer" in {
+    val transferId = UUID.randomUUID()
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferDetails _)
+      .expects(queueId, requestId, transferId)
+      .returning(IO.pure(None))
+
+    controller
+      .lookupTransferDetails(queueName, requestId, transferId)
+      .attempt
+      .unsafeRunSync() shouldBe Left(
+      TransferController.NoSuchTransfer(queueName, requestId, transferId)
+    )
   }
 }
