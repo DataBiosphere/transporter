@@ -11,6 +11,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   * Summary status for a bulk transfer requests which was submitted
   * to the Transporter manager.
   *
+  * @param id unique ID of the request within its enclosing queue
   * @param overallStatus top-level status for the request, derived based on
   *                      the counts of individual statuses in `statusCounts`
   * @param statusCounts counts of the transfers in each potential "transfer status"

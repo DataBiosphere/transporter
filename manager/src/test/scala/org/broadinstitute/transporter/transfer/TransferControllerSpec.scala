@@ -279,38 +279,6 @@ class TransferControllerSpec
       .unsafeRunSync() shouldBe RequestMessages(requestId, failures)
   }
 
-  it should "return an error if looking up outputs for an ID with no registered transfers" in {
-    (queueController.lookupQueueInfo _)
-      .expects(queueName)
-      .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransferMessages _)
-      .expects(queueId, requestId, TransferStatus.Succeeded)
-      .returning(IO.pure(Nil))
-
-    controller
-      .lookupRequestOutputs(queueName, requestId)
-      .attempt
-      .unsafeRunSync() shouldBe Left(
-      TransferController.NoSuchRequest(queueName, requestId)
-    )
-  }
-
-  it should "return an error if looking up failures for an ID with no registered transfers" in {
-    (queueController.lookupQueueInfo _)
-      .expects(queueName)
-      .returning(IO.pure(Some(queueInfo)))
-    (db.lookupTransferMessages _)
-      .expects(queueId, requestId, TransferStatus.Failed)
-      .returning(IO.pure(Nil))
-
-    controller
-      .lookupRequestFailures(queueName, requestId)
-      .attempt
-      .unsafeRunSync() shouldBe Left(
-      TransferController.NoSuchRequest(queueName, requestId)
-    )
-  }
-
   it should "return an error if looking up outputs for an unregistered queue name" in {
     (queueController.lookupQueueInfo _)
       .expects(queueName)

@@ -29,18 +29,23 @@ trait TransferController {
   def submitTransfer(queueName: String, request: BulkRequest): IO[RequestAck]
 
   /**
-    * Summarize the current status of a request which was previously submitted
-    * to a queue resource, returning:
-    *   1. An overall summary status for the request
-    *   2. The number of transfers found in each potential "transfer status"
-    *   3. Any "info" messages sent by agents about transfers in the request
+    * Summarize the current status of a request which was previously submitted to a queue.
     */
   def lookupRequestStatus(queueName: String, requestId: UUID): IO[RequestStatus]
 
+  /**
+    * Get any information collected by the manager from successful transfers under
+    * a previously-submitted request.
+    */
   def lookupRequestOutputs(queueName: String, requestId: UUID): IO[RequestMessages]
 
+  /**
+    * Get any information collected by the manager from failed transfers under
+    * a previously-submitted request.
+    */
   def lookupRequestFailures(queueName: String, requestId: UUID): IO[RequestMessages]
 
+  /** Get detailed information about a single transfer running under a queue. */
   def lookupTransferDetails(
     queueName: String,
     requestId: UUID,
@@ -216,6 +221,10 @@ object TransferController {
             .flatMap(_ => dbClient.deleteTransferRequest(requestId))
       }
 
+    /**
+      * Get any information collected by the manager from transfers under a previously-submitted
+      * request which have a given status.
+      */
     private def lookupRequestMessages(
       queueName: String,
       requestId: UUID,
@@ -224,9 +233,6 @@ object TransferController {
       for {
         (queueId, _) <- getQueueInfo(queueName)
         successMessages <- dbClient.lookupTransferMessages(queueId, requestId, status)
-        _ <- IO
-          .raiseError(NoSuchRequest(queueName, requestId))
-          .whenA(successMessages.isEmpty)
       } yield {
         RequestMessages(requestId, successMessages)
       }

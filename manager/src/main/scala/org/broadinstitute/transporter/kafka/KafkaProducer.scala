@@ -9,9 +9,6 @@ import org.broadinstitute.transporter.kafka.config.KafkaConfig
 /**
   * Client responsible for pushing messages into Kafka topics.
   *
-  * Raw Kafka producer instances are configured to work with specific
-  * key/value types, so this class does the same.
-  *
   * @tparam M the type of messages which should be pushed to Kafka by this producer
   */
 trait KafkaProducer[M] {

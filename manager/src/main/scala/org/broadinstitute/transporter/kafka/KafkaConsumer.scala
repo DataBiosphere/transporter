@@ -20,8 +20,7 @@ import scala.util.matching.Regex
 trait KafkaConsumer[M] {
 
   /**
-    * Run an effecting operation on every batch of key/value pairs pulled
-    * from the Kafka subscription.
+    * Run an effecting operation on every batch of messages pulled from the Kafka subscription.
     *
     * The returned `IO` will run until cancelled. Messages will be committed
     * in batches as they are successfully processed by `f`.

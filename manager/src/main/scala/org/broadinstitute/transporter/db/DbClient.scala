@@ -80,12 +80,14 @@ trait DbClient {
     requestId: UUID
   ): IO[Map[TransferStatus, (Long, Option[OffsetDateTime], Option[OffsetDateTime])]]
 
+  /** Fetch information about transfers under a request which have a given status. */
   def lookupTransferMessages(
     queueId: UUID,
     requestId: UUID,
     status: TransferStatus
   ): IO[List[TransferMessage]]
 
+  /** Fetch detailed information about a single transfer. */
   def lookupTransferDetails(
     queueId: UUID,
     requestId: UUID,
