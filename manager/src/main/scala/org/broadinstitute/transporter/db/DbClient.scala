@@ -48,8 +48,8 @@ trait DbClient {
     */
   def createQueue(id: UUID, queue: Queue): IO[Unit]
 
-  /** Update the expected JSON schema for the queue with the given ID. */
-  def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit]
+  /** Update the registered parameters for the queue with the given ID. */
+  def patchQueueParameters(id: UUID, schema: QueueSchema, maxInFlight: Int): IO[Unit]
 
   /**
     * Remove the queue resource with the given ID from the DB.
@@ -204,14 +204,15 @@ object DbClient extends PostgresInstances with JsonInstances {
 
     override def createQueue(id: UUID, queue: Queue): IO[Unit] =
       sql"""insert into queues
-            (id, name, request_topic, progress_topic, response_topic, request_schema)
+            (id, name, request_topic, progress_topic, response_topic, request_schema, max_in_flight)
             values (
               $id,
               ${queue.name},
               ${queue.requestTopic},
               ${queue.progressTopic},
               ${queue.responseTopic},
-              ${queue.schema}
+              ${queue.schema},
+              ${queue.maxConcurrentTransfers}
             )""".update.run.transact(transactor).flatMap { numUpdated =>
         if (numUpdated == 1) {
           IO.unit
@@ -222,15 +223,21 @@ object DbClient extends PostgresInstances with JsonInstances {
         }
       }
 
-    override def patchQueueSchema(id: UUID, schema: QueueSchema): IO[Unit] =
-      sql"""update queues set request_schema = $schema where id = $id""".update.run.void
+    override def patchQueueParameters(
+      id: UUID,
+      schema: QueueSchema,
+      maxInFlight: Int
+    ): IO[Unit] =
+      sql"""update queues set
+            request_schema = $schema, max_in_flight = $maxInFlight
+            where id = $id""".update.run.void
         .transact(transactor)
 
     override def deleteQueue(id: UUID): IO[Unit] =
       sql"""delete from queues where id = $id""".update.run.void.transact(transactor)
 
     override def lookupQueue(name: String): IO[Option[(UUID, Queue)]] =
-      sql"""select id, name, request_topic, progress_topic, response_topic, request_schema
+      sql"""select id, name, request_topic, progress_topic, response_topic, request_schema, max_in_flight
           from queues where name = $name"""
         .query[(UUID, Queue)]
         .option

@@ -10,8 +10,10 @@ import org.broadinstitute.transporter.queue.QueueSchema
   *             submitting transfers to the new queue
   * @param schema JSON schema which should be enforced for all requests
   *               submitted to the new queue
+  * @param maxConcurrentTransfers maximum number of transfers in the queue which
+  *                               should be distributed to agents at a time
   */
-case class QueueRequest(name: String, schema: QueueSchema)
+case class QueueRequest(name: String, schema: QueueSchema, maxConcurrentTransfers: Int)
 
 object QueueRequest {
   implicit val decoder: Decoder[QueueRequest] = io.circe.derivation.deriveDecoder
