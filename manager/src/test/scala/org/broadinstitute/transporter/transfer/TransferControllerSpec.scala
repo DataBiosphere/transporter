@@ -4,10 +4,8 @@ import java.time.{Instant, OffsetDateTime, ZoneId}
 import java.util.UUID
 
 import cats.effect.IO
-import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
 import org.broadinstitute.transporter.transfer.api.{
@@ -30,7 +28,6 @@ class TransferControllerSpec
 
   private val db = mock[DbClient]
   private val queueController = mock[QueueController]
-  private val kafka = mock[KafkaProducer[TransferRequest[Json]]]
 
   private val queueName = "queue"
   private val queueId = UUID.randomUUID()
@@ -45,23 +42,18 @@ class TransferControllerSpec
     List(json"""{ "a": "b" }""", json"""{ "c": "d" }""", json"""{ "e": "f" }""")
   )
   private val requestId = UUID.randomUUID()
-  private val transfersWithIds = goodRequest.transfers.map(UUID.randomUUID() -> _)
-  private val transferRequests = transfersWithIds.map {
-    case (id, transferJson) => TransferRequest(transferJson, id, requestId)
-  }
 
-  private def controller = new TransferController.Impl(queueController, db, kafka)
+  private def controller = new TransferController.Impl(queueController, db)
 
   behavior of "TransferController"
 
-  it should "submit transfer requests to existing queues" in {
+  it should "record transfer requests to existing queues" in {
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
     (db.recordTransferRequest _)
       .expects(queueId, goodRequest)
-      .returning(IO.pure((requestId, transfersWithIds)))
-    (kafka.submit _).expects(reqTopic, transferRequests).returning(IO.unit)
+      .returning(IO.pure(requestId))
 
     controller
       .submitTransfer(queueName, goodRequest)
@@ -88,24 +80,6 @@ class TransferControllerSpec
     }
   }
 
-  it should "roll back the DB if submitting to Kafka fails" in {
-    val err = new RuntimeException("OH NO")
-
-    (queueController.lookupQueueInfo _)
-      .expects(queueName)
-      .returning(IO.pure(Some(queueInfo)))
-    (db.recordTransferRequest _)
-      .expects(queueId, goodRequest)
-      .returning(IO.pure((requestId, transfersWithIds)))
-    (kafka.submit _).expects(reqTopic, transferRequests).returning(IO.raiseError(err))
-    (db.deleteTransferRequest _).expects(requestId).returning(IO.unit)
-
-    controller
-      .submitTransfer(queueName, goodRequest)
-      .attempt
-      .unsafeRunSync() shouldBe Left(err)
-  }
-
   it should "look up summaries for running requests" in {
     val counts = Map[TransferStatus, Long](TransferStatus.Succeeded -> 10L)
 
@@ -123,7 +97,8 @@ class TransferControllerSpec
       TransferStatus.Succeeded,
       counts ++ Map(
         TransferStatus.Failed -> 0L,
-        TransferStatus.Submitted -> 0L
+        TransferStatus.Submitted -> 0L,
+        TransferStatus.Pending -> 0L
       ),
       None,
       None
@@ -160,6 +135,7 @@ class TransferControllerSpec
   it should "prioritize submissions over all in request summaries" in {
     val counts = Map(
       TransferStatus.Submitted -> 10L,
+      TransferStatus.Pending -> 3L,
       TransferStatus.Succeeded -> 5L,
       TransferStatus.Failed -> 1L
     )
@@ -177,6 +153,33 @@ class TransferControllerSpec
       requestId,
       TransferStatus.Submitted,
       counts,
+      None,
+      None
+    )
+  }
+
+  it should "prioritize pending over finished transfers in request summaries" in {
+    val counts = Map(
+      TransferStatus.Failed -> 10L,
+      TransferStatus.Pending -> 3L,
+      TransferStatus.Succeeded -> 5L
+    )
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.summarizeTransfersByStatus _)
+      .expects(queueId, requestId)
+      .returning(IO.pure(counts.mapValues(c => (c, None, None))))
+
+    controller
+      .lookupRequestStatus(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestStatus(
+      requestId,
+      TransferStatus.Pending,
+      counts ++ Map(
+        TransferStatus.Submitted -> 0L
+      ),
       None,
       None
     )
@@ -201,7 +204,8 @@ class TransferControllerSpec
       requestId,
       TransferStatus.Failed,
       counts ++ Map(
-        TransferStatus.Submitted -> 0L
+        TransferStatus.Submitted -> 0L,
+        TransferStatus.Pending -> 0L
       ),
       None,
       None
@@ -212,7 +216,8 @@ class TransferControllerSpec
     val counts = Map(
       TransferStatus.Submitted -> 10L,
       TransferStatus.Succeeded -> 5L,
-      TransferStatus.Failed -> 1L
+      TransferStatus.Failed -> 1L,
+      TransferStatus.Pending -> 0L
     )
 
     def odt(millis: Long) =
@@ -224,7 +229,8 @@ class TransferControllerSpec
     val timestamps = Map(
       (TransferStatus.Submitted, (Some(odt(12345L)), None)),
       (TransferStatus.Succeeded, (Some(minSubmitted), Some(odt(12346L)))),
-      (TransferStatus.Failed, (Some(odt(12346L)), Some(maxUpdated)))
+      (TransferStatus.Failed, (Some(odt(12346L)), Some(maxUpdated))),
+      (TransferStatus.Pending, (None, None))
     )
 
     val lookup =

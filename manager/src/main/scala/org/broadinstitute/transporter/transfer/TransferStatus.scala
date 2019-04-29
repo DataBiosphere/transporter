@@ -30,7 +30,10 @@ object TransferStatus
   implicit val statusEncoder: KeyEncoder[TransferStatus] =
     KeyEncoder.encodeKeyString.contramap(_.entryName)
 
-  /** Initial status assigned to all transfers as they are pushed to downstream agents. */
+  /** Initial status assigned to all transfers when they are persisted by the manager. */
+  case object Pending extends TransferStatus
+
+  /** Status assigned to transfers as they are pushed to downstream agents. */
   case object Submitted extends TransferStatus
 
   /** Status assigned to transfers which are reported to have failed with a fatal error. */
