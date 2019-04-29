@@ -15,7 +15,7 @@ import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.queue.api.Queue
-import org.broadinstitute.transporter.transfer.api.BulkRequest
+import org.broadinstitute.transporter.transfer.api.{BulkRequest, TransferMessage}
 import org.broadinstitute.transporter.transfer.{
   TransferResult,
   TransferStatus,
@@ -274,4 +274,59 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     checks.unsafeRunSync()
   }
 
+  it should "lookup messages for transfers with a certain status" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(10)(i => json"""{ "i": $i }"""))
+
+    val checks = for {
+      // Setup rows for request.
+      _ <- client.createQueue(queueId, queue)
+      (reqId, reqs) <- client.recordTransferRequest(queueId, request)
+
+      // Get "before" info.
+      preOutputs <- client.lookupTransferMessages(
+        queueId,
+        reqId,
+        TransferStatus.Succeeded
+      )
+      preFailures <- client.lookupTransferMessages(queueId, reqId, TransferStatus.Failed)
+
+      // Run a fake update on parts of the request.
+      results = reqs.zipWithIndex.collect {
+        case ((id, _), i) if i % 3 == 0 =>
+          TransferSummary(
+            TransferResult.values(i % 2),
+            json"""{ "i+1": ${i + 1} }""",
+            id,
+            reqId
+          )
+      }
+      _ <- client.updateTransfers(results)
+
+      // Get "after" info.
+      postOutputs <- client.lookupTransferMessages(
+        queueId,
+        reqId,
+        TransferStatus.Succeeded
+      )
+      postFailures <- client.lookupTransferMessages(queueId, reqId, TransferStatus.Failed)
+    } yield {
+      val succeeded = results.filter(_.result == TransferResult.Success).map { res =>
+        TransferMessage(res.id, res.info)
+      }
+      val failed = results.filter(_.result == TransferResult.FatalFailure).map { res =>
+        TransferMessage(res.id, res.info)
+      }
+
+      preOutputs shouldBe empty
+      preFailures shouldBe empty
+
+      postOutputs should contain theSameElementsAs succeeded
+      postFailures should contain theSameElementsAs failed
+    }
+
+    checks.unsafeRunSync()
+  }
 }

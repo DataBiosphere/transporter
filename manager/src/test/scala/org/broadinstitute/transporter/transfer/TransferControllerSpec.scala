@@ -13,7 +13,9 @@ import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
 import org.broadinstitute.transporter.transfer.api.{
   BulkRequest,
   RequestAck,
-  RequestStatus
+  RequestMessages,
+  RequestStatus,
+  TransferMessage
 }
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers, OptionValues}
@@ -103,7 +105,7 @@ class TransferControllerSpec
       .unsafeRunSync() shouldBe Left(err)
   }
 
-  it should "look up statuses for running requests" in {
+  it should "look up summaries for running requests" in {
     val counts = Map[TransferStatus, Long](TransferStatus.Succeeded -> 10L)
 
     (queueController.lookupQueueInfo _)
@@ -116,6 +118,7 @@ class TransferControllerSpec
     controller
       .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
+      requestId,
       TransferStatus.Succeeded,
       counts ++ Map(
         TransferStatus.Failed -> 0L,
@@ -126,7 +129,7 @@ class TransferControllerSpec
     )
   }
 
-  it should "return an error if looking up statuses for an ID with no registered transfers" in {
+  it should "return an error if looking up summaries for an ID with no registered transfers" in {
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
@@ -140,7 +143,7 @@ class TransferControllerSpec
       .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
   }
 
-  it should "return an error if looking up statuses for an unregistered queue name" in {
+  it should "return an error if looking up summaries for an unregistered queue name" in {
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(None))
@@ -168,6 +171,7 @@ class TransferControllerSpec
     controller
       .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
+      requestId,
       TransferStatus.Submitted,
       counts,
       None,
@@ -191,6 +195,7 @@ class TransferControllerSpec
     controller
       .lookupRequestStatus(queueName, requestId)
       .unsafeRunSync() shouldBe RequestStatus(
+      requestId,
       TransferStatus.Failed,
       counts ++ Map(
         TransferStatus.Submitted -> 0L
@@ -239,5 +244,85 @@ class TransferControllerSpec
     status.overallStatus shouldBe TransferStatus.Submitted
     status.submittedAt.value shouldBe minSubmitted
     status.updatedAt.value shouldBe maxUpdated
+  }
+
+  it should "look up outputs for requests" in {
+    val outputs = List.tabulate(3)(i => TransferMessage(UUID.randomUUID(), json"$i"))
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferMessages _)
+      .expects(queueId, requestId, TransferStatus.Succeeded)
+      .returning(IO.pure(outputs))
+
+    controller
+      .lookupRequestOutputs(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestMessages(requestId, outputs)
+  }
+
+  it should "look up failures for requests" in {
+    val failures = List.tabulate(3)(i => TransferMessage(UUID.randomUUID(), json"$i"))
+
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferMessages _)
+      .expects(queueId, requestId, TransferStatus.Failed)
+      .returning(IO.pure(failures))
+
+    controller
+      .lookupRequestFailures(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestMessages(requestId, failures)
+  }
+
+  it should "return an error if looking up outputs for an ID with no registered transfers" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferMessages _)
+      .expects(queueId, requestId, TransferStatus.Succeeded)
+      .returning(IO.pure(Nil))
+
+    controller
+      .lookupRequestOutputs(queueName, requestId)
+      .attempt
+      .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
+  }
+
+  it should "return an error if looking up failures for an ID with no registered transfers" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.lookupTransferMessages _)
+      .expects(queueId, requestId, TransferStatus.Failed)
+      .returning(IO.pure(Nil))
+
+    controller
+      .lookupRequestFailures(queueName, requestId)
+      .attempt
+      .unsafeRunSync() shouldBe Left(TransferController.NoSuchRequest(requestId))
+  }
+
+  it should "return an error if looking up outputs for an unregistered queue name" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(None))
+
+    controller
+      .lookupRequestOutputs(queueName, requestId)
+      .attempt
+      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+  }
+
+  it should "return an error if looking up failures for an unregistered queue name" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(None))
+
+    controller
+      .lookupRequestFailures(queueName, requestId)
+      .attempt
+      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
   }
 }
