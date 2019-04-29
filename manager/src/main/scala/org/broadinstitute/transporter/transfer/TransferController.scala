@@ -40,6 +40,12 @@ trait TransferController {
   def lookupRequestOutputs(queueName: String, requestId: UUID): IO[RequestMessages]
 
   def lookupRequestFailures(queueName: String, requestId: UUID): IO[RequestMessages]
+
+  def lookupTransferDetails(
+    queueName: String,
+    requestId: UUID,
+    transferId: UUID
+  ): IO[TransferDetails]
 }
 
 object TransferController {
@@ -58,8 +64,15 @@ object TransferController {
       )
 
   /** Exception used to mark when a user attempts to interact with a nonexistent request. */
-  case class NoSuchRequest(id: UUID)
-      extends IllegalArgumentException(s"No transfers registered under ID $id")
+  case class NoSuchRequest(queue: String, id: UUID)
+      extends IllegalArgumentException(
+        s"No request with ID $id registered under queue $queue "
+      )
+
+  case class NoSuchTransfer(queue: String, requestId: UUID, id: UUID)
+      extends IllegalArgumentException(
+        s"No transfer with ID $id registered under request $requestId in queue $queue"
+      )
 
   /**
     * Concrete implementation of the controller used by mainline code.
@@ -114,7 +127,7 @@ object TransferController {
           TransferStatus.Failed,
           TransferStatus.Succeeded
         ).find(counts.getOrElse(_, 0L) > 0L)
-        status <- maybeStatus.liftTo[IO](NoSuchRequest(requestId))
+        status <- maybeStatus.liftTo[IO](NoSuchRequest(queueName, requestId))
       } yield {
         val flattenedInfo = summariesByStatus.values
         RequestStatus(
@@ -143,6 +156,21 @@ object TransferController {
       requestId: UUID
     ): IO[RequestMessages] =
       lookupRequestMessages(queueName, requestId, TransferStatus.Failed)
+
+    def lookupTransferDetails(
+      queueName: String,
+      requestId: UUID,
+      transferId: UUID
+    ): IO[TransferDetails] =
+      for {
+        (queueId, _) <- getQueueInfo(queueName)
+        maybeDetails <- dbClient.lookupTransferDetails(queueId, requestId, transferId)
+        details <- maybeDetails.liftTo[IO](
+          NoSuchTransfer(queueName, requestId, transferId)
+        )
+      } yield {
+        details
+      }
 
     private def getQueueInfo(queueName: String): IO[(UUID, Queue)] =
       for {
@@ -196,7 +224,9 @@ object TransferController {
       for {
         (queueId, _) <- getQueueInfo(queueName)
         successMessages <- dbClient.lookupTransferMessages(queueId, requestId, status)
-        _ <- IO.raiseError(NoSuchRequest(requestId)).whenA(successMessages.isEmpty)
+        _ <- IO
+          .raiseError(NoSuchRequest(queueName, requestId))
+          .whenA(successMessages.isEmpty)
       } yield {
         RequestMessages(requestId, successMessages)
       }

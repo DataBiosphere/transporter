@@ -21,7 +21,11 @@ import org.broadinstitute.transporter.db.config.DbConfig
 import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer._
-import org.broadinstitute.transporter.transfer.api.{BulkRequest, TransferMessage}
+import org.broadinstitute.transporter.transfer.api.{
+  BulkRequest,
+  TransferDetails,
+  TransferMessage
+}
 
 import scala.concurrent.ExecutionContext
 
@@ -81,6 +85,12 @@ trait DbClient {
     requestId: UUID,
     status: TransferStatus
   ): IO[List[TransferMessage]]
+
+  def lookupTransferDetails(
+    queueId: UUID,
+    requestId: UUID,
+    transferId: UUID
+  ): IO[Option[TransferDetails]]
 
   /**
     * Delete the top-level description, and individual transfer descriptions,
@@ -281,6 +291,20 @@ object DbClient extends PostgresInstances with JsonInstances {
             where q.id = $queueId and r.id = $requestId and t.status = $status and t.info is not null"""
         .query[TransferMessage]
         .to[List]
+        .transact(transactor)
+
+    override def lookupTransferDetails(
+      queueId: UUID,
+      requestId: UUID,
+      transferId: UUID
+    ): IO[Option[TransferDetails]] =
+      sql"""select t.id, t.status, t.body, t.submitted_at, t.updated_at, t.info
+            from transfers t
+            left join transfer_requests r on t.request_id = r.id
+            left join queues q on r.queue_id = q.id
+            where q.id = $queueId and r.id = $requestId and t.id = $transferId"""
+        .query[TransferDetails]
+        .option
         .transact(transactor)
 
     override def deleteTransferRequest(id: UUID): IO[Unit] =
