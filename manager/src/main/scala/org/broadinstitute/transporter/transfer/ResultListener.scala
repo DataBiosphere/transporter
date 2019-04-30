@@ -1,11 +1,12 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.{ContextShift, IO}
+import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaConsumer
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
+import org.broadinstitute.transporter.kafka.{KafkaConsumer, Serdes}
 
 /**
   * Component responsible for processing summary messages received
@@ -14,7 +15,7 @@ import org.broadinstitute.transporter.kafka.KafkaConsumer
   * Coordinates persisting results to the DB and resubmitting transfers
   * that fail on transient errors.
   */
-class ResultListener(
+class ResultListener private[transfer] (
   consumer: KafkaConsumer[TransferSummary[Json]],
   dbClient: DbClient
 )(implicit cs: ContextShift[IO]) {
@@ -50,4 +51,19 @@ class ResultListener(
       _ <- dbClient.updateTransfers(results)
     } yield ()
   }
+}
+
+object ResultListener {
+
+  def resource(dbClient: DbClient, kafkaConfig: KafkaConfig)(
+    implicit cs: ContextShift[IO],
+    t: Timer[IO]
+  ): Resource[IO, ResultListener] =
+    KafkaConsumer
+      .resource(
+        s"${KafkaConfig.ResponseTopicPrefix}.+".r,
+        kafkaConfig,
+        Serdes.decodingDeserializer[TransferSummary[Json]]
+      )
+      .map(new ResultListener(_, dbClient))
 }

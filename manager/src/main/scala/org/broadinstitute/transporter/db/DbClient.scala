@@ -4,7 +4,7 @@ import java.sql.Timestamp
 import java.time.{OffsetDateTime, ZoneId}
 import java.util.UUID
 
-import cats.effect.{Clock, ContextShift, IO, Resource}
+import cats.effect.{Async, Clock, ContextShift, IO, Resource}
 import cats.implicits._
 import doobie._
 import doobie.hikari.HikariTransactor
@@ -90,27 +90,9 @@ trait DbClient {
     transferId: UUID
   ): IO[Option[TransferDetails]]
 
-  /**
-    * Get a mapping from Kafka topic name to the number of requests which could
-    * currently be submitted to that topic.
-    *
-    * The eligible request count is computed based on:
-    *   1. The number of pending transfers registered in the DB
-    *   2. The number of submitted transfers registered in the DB
-    *   3. The maximum number of in-flight transfers configured for the queue
-    */
-  def currentSubmittableCounts: IO[Map[String, Long]]
-
-  /**
-    * Get a batch of pending transfers which can be submitted to a transfer queue.
-    *
-    * @param requestTopic Kafka topic for the queue
-    * @param batchLimit max number of transfers to include in the response
-    */
-  def getSubmissionBatch(
-    requestTopic: String,
-    batchLimit: Long
-  ): IO[List[TransferRequest[Json]]]
+  def submitTransfers(
+    doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Unit]
+  ): IO[Unit]
 
   /**
     * Update the current view of the status of a set of in-flight transfers
@@ -343,8 +325,34 @@ object DbClient extends PostgresInstances with JsonInstances {
         .option
         .transact(transactor)
 
-    override def currentSubmittableCounts: IO[Map[String, Long]] = {
-      val query = for {
+    override def submitTransfers(
+      doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Unit]
+    ): IO[Unit] = {
+      val connAsync = Async[ConnectionIO]
+
+      val submitTransaction = for {
+        _ <- FC.nativeSQL("lock share row exclusive")
+        submittableCounts <- currentSubmittableCounts
+        submission <- submittableCounts.traverse {
+          case (topic, count) => prepSubmissionBatch(topic, count).map(topic -> _)
+        }
+        _ <- connAsync.liftIO(doSubmit(submission))
+      } yield ()
+
+      submitTransaction.transact(transactor)
+    }
+
+    /**
+      * Get a mapping from Kafka topic name to the number of requests which could
+      * currently be submitted to that topic.
+      *
+      * The eligible request count is computed based on:
+      *   1. The number of pending transfers registered in the DB
+      *   2. The number of submitted transfers registered in the DB
+      *   3. The maximum number of in-flight transfers configured for the queue
+      */
+    private def currentSubmittableCounts: ConnectionIO[List[(String, Long)]] =
+      for {
         maxCounts <- sql"select request_topic, max_in_flight from queues"
           .query[(String, Long)]
           .to[List]
@@ -358,11 +366,8 @@ object DbClient extends PostgresInstances with JsonInstances {
               max - submittedCount.getOrElse(topic, 0L),
               pendingCount.getOrElse(topic, 0L)
             )
-        }
+        }.toList
       }
-
-      query.transact(transactor)
-    }
 
     private def getCountsInState(
       status: TransferStatus
@@ -376,19 +381,32 @@ object DbClient extends PostgresInstances with JsonInstances {
         .to[List]
         .map(_.toMap)
 
-    override def getSubmissionBatch(
+    private def prepSubmissionBatch(
       requestTopic: String,
-      batchSize: Long
-    ): IO[List[TransferRequest[Json]]] =
-      List(
+      batchLimit: Long
+    ): ConnectionIO[List[TransferRequest[Json]]] = {
+      val batch_select = List(
         fr"select t.body, t.id, r.id as request_id from",
         transfersJoinTable,
-        Fragments.whereAnd(fr"q.request_topic = $requestTopic", fr"t.status = 'pending'"),
-        fr"limit $batchSize"
+        Fragments.whereAnd(
+          fr"q.request_topic = $requestTopic",
+          fr"t.status = ${TransferStatus.Pending: TransferStatus}"
+        ),
+        fr"limit $batchLimit"
       ).reduce(_ ++ _)
-        .query[TransferRequest[Json]]
-        .to[List]
-        .transact(transactor)
+
+      List(
+        fr"with submission_batch as",
+        Fragments.parentheses(batch_select),
+        fr"update transfers set status = ${TransferStatus.Submitted: TransferStatus}",
+        fr"from submission_batch where transfers.id = submission_batch.id",
+        fr"returning submission_batch.body, submission_batch.id, submission_batch.request_id"
+      ).reduce(_ ++ _)
+        .update
+        .withGeneratedKeys[TransferRequest[Json]]("body", "id", "request_id")
+        .compile
+        .toList
+    }
 
     override def updateTransfers(summaries: List[TransferSummary[Json]]): IO[Unit] =
       for {

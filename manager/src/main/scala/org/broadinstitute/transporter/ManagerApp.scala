@@ -4,17 +4,11 @@ import cats.data.NonEmptyList
 import cats.effect.{Clock, ContextShift, ExitCode, IO, Resource, Timer}
 import cats.implicits._
 import doobie.util.ExecutionContexts
-import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.info.InfoController
-import org.broadinstitute.transporter.kafka.config.KafkaConfig
-import org.broadinstitute.transporter.kafka.{AdminClient, KafkaConsumer, Serdes}
+import org.broadinstitute.transporter.kafka.AdminClient
 import org.broadinstitute.transporter.queue.QueueController
-import org.broadinstitute.transporter.transfer.{
-  ResultListener,
-  TransferController,
-  TransferSummary
-}
+import org.broadinstitute.transporter.transfer.{ResultListener, TransferController}
 import org.broadinstitute.transporter.web.{
   ApiRoutes,
   InfoRoutes,
@@ -79,11 +73,7 @@ object ManagerApp {
       // across controllers in the app.
       dbClient <- DbClient.resource(config.db, blockingEc)
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
-      consumer <- KafkaConsumer.resource(
-        s"${KafkaConfig.ResponseTopicPrefix}.+".r,
-        config.kafka,
-        Serdes.decodingDeserializer[TransferSummary[Json]]
-      )
+      listener <- ResultListener.resource(dbClient, config.kafka)
     } yield {
       val queueController = QueueController(dbClient, adminClient)
       val routes = NonEmptyList.of(
@@ -95,7 +85,6 @@ object ManagerApp {
       )
       val appRoutes = SwaggerMiddleware(routes, info, blockingEc).orNotFound
       val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
-      val listener = new ResultListener(consumer, dbClient)
 
       new ManagerApp(http, config.web, listener)
     }
