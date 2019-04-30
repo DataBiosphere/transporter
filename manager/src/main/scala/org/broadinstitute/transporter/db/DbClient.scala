@@ -6,7 +6,7 @@ import java.util.UUID
 
 import cats.effect.{Clock, ContextShift, IO, Resource}
 import cats.implicits._
-import doobie.hi._
+import doobie._
 import doobie.hikari.HikariTransactor
 import doobie.implicits._
 import doobie.postgres.{Instances => PostgresInstances}
@@ -19,7 +19,7 @@ import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.config.DbConfig
 import org.broadinstitute.transporter.queue.QueueSchema
-import org.broadinstitute.transporter.queue.api.Queue
+import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters}
 import org.broadinstitute.transporter.transfer._
 import org.broadinstitute.transporter.transfer.api.{
   BulkRequest,
@@ -49,7 +49,7 @@ trait DbClient {
   def createQueue(id: UUID, queue: Queue): IO[Unit]
 
   /** Update the registered parameters for the queue with the given ID. */
-  def patchQueueParameters(id: UUID, schema: QueueSchema, maxInFlight: Int): IO[Unit]
+  def patchQueueParameters(id: UUID, params: QueueParameters): IO[Unit]
 
   /**
     * Remove the queue resource with the given ID from the DB.
@@ -89,6 +89,28 @@ trait DbClient {
     requestId: UUID,
     transferId: UUID
   ): IO[Option[TransferDetails]]
+
+  /**
+    * Get a mapping from Kafka topic name to the number of requests which could
+    * currently be submitted to that topic.
+    *
+    * The eligible request count is computed based on:
+    *   1. The number of pending transfers registered in the DB
+    *   2. The number of submitted transfers registered in the DB
+    *   3. The maximum number of in-flight transfers configured for the queue
+    */
+  def currentSubmittableCounts: IO[Map[String, Long]]
+
+  /**
+    * Get a batch of pending transfers which can be submitted to a transfer queue.
+    *
+    * @param requestTopic Kafka topic for the queue
+    * @param batchLimit max number of transfers to include in the response
+    */
+  def getSubmissionBatch(
+    requestTopic: String,
+    batchLimit: Long
+  ): IO[List[TransferRequest[Json]]]
 
   /**
     * Update the current view of the status of a set of in-flight transfers
@@ -223,15 +245,15 @@ object DbClient extends PostgresInstances with JsonInstances {
         }
       }
 
-    override def patchQueueParameters(
-      id: UUID,
-      schema: QueueSchema,
-      maxInFlight: Int
-    ): IO[Unit] =
-      sql"""update queues set
-            request_schema = $schema, max_in_flight = $maxInFlight
-            where id = $id""".update.run.void
+    override def patchQueueParameters(id: UUID, params: QueueParameters): IO[Unit] = {
+      val updates = Fragments.setOpt(
+        params.schema.map(s => fr"request_schema = $s"),
+        params.maxConcurrentTransfers.map(m => fr"max_in_flight = $m")
+      )
+
+      (fr"update queues" ++ updates ++ fr"where id = $id").update.run.void
         .transact(transactor)
+    }
 
     override def deleteQueue(id: UUID): IO[Unit] =
       sql"""delete from queues where id = $id""".update.run.void.transact(transactor)
@@ -259,16 +281,21 @@ object DbClient extends PostgresInstances with JsonInstances {
       insertRequest.flatMap(_ => insertTransfers).transact(transactor).as(requestId)
     }
 
+    private val transfersJoinTable =
+      fr"""transfers t
+           left join transfer_requests r on t.request_id = r.id
+           left join queues q on r.queue_id = q.id"""
+
     override def summarizeTransfersByStatus(
       queueId: UUID,
       requestId: UUID
     ): IO[Map[TransferStatus, (Long, Option[OffsetDateTime], Option[OffsetDateTime])]] =
-      sql"""select t.status, count(*), min(t.submitted_at), max(t.updated_at)
-            from transfers t
-            left join transfer_requests r on t.request_id = r.id
-            left join queues q on r.queue_id = q.id
-            where q.id = $queueId and r.id = $requestId
-            group by t.status"""
+      List(
+        fr"select t.status, count(*), min(t.submitted_at), max(t.updated_at) from",
+        transfersJoinTable,
+        Fragments.whereAnd(fr"q.id = $queueId", fr"r.id = $requestId"),
+        fr"group by t.status"
+      ).reduce(_ ++ _)
         .query[
           (TransferStatus, Long, Option[OffsetDateTime], Option[OffsetDateTime])
         ]
@@ -284,11 +311,16 @@ object DbClient extends PostgresInstances with JsonInstances {
       requestId: UUID,
       status: TransferStatus
     ): IO[List[TransferMessage]] =
-      sql"""select t.id, t.info
-            from transfers t
-            left join transfer_requests r on t.request_id = r.id
-            left join queues q on r.queue_id = q.id
-            where q.id = $queueId and r.id = $requestId and t.status = $status and t.info is not null"""
+      List(
+        fr"select t.id, t.info from",
+        transfersJoinTable,
+        Fragments.whereAnd(
+          fr"q.id = $queueId",
+          fr"r.id = $requestId",
+          fr"t.status = $status",
+          fr"t.info is not null"
+        )
+      ).reduce(_ ++ _)
         .query[TransferMessage]
         .to[List]
         .transact(transactor)
@@ -298,13 +330,64 @@ object DbClient extends PostgresInstances with JsonInstances {
       requestId: UUID,
       transferId: UUID
     ): IO[Option[TransferDetails]] =
-      sql"""select t.id, t.status, t.body, t.submitted_at, t.updated_at, t.info
-            from transfers t
-            left join transfer_requests r on t.request_id = r.id
-            left join queues q on r.queue_id = q.id
-            where q.id = $queueId and r.id = $requestId and t.id = $transferId"""
+      List(
+        fr"select t.id, t.status, t.body, t.submitted_at, t.updated_at, t.info from",
+        transfersJoinTable,
+        Fragments.whereAnd(
+          fr"q.id = $queueId",
+          fr"r.id = $requestId",
+          fr"t.id = $transferId"
+        )
+      ).reduce(_ ++ _)
         .query[TransferDetails]
         .option
+        .transact(transactor)
+
+    override def currentSubmittableCounts: IO[Map[String, Long]] = {
+      val query = for {
+        maxCounts <- sql"select request_topic, max_in_flight from queues"
+          .query[(String, Long)]
+          .to[List]
+          .map(_.toMap)
+        pendingCount <- getCountsInState(TransferStatus.Pending)
+        submittedCount <- getCountsInState(TransferStatus.Submitted)
+      } yield {
+        maxCounts.map {
+          case (topic, max) =>
+            topic -> math.min(
+              max - submittedCount.getOrElse(topic, 0L),
+              pendingCount.getOrElse(topic, 0L)
+            )
+        }
+      }
+
+      query.transact(transactor)
+    }
+
+    private def getCountsInState(
+      status: TransferStatus
+    ): ConnectionIO[Map[String, Long]] =
+      List(
+        fr"select q.request_topic, count(t.id) from",
+        transfersJoinTable,
+        fr"where t.status = $status group by q.id"
+      ).reduce(_ ++ _)
+        .query[(String, Long)]
+        .to[List]
+        .map(_.toMap)
+
+    override def getSubmissionBatch(
+      requestTopic: String,
+      batchSize: Long
+    ): IO[List[TransferRequest[Json]]] =
+      List(
+        fr"select t.body, t.id, r.id as request_id from",
+        transfersJoinTable,
+        Fragments.whereAnd(fr"q.request_topic = $requestTopic", fr"t.status = 'pending'"),
+        fr"limit $batchSize"
+      ).reduce(_ ++ _)
+        .query[TransferRequest[Json]]
+        .to[List]
         .transact(transactor)
 
     override def updateTransfers(summaries: List[TransferSummary[Json]]): IO[Unit] =

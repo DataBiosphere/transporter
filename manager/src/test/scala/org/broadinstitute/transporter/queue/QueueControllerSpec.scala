@@ -6,7 +6,7 @@ import cats.effect.IO
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
-import org.broadinstitute.transporter.queue.api.{Queue, QueueRequest}
+import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRequest}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
@@ -124,7 +124,10 @@ class QueueControllerSpec
       .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.pure(false))
     (db.patchQueueParameters _)
-      .expects(id, queue.schema, queue.maxConcurrentTransfers)
+      .expects(
+        id,
+        QueueParameters(Some(queue.schema), Some(queue.maxConcurrentTransfers))
+      )
       .returning(IO.unit)
     (kafka.createTopics _)
       .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))

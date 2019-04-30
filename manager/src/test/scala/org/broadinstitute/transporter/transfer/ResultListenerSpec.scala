@@ -7,7 +7,6 @@ import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.KafkaConsumer
-import org.broadinstitute.transporter.transfer
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{FlatSpec, Matchers}
 
@@ -54,7 +53,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
     )
   )
 
-  private def listener = new transfer.ResultListener.Impl(consumer, db)
+  private def listener = new ResultListener(consumer, db)
 
   behavior of "ResultListener"
 
