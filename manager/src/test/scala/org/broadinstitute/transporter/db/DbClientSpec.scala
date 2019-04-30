@@ -15,7 +15,7 @@ import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.queue.QueueSchema
-import org.broadinstitute.transporter.queue.api.Queue
+import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters}
 import org.broadinstitute.transporter.transfer.api.{
   BulkRequest,
   TransferDetails,
@@ -98,8 +98,10 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
       (outId, outQueue) = res2.value
       _ <- client.patchQueueParameters(
         outId,
-        queue2.schema,
-        queue2.maxConcurrentTransfers
+        QueueParameters(
+          schema = Some(queue2.schema),
+          maxConcurrentTransfers = Some(queue2.maxConcurrentTransfers)
+        )
       )
       res3 <- client.lookupQueue(queue.name)
       (updatedId, updatedQueue) = res3.value
@@ -349,6 +351,129 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
       details <- client.lookupTransferDetails(queueId, reqId, UUID.randomUUID())
     } yield {
       details shouldBe None
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "get the number of transfers which can be submitted per queue ID" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val queueId2 = UUID.randomUUID()
+    val queue2 = queue.copy(name = "foo", maxConcurrentTransfers = 10)
+
+    val request1 = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+    val request2 = BulkRequest(List.tabulate(queue2.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      _ <- client.createQueue(queueId2, queue2)
+
+      preRecordCounts <- client.currentSubmittableCounts
+
+      req1Id <- client.recordTransferRequest(queueId, request1)
+      req2Id <- client.recordTransferRequest(queueId2, request2)
+
+      preSubmitCounts <- client.currentSubmittableCounts
+
+      ids1 <- sql"select id from transfers where request_id = $req1Id"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+      ids2 <- sql"select id from transfers where request_id = $req2Id"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+      _ <- fakeSubmit
+        .updateMany(ids1.zipWithIndex.collect {
+          case (id, i) if i % 2 == 0 =>
+            (TransferStatus.Submitted: TransferStatus, odt(initNow), id)
+        })
+        .void
+        .transact(transactor)
+      _ <- fakeSubmit
+        .updateMany(ids2.zipWithIndex.collect {
+          case (id, i) if i % 4 == 0 =>
+            (TransferStatus.Submitted: TransferStatus, odt(initNow), id)
+        })
+        .void
+        .transact(transactor)
+
+      postSubmitCounts <- client.currentSubmittableCounts
+
+      _ <- fakeUpdate
+        .run(
+          (
+            TransferStatus.Succeeded: TransferStatus,
+            odt(initNow + 1),
+            json"1",
+            ids1.head
+          )
+        )
+        .void
+        .transact(transactor)
+      _ <- fakeUpdate
+        .run(
+          (TransferStatus.Failed: TransferStatus, odt(initNow + 1), json"1", ids2.head)
+        )
+        .void
+        .transact(transactor)
+
+      postUpdateCounts <- client.currentSubmittableCounts
+
+    } yield {
+      preRecordCounts shouldBe Map(queue.requestTopic -> 0, queue2.requestTopic -> 0)
+      preSubmitCounts shouldBe Map(
+        queue.requestTopic -> queue.maxConcurrentTransfers,
+        queue2.requestTopic -> queue2.maxConcurrentTransfers
+      )
+      postSubmitCounts shouldBe Map(queue.requestTopic -> 0, queue2.requestTopic -> 5)
+      postUpdateCounts shouldBe Map(queue.requestTopic -> 1, queue2.requestTopic -> 6)
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "get batches of pending transfers from queues for submission" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, request)
+      ids <- sql"select id from transfers where request_id = $reqId"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+      initBatch <- client.getSubmissionBatch(
+        queue.requestTopic,
+        ids.length.toLong
+      )
+      _ <- fakeSubmit
+        .updateMany(ids.zipWithIndex.collect {
+          case (id, i) if i % 2 == 0 =>
+            (TransferStatus.Submitted: TransferStatus, odt(initNow), id)
+        })
+        .void
+        .transact(transactor)
+      postSubmitBatch <- client.getSubmissionBatch(
+        queue.requestTopic,
+        ids.length.toLong
+      )
+    } yield {
+      initBatch.map(_.id) should contain theSameElementsAs ids
+      postSubmitBatch.map(_.id) should contain theSameElementsAs ids.zipWithIndex.collect {
+        case (id, i) if i % 2 == 1 => id
+      }
     }
 
     checks.unsafeRunSync()

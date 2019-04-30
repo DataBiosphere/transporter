@@ -91,8 +91,10 @@ object QueueController {
               _ <- checkConcurrencyValid(request.name, request.maxConcurrentTransfers)
               _ <- dbClient.patchQueueParameters(
                 id,
-                request.schema,
-                request.maxConcurrentTransfers
+                QueueParameters(
+                  schema = Some(request.schema),
+                  maxConcurrentTransfers = Some(request.maxConcurrentTransfers)
+                )
               )
               _ <- kafkaClient.createTopics(
                 queue.requestTopic,
@@ -118,14 +120,13 @@ object QueueController {
       for {
         maybeInfo <- lookupQueueInfo(name)
         (id, queue) <- maybeInfo.liftTo[IO](NoSuchQueue(name))
-        updatedQueue = queue.copy(
+        _ <- dbClient.patchQueueParameters(id, newParameters)
+      } yield {
+        queue.copy(
           schema = newParameters.schema.getOrElse(queue.schema),
           maxConcurrentTransfers =
             newParameters.maxConcurrentTransfers.getOrElse(queue.maxConcurrentTransfers)
         )
-        _ <- dbClient.patchQueueParameters(id, queue.schema, queue.maxConcurrentTransfers)
-      } yield {
-        updatedQueue
       }
 
     override def lookupQueueInfo(name: String): IO[Option[(UUID, Queue)]] =

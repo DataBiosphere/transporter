@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="7" author="danmoran">
+
+        <createIndex tableName="queues" indexName="queues_request_topic">
+            <column name="request_topic" />
+        </createIndex>
+
+        <createIndex tableName="queues" indexName="queues_progress_topic">
+            <column name="progress_topic" />
+        </createIndex>
+
+        <createIndex tableName="queues" indexName="queues_response_topic">
+            <column name="response_topic" />
+        </createIndex>
+
+        <rollback>
+            <dropIndex tableName="queues" indexName="queues_request_topic" />
+            <dropIndex tableName="queues" indexName="queues_progress_topic" />
+            <dropIndex tableName="queues" indexName="queues_response_topic" />
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>
