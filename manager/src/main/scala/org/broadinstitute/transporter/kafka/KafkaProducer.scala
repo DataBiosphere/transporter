@@ -14,12 +14,12 @@ import org.broadinstitute.transporter.kafka.config.KafkaConfig
 trait KafkaProducer[M] {
 
   /**
-    * Submit a batch of messages to a topic.
+    * Submit batches of messages to Kafka topics.
     *
     * The returned `IO` will only complete when the produced
     * messages have been acknowledged by the Kafka cluster.
     */
-  def submit(topic: String, messages: List[M]): IO[Unit]
+  def submit(messagesByTopic: List[(String, List[M])]): IO[Unit]
 }
 
 object KafkaProducer {
@@ -50,11 +50,14 @@ object KafkaProducer {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def submit(topic: String, messages: List[M]): IO[Unit] = {
-      val records = messages.map(ProducerRecord(topic, (), _))
+    override def submit(messagesByTopic: List[(String, List[M])]): IO[Unit] = {
+      val records = messagesByTopic.flatMap {
+        case (topic, messages) =>
+          messages.map(ProducerRecord(topic, (), _))
+      }
 
       for {
-        _ <- logger.info(s"Submitting ${messages.length} records to Kafka topic $topic")
+        _ <- logger.info(s"Submitting ${records.length} records to Kafka")
         ackIO <- producer.producePassthrough(ProducerMessage(records))
         _ <- logger.debug(s"Waiting for Kafka to acknowledge submission...")
         _ <- ackIO
