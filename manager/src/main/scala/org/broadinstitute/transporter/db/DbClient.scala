@@ -90,9 +90,9 @@ trait DbClient {
     transferId: UUID
   ): IO[Option[TransferDetails]]
 
-  def submitTransfers(
-    doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Unit]
-  ): IO[Unit]
+  def submitTransfers[Out](
+    doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Out]
+  ): IO[Out]
 
   /**
     * Update the current view of the status of a set of in-flight transfers
@@ -325,21 +325,36 @@ object DbClient extends PostgresInstances with JsonInstances {
         .option
         .transact(transactor)
 
-    override def submitTransfers(
-      doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Unit]
-    ): IO[Unit] = {
-      val connAsync = Async[ConnectionIO]
+    override def submitTransfers[Out](
+      doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Out]
+    ): IO[Out] =
+      for {
+        now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
+        out <- submitTransfers(doSubmit, now).transact(transactor)
+      } yield {
+        out
+      }
 
-      val submitTransaction = for {
-        _ <- FC.nativeSQL("lock share row exclusive")
+    private def submitTransfers[Out](
+      doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Out],
+      nowMillis: Long
+    ): ConnectionIO[Out] = {
+      val connAsync = Async[ConnectionIO]
+      for {
+        /*
+         * Lock the transfers table up-front to prevent submitting a transfer
+         * multiple times on concurrent access from multiple manager apps.
+         */
+        _ <- sql"lock table transfers in share row exclusive mode".update.run
         submittableCounts <- currentSubmittableCounts
         submission <- submittableCounts.traverse {
-          case (topic, count) => prepSubmissionBatch(topic, count).map(topic -> _)
+          case (topic, count) =>
+            prepSubmissionBatch(topic, count, nowMillis).map(topic -> _)
         }
-        _ <- connAsync.liftIO(doSubmit(submission))
-      } yield ()
-
-      submitTransaction.transact(transactor)
+        out <- connAsync.liftIO(doSubmit(submission))
+      } yield {
+        out
+      }
     }
 
     /**
@@ -383,7 +398,8 @@ object DbClient extends PostgresInstances with JsonInstances {
 
     private def prepSubmissionBatch(
       requestTopic: String,
-      batchLimit: Long
+      batchLimit: Long,
+      nowMillis: Long
     ): ConnectionIO[List[TransferRequest[Json]]] = {
       val batch_select = List(
         fr"select t.body, t.id, r.id as request_id from",
@@ -398,7 +414,11 @@ object DbClient extends PostgresInstances with JsonInstances {
       List(
         fr"with submission_batch as",
         Fragments.parentheses(batch_select),
-        fr"update transfers set status = ${TransferStatus.Submitted: TransferStatus}",
+        fr"update transfers",
+        Fragments.set(
+          fr"status = ${TransferStatus.Submitted: TransferStatus}",
+          fr"submitted_at =" ++ Fragment.const(timestampSql(nowMillis))
+        ),
         fr"from submission_batch where transfers.id = submission_batch.id",
         fr"returning submission_batch.body, submission_batch.id, submission_batch.request_id"
       ).reduce(_ ++ _)
