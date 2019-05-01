@@ -372,15 +372,11 @@ object DbClient extends PostgresInstances with JsonInstances {
           .query[(String, Long)]
           .to[List]
           .map(_.toMap)
-        pendingCount <- getCountsInState(TransferStatus.Pending)
         submittedCount <- getCountsInState(TransferStatus.Submitted)
       } yield {
         maxCounts.map {
           case (topic, max) =>
-            topic -> math.min(
-              max - submittedCount.getOrElse(topic, 0L),
-              pendingCount.getOrElse(topic, 0L)
-            )
+            topic -> math.max(0L, max - submittedCount.getOrElse(topic, 0L))
         }.toList
       }
 
