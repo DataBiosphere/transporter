@@ -10,7 +10,7 @@
             LOCK TABLE ONLY transfers IN EXCLUSIVE MODE;
             ALTER TYPE transfer_status RENAME TO _transfer_status;
             CREATE TYPE transfer_status AS ENUM ('pending', 'submitted', 'failed', 'succeeded');
-            ALTER TABLE transfers ALTER COLUMN status TYPE transfer_status USING transfers::text::transfer_status;
+            ALTER TABLE transfers ALTER COLUMN status TYPE transfer_status USING status::text::transfer_status;
             DROP TYPE _transfer_status
         </sql>
 
@@ -19,7 +19,7 @@
                 LOCK TABLE ONLY transfers IN EXCLUSIVE MODE;
                 ALTER TYPE transfer_status RENAME TO _transfer_status;
                 CREATE TYPE transfer_status AS ENUM ('submitted', 'failed', 'succeeded');
-                ALTER TABLE transfers ALTER COLUMN status TYPE transfer_status USING transfers::text::transfer_status;
+                ALTER TABLE transfers ALTER COLUMN status TYPE transfer_status USING status::text::transfer_status;
                 DROP TYPE _transfer_status
             </sql>
         </rollback>
