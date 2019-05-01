@@ -11,6 +11,8 @@ import doobie.implicits._
 import doobie.util.Put
 import doobie.util.transactor.Transactor
 import doobie.util.update.Update
+import fs2.Stream
+import fs2.concurrent.{Queue => FSQueue}
 import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
@@ -25,7 +27,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
 import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
-import scala.concurrent.duration.TimeUnit
+import scala.concurrent.duration._
 
 class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
@@ -34,6 +36,7 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
   private val initNow = 12345L
 
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+
   private implicit def clk: Clock[IO] = new Clock[IO] {
     private[this] val now = Ref.unsafe[IO, Long](initNow)
 
@@ -351,6 +354,177 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
       details <- client.lookupTransferDetails(queueId, reqId, UUID.randomUUID())
     } yield {
       details shouldBe None
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "submit batches of pending transfers" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val queueId2 = UUID.randomUUID()
+    val queue2 =
+      queue.copy(name = "foo", requestTopic = "requests2", maxConcurrentTransfers = 10)
+
+    val request1 = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+    val request2 = BulkRequest(List.tabulate(queue2.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val getSubmitTimes =
+      sql"select distinct submitted_at from transfers where submitted_at is not null"
+        .query[OffsetDateTime]
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      _ <- client.createQueue(queueId2, queue2)
+
+      batch0 <- client.submitTransfers(IO.pure)
+      submitTime0 <- getSubmitTimes.option.transact(transactor)
+
+      reqId1 <- client.recordTransferRequest(queueId, request1)
+      reqId2 <- client.recordTransferRequest(queueId2, request2)
+      ids1 <- sql"select id from transfers where request_id = $reqId1"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+      ids2 <- sql"select id from transfers where request_id = $reqId2"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+
+      batch1 <- client.submitTransfers(IO.pure)
+      submitTime1 <- getSubmitTimes.unique.transact(transactor)
+      batch2 <- client.submitTransfers(IO.pure)
+
+      idsToUpdate = List.concat(
+        ids1.zipWithIndex.collect { case (id, i) if i % 2 == 0 => id },
+        ids2.zipWithIndex.collect { case (id, i) if i % 2 == 0 => id }
+      )
+      _ <- fakeUpdate.updateMany {
+        idsToUpdate.zipWithIndex.map {
+          case (id, i) =>
+            val status =
+              if (i % 2 == 0) TransferStatus.Succeeded else TransferStatus.Failed
+            (status, odt(initNow + 2), json"$i", id)
+        }
+      }.transact(transactor)
+
+      batch3 <- client.submitTransfers(IO.pure)
+      submitTimes2 <- getSubmitTimes.to[Set].transact(transactor)
+    } yield {
+      // Sanity-check: Nothing to submit when no requests persisted.
+      batch0 should contain theSameElementsAs List(
+        queue.requestTopic -> Nil,
+        queue2.requestTopic -> Nil
+      )
+      submitTime0 shouldBe None
+
+      // Nothing in flight yet, submission batch should have max elements.
+      val transfersMap1 = batch1.toMap
+      transfersMap1.keySet shouldBe Set(queue.requestTopic, queue2.requestTopic)
+      val queue1Batch = transfersMap1(queue.requestTopic)
+      val queue2Batch = transfersMap1(queue2.requestTopic)
+
+      queue1Batch should have length queue.maxConcurrentTransfers.toLong
+      queue2Batch should have length queue2.maxConcurrentTransfers.toLong
+
+      queue1Batch.map(_.id).toSet.subsetOf(ids1.toSet) shouldBe true
+      queue2Batch.map(_.id).toSet.subsetOf(ids2.toSet) shouldBe true
+
+      // Submission time should've been updated.
+      submitTime1.toInstant shouldBe Instant.ofEpochMilli(initNow + 1)
+
+      // Sanity-check: Immediate re-submission should pull nothing from DB.
+      batch2 should contain theSameElementsAs List(
+        queue.requestTopic -> Nil,
+        queue2.requestTopic -> Nil
+      )
+
+      // Post-completion: New IDs should be pulled for submission.
+      val transfersMap2 = batch3.toMap
+      transfersMap2.keySet shouldBe Set(queue.requestTopic, queue2.requestTopic)
+      val queue1Batch2 = transfersMap2(queue.requestTopic)
+      val queue2Batch2 = transfersMap2(queue2.requestTopic)
+
+      queue1Batch2 should have length queue.maxConcurrentTransfers / 2L
+      queue2Batch2 should have length queue2.maxConcurrentTransfers / 2L
+
+      queue1Batch2.map(_.id).toSet.subsetOf(ids1.toSet) shouldBe true
+      queue2Batch2.map(_.id).toSet.subsetOf(ids2.toSet) shouldBe true
+
+      queue1Batch2.toSet.intersect(queue1Batch.toSet) shouldBe empty
+      queue2Batch2.toSet.intersect(queue2Batch.toSet) shouldBe empty
+
+      // Submission time should be new.
+      submitTimes2.map(_.toInstant) shouldBe Set(initNow + 1, initNow + 3)
+        .map(Instant.ofEpochMilli)
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "not mark transfers as submitted if the submission step fails" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      _ <- client.recordTransferRequest(queueId, request)
+      attempt <- client
+        .submitTransfers(_ => IO.raiseError[Unit](new RuntimeException("BOOM")))
+        .attempt
+      submittedIds <- sql"select id from transfers where status = 'submitted'"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+      submitTime <- sql"select distinct submitted_at from transfers where submitted_at is not null"
+        .query[OffsetDateTime]
+        .option
+        .transact(transactor)
+    } yield {
+      attempt.isLeft shouldBe true
+      submittedIds shouldBe empty
+      submitTime shouldBe None
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "not double-submit transfers on concurrent access" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      submittedStream <- FSQueue.noneTerminated[IO, UUID]
+      _ <- client.createQueue(queueId, queue)
+      _ <- client.recordTransferRequest(queueId, request)
+
+      doSubmit = client.submitTransfers { transfers =>
+        Stream
+          .emits(transfers.flatMap(_._2.map(_.id)))
+          .map(Some(_))
+          .through(submittedStream.enqueue)
+          .compile
+          .drain
+      }
+      _ <- (doSubmit, doSubmit, doSubmit).parTupled.void
+      _ <- submittedStream.enqueue1(None)
+      submittedIds <- submittedStream.dequeue.compile.toList
+    } yield {
+      submittedIds should have length queue.maxConcurrentTransfers.toLong
+      submittedIds.distinct shouldBe submittedIds
     }
 
     checks.unsafeRunSync()
