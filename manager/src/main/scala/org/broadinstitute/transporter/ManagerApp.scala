@@ -8,14 +8,12 @@ import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.kafka.AdminClient
 import org.broadinstitute.transporter.queue.QueueController
-import org.broadinstitute.transporter.transfer.{ResultListener, TransferController}
-import org.broadinstitute.transporter.web.{
-  ApiRoutes,
-  InfoRoutes,
-  SwaggerMiddleware,
-  WebConfig
+import org.broadinstitute.transporter.transfer.{
+  ResultListener,
+  SubmissionSweeper,
+  TransferController
 }
-import org.http4s.HttpApp
+import org.broadinstitute.transporter.web.{ApiRoutes, InfoRoutes, SwaggerMiddleware}
 import org.http4s.implicits._
 import org.http4s.rho.swagger.models.Info
 import org.http4s.server.blaze.BlazeServerBuilder
@@ -23,10 +21,10 @@ import org.http4s.server.middleware.Logger
 
 /** Components defining the Transporter Manager service. */
 class ManagerApp private (
-  webApi: HttpApp[IO],
-  webConfig: WebConfig,
+  webServer: BlazeServerBuilder[IO],
+  submissionSweeper: SubmissionSweeper,
   resultListener: ResultListener
-)(implicit cs: ContextShift[IO], t: Timer[IO]) {
+)(implicit cs: ContextShift[IO]) {
 
   /**
     * Run all components of the service.
@@ -34,23 +32,14 @@ class ManagerApp private (
     * NOTE: In normal operation, this method will only return if the JVM is sent
     * a signal which the IOApp platform interprets to cancel the running IOs.
     */
-  def run: IO[ExitCode] = (bindAndRun, resultListener.processResults).parMapN {
-    case (exit, _) => exit
-  }
-
-  /**
-    * Run the web API of this service on a local port defined in config.
-    *
-    * NOTE: This method only returns when a cancellation / interruption signal is
-    * received. It should never produce an `IO(ExitCode.Success)`.
-    */
-  private def bindAndRun: IO[ExitCode] =
-    BlazeServerBuilder[IO]
-      .bindHttp(port = webConfig.port, host = webConfig.host)
-      .withHttpApp(webApi)
-      .serve
-      .compile
-      .lastOrError
+  def run: IO[ExitCode] =
+    (
+      webServer.serve.compile.lastOrError,
+      submissionSweeper.runSweeper,
+      resultListener.processResults
+    ).parMapN {
+      case (exit, _, _) => exit
+    }
 }
 
 object ManagerApp {
@@ -73,6 +62,7 @@ object ManagerApp {
       // across controllers in the app.
       dbClient <- DbClient.resource(config.db, blockingEc)
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
+      sweeper <- SubmissionSweeper.resource(dbClient, config)
       listener <- ResultListener.resource(dbClient, config.kafka)
     } yield {
       val queueController = QueueController(dbClient, adminClient)
@@ -86,6 +76,10 @@ object ManagerApp {
       val appRoutes = SwaggerMiddleware(routes, info, blockingEc).orNotFound
       val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
 
-      new ManagerApp(http, config.web, listener)
+      val server = BlazeServerBuilder[IO]
+        .bindHttp(port = config.web.port, host = config.web.host)
+        .withHttpApp(http)
+
+      new ManagerApp(server, sweeper, listener)
     }
 }
