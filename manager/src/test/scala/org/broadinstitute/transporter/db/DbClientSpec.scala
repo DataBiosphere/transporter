@@ -467,6 +467,27 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     checks.unsafeRunSync()
   }
 
+  it should "not crash if more than max concurrent transfers are running during the sweep" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, request)
+      _ <- sql"""update transfers set status = ${TransferStatus.Submitted: TransferStatus}
+                 where request_id = $reqId""".update.run.void.transact(transactor)
+      batch <- client.submitTransfers(IO.pure)
+    } yield {
+      batch shouldBe List(queue.requestTopic -> Nil)
+    }
+
+    checks.unsafeRunSync()
+  }
+
   it should "not mark transfers as submitted if the submission step fails" in {
     val transactor = testTransactor(container.password)
     val client = new DbClient.Impl(transactor)
