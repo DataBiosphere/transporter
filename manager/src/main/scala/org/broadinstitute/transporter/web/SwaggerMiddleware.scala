@@ -42,7 +42,7 @@ object SwaggerMiddleware {
      * one safe choice for the swagger parameters so there's no point
      * in taking them as arguments.
      */
-    s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/index.html?url=/$apiDocsPath&apisSorter=alpha&operationsSorter=alpha"
+    s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/index.html?url=/$apiDocsPath"
 
   /**
     * Convert a set of Rho routes tagged with documentation into
