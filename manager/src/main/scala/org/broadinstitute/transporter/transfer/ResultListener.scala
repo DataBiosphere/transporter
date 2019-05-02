@@ -1,11 +1,12 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.{ContextShift, IO}
+import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaConsumer
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
+import org.broadinstitute.transporter.kafka.{KafkaConsumer, Serdes}
 
 /**
   * Component responsible for processing summary messages received
@@ -14,7 +15,12 @@ import org.broadinstitute.transporter.kafka.KafkaConsumer
   * Coordinates persisting results to the DB and resubmitting transfers
   * that fail on transient errors.
   */
-trait ResultListener {
+class ResultListener private[transfer] (
+  consumer: KafkaConsumer[TransferSummary[Json]],
+  dbClient: DbClient
+)(implicit cs: ContextShift[IO]) {
+
+  private val logger = Slf4jLogger.getLogger[IO]
 
   /**
     * Launch the stream that will listen to & process all results
@@ -23,55 +29,41 @@ trait ResultListener {
     * NOTE: The returned `IO` won't complete except on error / cancellation;
     * run it concurrently as a background thread.
     */
-  def processResults: IO[Unit]
+  def processResults: IO[Unit] = consumer.runForeach(processBatch)
+
+  /** Process a single batch of results received from some number of Transporter agents. */
+  private[transfer] def processBatch(
+    batch: List[KafkaConsumer.Attempt[TransferSummary[Json]]]
+  ): IO[Unit] = {
+    val (numMalformed, results) = batch.foldMap {
+      case Right(res) => (0, List(res))
+      case Left(_)    => (1, Nil)
+    }
+
+    val logPrefix = s"Recording ${results.length} transfer results"
+
+    for {
+      _ <- if (numMalformed > 0) {
+        logger.warn(s"$logPrefix; ignoring $numMalformed malformed entities in batch")
+      } else {
+        logger.info(logPrefix)
+      }
+      _ <- dbClient.updateTransfers(results)
+    } yield ()
+  }
 }
 
 object ResultListener {
 
-  // Pseudo-constructor for the Impl subclass.
-  def apply(
-    consumer: KafkaConsumer[TransferSummary[Json]],
-    dbClient: DbClient
-  )(implicit cs: ContextShift[IO]): ResultListener =
-    new Impl(consumer, dbClient)
-
-  /**
-    * Concrete listener implementation used by mainline app code.
-    *
-    * @param consumer Kafka consumer subscribed to Transporter result topics
-    * @param dbClient DB client to use for persisting transfer results
-    * @param cs proof of the ability to shift IO-wrapped computations
-    *           onto other threads
-    */
-  private[transfer] class Impl(
-    consumer: KafkaConsumer[TransferSummary[Json]],
-    dbClient: DbClient
-  )(implicit cs: ContextShift[IO])
-      extends ResultListener {
-
-    private val logger = Slf4jLogger.getLogger[IO]
-
-    override def processResults: IO[Unit] = consumer.runForeach(processBatch)
-
-    /** Process a single batch of results received from some number of Transporter agents. */
-    private[transfer] def processBatch(
-      batch: List[KafkaConsumer.Attempt[TransferSummary[Json]]]
-    ): IO[Unit] = {
-      val (numMalformed, results) = batch.foldMap {
-        case Right(res) => (0, List(res))
-        case Left(_)    => (1, Nil)
-      }
-
-      val logPrefix = s"Recording ${results.length} transfer results"
-
-      for {
-        _ <- if (numMalformed > 0) {
-          logger.warn(s"$logPrefix; ignoring $numMalformed malformed entities in batch")
-        } else {
-          logger.info(logPrefix)
-        }
-        _ <- dbClient.updateTransfers(results)
-      } yield ()
-    }
-  }
+  def resource(dbClient: DbClient, kafkaConfig: KafkaConfig)(
+    implicit cs: ContextShift[IO],
+    t: Timer[IO]
+  ): Resource[IO, ResultListener] =
+    KafkaConsumer
+      .resource(
+        s"${KafkaConfig.ResponseTopicPrefix}.+".r,
+        kafkaConfig,
+        Serdes.decodingDeserializer[TransferSummary[Json]]
+      )
+      .map(new ResultListener(_, dbClient))
 }

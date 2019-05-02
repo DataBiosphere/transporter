@@ -6,12 +6,11 @@ import java.util.UUID
 import cats.Order
 import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
-import cats.effect.{ExitCase, IO}
+import cats.effect.IO
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.queue.{QueueController, QueueSchema}
 import org.broadinstitute.transporter.transfer.api._
@@ -56,11 +55,8 @@ trait TransferController {
 object TransferController {
 
   // Pseudo-constructor for the Impl subclass.
-  def apply(
-    queueController: QueueController,
-    dbClient: DbClient,
-    producer: KafkaProducer[TransferRequest[Json]]
-  ): TransferController = new Impl(queueController, dbClient, producer)
+  def apply(queueController: QueueController, dbClient: DbClient): TransferController =
+    new Impl(queueController, dbClient)
 
   /** Exception used to mark when a user submits transfers that don't match a queue's expected schema. */
   case class InvalidRequest(failures: NonEmptyList[Throwable])
@@ -84,32 +80,20 @@ object TransferController {
     *
     * @param queueController controller to delegate to for performing queue-level operations
     * @param dbClient client which can interact with Transporter's DB
-    * @param producer client which can push messages into Kafka
     */
-  private[transfer] class Impl(
-    queueController: QueueController,
-    dbClient: DbClient,
-    producer: KafkaProducer[TransferRequest[Json]]
-  ) extends TransferController {
+  private[transfer] class Impl(queueController: QueueController, dbClient: DbClient)
+      extends TransferController {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def submitTransfer(
-      queueName: String,
-      request: BulkRequest
-    ): IO[RequestAck] =
+    override def submitTransfer(queueName: String, request: BulkRequest): IO[RequestAck] =
       for {
         (id, queue) <- getQueueInfo(queueName)
         _ <- logger.info(
           s"Submitting ${request.transfers.length} transfers to queue $queueName"
         )
         _ <- validateRequests(request.transfers, queue.schema)
-        (requestId, transfersById) <- dbClient.recordTransferRequest(id, request)
-        agentRequests = transfersById.map {
-          case (transferId, transferJson) =>
-            TransferRequest(transferJson, transferId, requestId)
-        }
-        _ <- submitOrRollback(requestId, queue.requestTopic, agentRequests)
+        requestId <- dbClient.recordTransferRequest(id, request)
       } yield {
         RequestAck(requestId)
       }
@@ -129,6 +113,7 @@ object TransferController {
         counts = summariesByStatus.mapValues(_._1)
         maybeStatus = List(
           TransferStatus.Submitted,
+          TransferStatus.Pending,
           TransferStatus.Failed,
           TransferStatus.Succeeded
         ).find(counts.getOrElse(_, 0L) > 0L)
@@ -198,28 +183,6 @@ object TransferController {
               .flatMap(_ => IO.raiseError(TransferController.InvalidRequest(errs)))
         }
       } yield ()
-
-    /**
-      * Attempt to submit a batch of messages to Kafka, cleaning up corresponding
-      * DB records on failure.
-      */
-    private def submitOrRollback(
-      requestId: UUID,
-      requestTopic: String,
-      messages: List[TransferRequest[Json]]
-    ): IO[Unit] =
-      producer.submit(requestTopic, messages).guaranteeCase {
-        case ExitCase.Completed =>
-          logger.info(s"Successfully submitted request $requestId")
-        case ExitCase.Canceled =>
-          logger
-            .warn(s"Submitting request $requestId was canceled")
-            .flatMap(_ => dbClient.deleteTransferRequest(requestId))
-        case ExitCase.Error(err) =>
-          logger
-            .error(err)(s"Failed to submit request $requestId")
-            .flatMap(_ => dbClient.deleteTransferRequest(requestId))
-      }
 
     /**
       * Get any information collected by the manager from transfers under a previously-submitted

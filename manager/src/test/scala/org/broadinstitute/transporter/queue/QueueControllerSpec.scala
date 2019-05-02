@@ -6,7 +6,7 @@ import cats.effect.IO
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
-import org.broadinstitute.transporter.queue.api.{Queue, QueueRequest}
+import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRequest}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
@@ -21,11 +21,18 @@ class QueueControllerSpec
 
   private def controller = new QueueController.Impl(db, kafka)
 
-  private val request = QueueRequest("test-queue", Json.obj().as[QueueSchema].right.value)
+  private val request =
+    QueueRequest("test-queue", Json.obj().as[QueueSchema].right.value, 2)
 
   private val id = UUID.randomUUID()
-  private val queue =
-    Queue(request.name, "requests", "progress", "responses", request.schema)
+  private val queue = Queue(
+    request.name,
+    "requests",
+    "progress",
+    "responses",
+    request.schema,
+    request.maxConcurrentTransfers
+  )
   private val dbInfo = (id, queue)
 
   behavior of "QueueController"
@@ -86,6 +93,17 @@ class QueueControllerSpec
       .value shouldBe err
   }
 
+  it should "reject negative max-in-flight parameters" in {
+    (db.lookupQueue _).expects(request.name).returning(IO.pure(None))
+
+    controller
+      .createQueue(request.copy(maxConcurrentTransfers = -1))
+      .attempt
+      .unsafeRunSync()
+      .left
+      .value shouldBe a[QueueController.InvalidQueueParameter]
+  }
+
   it should "not overwrite existing, consistent queues" in {
     (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
     (kafka.topicsExist _)
@@ -105,11 +123,30 @@ class QueueControllerSpec
     (kafka.topicsExist _)
       .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.pure(false))
-    (db.patchQueueSchema _).expects(id, queue.schema).returning(IO.unit)
+    (db.patchQueueParameters _)
+      .expects(
+        id,
+        QueueParameters(Some(queue.schema), Some(queue.maxConcurrentTransfers))
+      )
+      .returning(IO.unit)
     (kafka.createTopics _)
       .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
       .returning(IO.unit)
 
     controller.createQueue(request).unsafeRunSync() shouldBe queue
+  }
+
+  it should "reject negative max-in-flight parameters when correcting inconsistent state" in {
+    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
+    (kafka.topicsExist _)
+      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
+      .returning(IO.pure(false))
+
+    controller
+      .createQueue(request.copy(maxConcurrentTransfers = -1))
+      .attempt
+      .unsafeRunSync()
+      .left
+      .value shouldBe a[QueueController.InvalidQueueParameter]
   }
 }
