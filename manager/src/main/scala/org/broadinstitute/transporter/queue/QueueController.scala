@@ -1,11 +1,13 @@
 package org.broadinstitute.transporter.queue
 
+import java.util.UUID
+
 import cats.effect.{ExitCase, IO}
-import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.db.DbClient
 import org.broadinstitute.transporter.kafka.AdminClient
 import org.broadinstitute.transporter.kafka.config.KafkaConfig
+import org.broadinstitute.transporter.queue.api.{Queue, QueueRequest}
 
 /** Component responsible for handling all queue-related web requests. */
 trait QueueController {
@@ -37,7 +39,7 @@ trait QueueController {
     * getting into a state where we report existing info from the DB but always
     * fail to submit transfers because of nonexistent Kafka topics.
     */
-  def lookupQueueInfo(name: String): IO[Option[(FUUID, Queue)]]
+  def lookupQueueInfo(name: String): IO[Option[(UUID, Queue)]]
 }
 
 object QueueController {
@@ -96,7 +98,7 @@ object QueueController {
       }
     }
 
-    override def lookupQueueInfo(name: String): IO[Option[(FUUID, Queue)]] =
+    override def lookupQueueInfo(name: String): IO[Option[(UUID, Queue)]] =
       for {
         _ <- logger.info(s"Looking up info for queue with name '$name'")
         (maybeInfo, topicsExist) <- checkDbAndKafkaForQueue(name)
@@ -114,7 +116,7 @@ object QueueController {
       */
     private def checkDbAndKafkaForQueue(
       name: String
-    ): IO[(Option[(FUUID, Queue)], Boolean)] =
+    ): IO[(Option[(UUID, Queue)], Boolean)] =
       for {
         queueInfo <- dbClient.lookupQueue(name)
         topicsExist <- queueInfo.fold(IO.pure(false)) {
@@ -154,15 +156,17 @@ object QueueController {
       */
     private def initializeQueue(request: QueueRequest): IO[Queue] = {
       val name = request.name
+      val uuid = UUID.randomUUID()
+      val queue = api.Queue(
+        name = request.name,
+        requestTopic = s"${KafkaConfig.RequestTopicPrefix}$uuid",
+        progressTopic = s"${KafkaConfig.ProgressTopicPrefix}$uuid",
+        responseTopic = s"${KafkaConfig.ResponseTopicPrefix}$uuid",
+        schema = request.schema
+      )
+
       for {
-        uuid <- FUUID.randomFUUID[IO]
-        queue = Queue(
-          name = request.name,
-          requestTopic = s"${KafkaConfig.RequestTopicPrefix}$uuid",
-          progressTopic = s"${KafkaConfig.ProgressTopicPrefix}$uuid",
-          responseTopic = s"${KafkaConfig.ResponseTopicPrefix}$uuid",
-          schema = request.schema
-        )
+
         // `bracketCase` is like try-catch-finally for the FP libs.
         // It schedules cleanup code in a way that prevents it from
         // being skipped by cancellation.

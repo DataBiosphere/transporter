@@ -8,7 +8,8 @@ import io.chrisdavenport.log4cats.log4s.Log4sLogger
 import io.circe.{Decoder, Encoder}
 import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.kafka.{KStreamsConfig, TransferStreamBuilder}
-import org.broadinstitute.transporter.queue.{Queue, QueueConfig}
+import org.broadinstitute.transporter.queue.QueueConfig
+import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer.TransferRunner
 import org.http4s.Request
 import org.http4s.circe.CirceEntityDecoder

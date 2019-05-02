@@ -1,7 +1,8 @@
-package org.broadinstitute.transporter.queue
+package org.broadinstitute.transporter.queue.api
 
-import io.circe.{Decoder, Encoder}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
+import io.circe.{Decoder, Encoder}
+import org.broadinstitute.transporter.queue.QueueSchema
 
 /**
   * Model of a distinct stream of transfer requests which can be submitted

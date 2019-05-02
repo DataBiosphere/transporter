@@ -1,6 +1,7 @@
-package org.broadinstitute.transporter.queue
+package org.broadinstitute.transporter.queue.api
 
 import io.circe.Decoder
+import org.broadinstitute.transporter.queue.QueueSchema
 
 /**
   * Model for user-provided information required to initialize a queue resource.

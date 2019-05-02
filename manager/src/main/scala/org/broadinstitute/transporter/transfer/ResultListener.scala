@@ -2,7 +2,6 @@ package org.broadinstitute.transporter.transfer
 
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
-import io.chrisdavenport.fuuid.FUUID
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.DbClient
@@ -31,7 +30,7 @@ object ResultListener {
 
   // Pseudo-constructor for the Impl subclass.
   def apply(
-    consumer: KafkaConsumer[FUUID, TransferSummary[Option[Json]]],
+    consumer: KafkaConsumer[TransferSummary[Json]],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO]): ResultListener =
     new Impl(consumer, dbClient)
@@ -45,7 +44,7 @@ object ResultListener {
     *           onto other threads
     */
   private[transfer] class Impl(
-    consumer: KafkaConsumer[FUUID, TransferSummary[Option[Json]]],
+    consumer: KafkaConsumer[TransferSummary[Json]],
     dbClient: DbClient
   )(implicit cs: ContextShift[IO])
       extends ResultListener {
@@ -56,7 +55,7 @@ object ResultListener {
 
     /** Process a single batch of results received from some number of Transporter agents. */
     private[transfer] def processBatch(
-      batch: List[KafkaConsumer.Attempt[(FUUID, TransferSummary[Option[Json]])]]
+      batch: List[KafkaConsumer.Attempt[TransferSummary[Json]]]
     ): IO[Unit] = {
       val (numMalformed, results) = batch.foldMap {
         case Right(res) => (0, List(res))

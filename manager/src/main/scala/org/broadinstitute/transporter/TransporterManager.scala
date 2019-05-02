@@ -24,6 +24,7 @@ import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.{
   ResultListener,
   TransferController,
+  TransferRequest,
   TransferSummary
 }
 import org.http4s.HttpApp
@@ -97,14 +98,12 @@ class TransporterManager private[transporter] (config: ManagerConfig, info: Info
       adminClient <- AdminClient.resource(config.kafka, blockingEc)
       producer <- KafkaProducer.resource(
         config.kafka,
-        Serdes.fuuidSerializer,
-        Serdes.encodingSerializer[Json]
+        Serdes.encodingSerializer[TransferRequest[Json]]
       )
       consumer <- KafkaConsumer.resource(
         s"${KafkaConfig.ResponseTopicPrefix}.+".r,
         config.kafka,
-        Serdes.fuuidDeserializer,
-        Serdes.decodingDeserializer[TransferSummary[Option[Json]]]
+        Serdes.decodingDeserializer[TransferSummary[Json]]
       )
     } yield {
       val queueController = QueueController(dbClient, adminClient)

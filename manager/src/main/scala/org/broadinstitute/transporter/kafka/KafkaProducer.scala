@@ -9,13 +9,9 @@ import org.broadinstitute.transporter.kafka.config.KafkaConfig
 /**
   * Client responsible for pushing messages into Kafka topics.
   *
-  * Raw Kafka producer instances are configured to work with specific
-  * key/value types, so this class does the same.
-  *
-  * @tparam K the type of keys which should be pushed to Kafka by this producer
-  * @tparam V the type of values which should be pushed to Kafka by this producer
+  * @tparam M the type of messages which should be pushed to Kafka by this producer
   */
-trait KafkaProducer[K, V] {
+trait KafkaProducer[M] {
 
   /**
     * Submit a batch of messages to a topic.
@@ -23,7 +19,7 @@ trait KafkaProducer[K, V] {
     * The returned `IO` will only complete when the produced
     * messages have been acknowledged by the Kafka cluster.
     */
-  def submit(topic: String, messages: List[(K, V)]): IO[Unit]
+  def submit(topic: String, messages: List[M]): IO[Unit]
 }
 
 object KafkaProducer {
@@ -36,25 +32,26 @@ object KafkaProducer {
     * @param cs     proof of the ability to shift IO-wrapped computations
     *               onto other threads
     */
-  def resource[K, V](config: KafkaConfig, ks: Serializer[K], vs: Serializer[V])(
+  def resource[M](config: KafkaConfig, s: Serializer[M])(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, KafkaProducer[K, V]] =
-    fs2.kafka.producerResource[IO].using(config.producerSettings(ks, vs)).map(new Impl(_))
+  ): Resource[IO, KafkaProducer[M]] =
+    fs2.kafka
+      .producerResource[IO]
+      .using(config.producerSettings(Serializer.unit, s))
+      .map(new Impl(_))
 
   /**
     * Concrete implementation of our producer used by mainline code.
     *
     * @param producer client which can push "raw" messages to Kafka
     */
-  private[kafka] class Impl[K, V](producer: KProducer[IO, K, V])
-      extends KafkaProducer[K, V] {
+  private[kafka] class Impl[M](producer: KProducer[IO, Unit, M])
+      extends KafkaProducer[M] {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def submit(topic: String, messages: List[(K, V)]): IO[Unit] = {
-      val records = messages.map {
-        case (id, value) => ProducerRecord(topic, id, value)
-      }
+    override def submit(topic: String, messages: List[M]): IO[Unit] = {
+      val records = messages.map(ProducerRecord(topic, (), _))
 
       for {
         _ <- logger.info(s"Submitting ${messages.length} records to Kafka topic $topic")
