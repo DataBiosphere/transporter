@@ -44,6 +44,12 @@ trait TransferController {
     */
   def lookupRequestFailures(queueName: String, requestId: UUID): IO[RequestMessages]
 
+  /**
+    * Reset the state of all failed transfers under a request to 'pending',
+    * to be picked up by the submission sweeper.
+    */
+  def reconsiderRequest(queueName: String, requestId: UUID): IO[RequestAck]
+
   /** Get detailed information about a single transfer running under a queue. */
   def lookupTransferDetails(
     queueName: String,
@@ -98,9 +104,31 @@ object TransferController {
         RequestAck(requestId)
       }
 
+    /** Validate that every request in a batch matches the expected JSON schema for a queue. */
+    private def validateRequests(requests: List[Json], schema: QueueSchema): IO[Unit] =
+      for {
+        _ <- logger.debug(s"Validating requests against schema: $schema")
+        _ <- requests.traverse_(schema.validate(_).toValidatedNel) match {
+          case Valid(_) => IO.unit
+          case Invalid(errs) =>
+            logger
+              .error(s"Requests failed validation:")
+              .flatMap(_ => errs.traverse_(e => logger.error(e.getMessage)))
+              .flatMap(_ => IO.raiseError(TransferController.InvalidRequest(errs)))
+        }
+      } yield ()
+
     private val baselineCounts = TransferStatus.values.map(_ -> 0L).toMap
 
     private implicit val odtOrder: Order[OffsetDateTime] = _.compareTo(_)
+
+    private def getQueueInfo(queueName: String): IO[(UUID, Queue)] =
+      for {
+        maybeInfo <- queueController.lookupQueueInfo(queueName)
+        info <- maybeInfo.liftTo[IO](QueueController.NoSuchQueue(queueName))
+      } yield {
+        info
+      }
 
     override def lookupRequestStatus(
       queueName: String,
@@ -108,6 +136,9 @@ object TransferController {
     ): IO[RequestStatus] =
       for {
         (queueId, _) <- getQueueInfo(queueName)
+        requestInQueue <- dbClient.checkRequestInQueue(queueId, requestId)
+        _ <- IO.raiseError(NoSuchRequest(queueName, requestId)).whenA(!requestInQueue)
+
         summariesByStatus <- dbClient
           .summarizeTransfersByStatus(queueId, requestId)
         counts = summariesByStatus.mapValues(_._1)
@@ -117,12 +148,12 @@ object TransferController {
           TransferStatus.Failed,
           TransferStatus.Succeeded
         ).find(counts.getOrElse(_, 0L) > 0L)
-        status <- maybeStatus.liftTo[IO](NoSuchRequest(queueName, requestId))
       } yield {
         val flattenedInfo = summariesByStatus.values
         RequestStatus(
           requestId,
-          status,
+          // No transfers, instant success!
+          maybeStatus.getOrElse(TransferStatus.Succeeded),
           baselineCounts.combine(counts),
           submittedAt = flattenedInfo
             .flatMap(_._2)
@@ -147,43 +178,6 @@ object TransferController {
     ): IO[RequestMessages] =
       lookupRequestMessages(queueName, requestId, TransferStatus.Failed)
 
-    def lookupTransferDetails(
-      queueName: String,
-      requestId: UUID,
-      transferId: UUID
-    ): IO[TransferDetails] =
-      for {
-        (queueId, _) <- getQueueInfo(queueName)
-        maybeDetails <- dbClient.lookupTransferDetails(queueId, requestId, transferId)
-        details <- maybeDetails.liftTo[IO](
-          NoSuchTransfer(queueName, requestId, transferId)
-        )
-      } yield {
-        details
-      }
-
-    private def getQueueInfo(queueName: String): IO[(UUID, Queue)] =
-      for {
-        maybeInfo <- queueController.lookupQueueInfo(queueName)
-        info <- maybeInfo.liftTo[IO](QueueController.NoSuchQueue(queueName))
-      } yield {
-        info
-      }
-
-    /** Validate that every request in a batch matches the expected JSON schema for a queue. */
-    private def validateRequests(requests: List[Json], schema: QueueSchema): IO[Unit] =
-      for {
-        _ <- logger.debug(s"Validating requests against schema: $schema")
-        _ <- requests.traverse_(schema.validate(_).toValidatedNel) match {
-          case Valid(_) => IO.unit
-          case Invalid(errs) =>
-            logger
-              .error(s"Requests failed validation:")
-              .flatMap(_ => errs.traverse_(e => logger.error(e.getMessage)))
-              .flatMap(_ => IO.raiseError(TransferController.InvalidRequest(errs)))
-        }
-      } yield ()
-
     /**
       * Get any information collected by the manager from transfers under a previously-submitted
       * request which have a given status.
@@ -195,9 +189,39 @@ object TransferController {
     ): IO[RequestMessages] =
       for {
         (queueId, _) <- getQueueInfo(queueName)
+        requestInQueue <- dbClient.checkRequestInQueue(queueId, requestId)
+        _ <- IO.raiseError(NoSuchRequest(queueName, requestId)).whenA(!requestInQueue)
         successMessages <- dbClient.lookupTransferMessages(queueId, requestId, status)
       } yield {
         RequestMessages(requestId, successMessages)
+      }
+
+    override def reconsiderRequest(queueName: String, requestId: UUID): IO[RequestAck] =
+      for {
+        (queueId, _) <- getQueueInfo(queueName)
+        requestInQueue <- dbClient.checkRequestInQueue(queueId, requestId)
+        _ <- IO.raiseError(NoSuchRequest(queueName, requestId)).whenA(!requestInQueue)
+        _ <- dbClient.resetTransferFailures(queueId, requestId)
+      } yield {
+        RequestAck(requestId)
+      }
+
+    override def lookupTransferDetails(
+      queueName: String,
+      requestId: UUID,
+      transferId: UUID
+    ): IO[TransferDetails] =
+      for {
+        (queueId, _) <- getQueueInfo(queueName)
+        requestInQueue <- dbClient.checkRequestInQueue(queueId, requestId)
+        _ <- IO.raiseError(NoSuchRequest(queueName, requestId)).whenA(!requestInQueue)
+
+        maybeDetails <- dbClient.lookupTransferDetails(queueId, requestId, transferId)
+        details <- maybeDetails.liftTo[IO](
+          NoSuchTransfer(queueName, requestId, transferId)
+        )
+      } yield {
+        details
       }
   }
 }

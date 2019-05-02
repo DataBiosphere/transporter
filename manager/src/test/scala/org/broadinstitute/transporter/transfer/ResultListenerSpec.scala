@@ -51,7 +51,7 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
       id = UUID.randomUUID(),
       requestId = requestId
     )
-  )
+  ).map("topic" -> _)
 
   private def listener = new ResultListener(consumer, db)
 
@@ -59,14 +59,16 @@ class ResultListenerSpec extends FlatSpec with Matchers with MockFactory {
 
   it should "record successes and fatal failures" in {
     (db.updateTransfers _).expects(results).returning(IO.unit)
-    listener.processBatch(results.map(Right(_))).unsafeRunSync()
+    listener
+      .processBatch(results.map { case (topic, msg) => topic -> Right(msg) })
+      .unsafeRunSync()
   }
 
   it should "not crash if Kafka receives malformed data" in {
     val batch = List.concat(
-      List(Left(new IllegalStateException("WAT"))),
-      results.map(Right(_)),
-      List(Left(new IllegalStateException("WOT")))
+      List("topic2" -> Left(new IllegalStateException("WAT"))),
+      results.map { case (topic, msg) => topic -> Right(msg) },
+      List("topic2" -> Left(new IllegalStateException("WOT")))
     )
 
     (db.updateTransfers _).expects(results).returning(IO.unit)

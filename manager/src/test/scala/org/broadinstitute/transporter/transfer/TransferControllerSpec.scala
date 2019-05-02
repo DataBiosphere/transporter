@@ -86,6 +86,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(counts.mapValues(c => (c, None, None))))
@@ -105,20 +106,18 @@ class TransferControllerSpec
     )
   }
 
-  it should "return an error if looking up summaries for an ID with no registered transfers" in {
+  it should "return an error if looking up summaries for a nonexistent request" in {
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
-    (db.summarizeTransfersByStatus _)
-      .expects(queueId, requestId)
-      .returning(IO.pure(Map.empty))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(false))
 
     controller
       .lookupRequestStatus(queueName, requestId)
       .attempt
-      .unsafeRunSync() shouldBe Left(
-      TransferController.NoSuchRequest(queueName, requestId)
-    )
+      .unsafeRunSync()
+      .left
+      .value shouldBe TransferController.NoSuchRequest(queueName, requestId)
   }
 
   it should "return an error if looking up summaries for an unregistered queue name" in {
@@ -129,7 +128,9 @@ class TransferControllerSpec
     controller
       .lookupRequestStatus(queueName, requestId)
       .attempt
-      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+      .unsafeRunSync()
+      .left
+      .value shouldBe QueueController.NoSuchQueue(queueName)
   }
 
   it should "prioritize submissions over all in request summaries" in {
@@ -143,6 +144,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(counts.mapValues(c => (c, None, None))))
@@ -168,6 +170,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(counts.mapValues(c => (c, None, None))))
@@ -194,6 +197,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(counts.mapValues(c => (c, None, None))))
@@ -242,6 +246,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.summarizeTransfersByStatus _)
       .expects(queueId, requestId)
       .returning(IO.pure(lookup))
@@ -261,6 +266,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.lookupTransferMessages _)
       .expects(queueId, requestId, TransferStatus.Succeeded)
       .returning(IO.pure(outputs))
@@ -276,6 +282,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.lookupTransferMessages _)
       .expects(queueId, requestId, TransferStatus.Failed)
       .returning(IO.pure(failures))
@@ -283,6 +290,34 @@ class TransferControllerSpec
     controller
       .lookupRequestFailures(queueName, requestId)
       .unsafeRunSync() shouldBe RequestMessages(requestId, failures)
+  }
+
+  it should "return an error if looking up outputs for a nonexistent request" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(false))
+
+    controller
+      .lookupRequestOutputs(queueName, requestId)
+      .attempt
+      .unsafeRunSync()
+      .left
+      .value shouldBe TransferController.NoSuchRequest(queueName, requestId)
+  }
+
+  it should "return an error if looking up failures for a nonexistent request" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(false))
+
+    controller
+      .lookupRequestFailures(queueName, requestId)
+      .attempt
+      .unsafeRunSync()
+      .left
+      .value shouldBe TransferController.NoSuchRequest(queueName, requestId)
   }
 
   it should "return an error if looking up outputs for an unregistered queue name" in {
@@ -293,7 +328,9 @@ class TransferControllerSpec
     controller
       .lookupRequestOutputs(queueName, requestId)
       .attempt
-      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+      .unsafeRunSync()
+      .left
+      .value shouldBe QueueController.NoSuchQueue(queueName)
   }
 
   it should "return an error if looking up failures for an unregistered queue name" in {
@@ -304,7 +341,9 @@ class TransferControllerSpec
     controller
       .lookupRequestFailures(queueName, requestId)
       .attempt
-      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+      .unsafeRunSync()
+      .left
+      .value shouldBe QueueController.NoSuchQueue(queueName)
   }
 
   it should "look up details for a transfer" in {
@@ -321,6 +360,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.lookupTransferDetails _)
       .expects(queueId, requestId, transferId)
       .returning(IO.pure(Some(details)))
@@ -338,7 +378,23 @@ class TransferControllerSpec
     controller
       .lookupTransferDetails(queueName, requestId, UUID.randomUUID())
       .attempt
-      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queueName))
+      .unsafeRunSync()
+      .left
+      .value shouldBe QueueController.NoSuchQueue(queueName)
+  }
+
+  it should "return an error if looking up details for a nonexistent request" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(false))
+
+    controller
+      .lookupTransferDetails(queueName, requestId, UUID.randomUUID())
+      .attempt
+      .unsafeRunSync()
+      .left
+      .value shouldBe TransferController.NoSuchRequest(queueName, requestId)
   }
 
   it should "return an error if looking up details for an unregistered transfer" in {
@@ -347,6 +403,7 @@ class TransferControllerSpec
     (queueController.lookupQueueInfo _)
       .expects(queueName)
       .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
     (db.lookupTransferDetails _)
       .expects(queueId, requestId, transferId)
       .returning(IO.pure(None))
@@ -354,8 +411,48 @@ class TransferControllerSpec
     controller
       .lookupTransferDetails(queueName, requestId, transferId)
       .attempt
-      .unsafeRunSync() shouldBe Left(
+      .unsafeRunSync()
+      .left
+      .value shouldBe
       TransferController.NoSuchTransfer(queueName, requestId, transferId)
-    )
+  }
+
+  it should "reconsider requests" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(true))
+    (db.resetTransferFailures _).expects(queueId, requestId).returning(IO.unit)
+
+    controller
+      .reconsiderRequest(queueName, requestId)
+      .unsafeRunSync() shouldBe RequestAck(requestId)
+  }
+
+  it should "return an error if reconsidering under a nonexistent queue" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(None))
+
+    controller
+      .reconsiderRequest(queueName, requestId)
+      .attempt
+      .unsafeRunSync()
+      .left
+      .value shouldBe QueueController.NoSuchQueue(queueName)
+  }
+
+  it should "return an error if reconsidering a nonexistent request" in {
+    (queueController.lookupQueueInfo _)
+      .expects(queueName)
+      .returning(IO.pure(Some(queueInfo)))
+    (db.checkRequestInQueue _).expects(queueId, requestId).returning(IO.pure(false))
+
+    controller
+      .reconsiderRequest(queueName, requestId)
+      .attempt
+      .unsafeRunSync()
+      .left
+      .value shouldBe TransferController.NoSuchRequest(queueName, requestId)
   }
 }

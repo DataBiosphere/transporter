@@ -23,7 +23,11 @@ import org.broadinstitute.transporter.transfer.api.{
   TransferDetails,
   TransferMessage
 }
-import org.broadinstitute.transporter.transfer.TransferStatus
+import org.broadinstitute.transporter.transfer.{
+  TransferResult,
+  TransferStatus,
+  TransferSummary
+}
 import org.scalatest.{EitherValues, OptionValues}
 
 import scala.concurrent.ExecutionContext
@@ -72,10 +76,6 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
   private val schema = json"{}".as[QueueSchema].right.value
   private val queue = Queue("test-queue", "requests", "progress", "responses", schema, 2)
-  private val queue2 = queue.copy(
-    schema = json"""{ "type": "object" }""".as[QueueSchema].right.value,
-    maxConcurrentTransfers = 1
-  )
   private val queueId = UUID.randomUUID()
 
   behavior of "DbClient"
@@ -94,18 +94,17 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
 
     val client = new DbClient.Impl(testTransactor(container.password))
 
+    val updateParameters = QueueParameters(
+      schema = Some(json"""{ "type": "object" }""".as[QueueSchema].right.value),
+      maxConcurrentTransfers = Some(1)
+    )
+
     val check = for {
       res <- client.lookupQueue(queue.name)
       _ <- client.createQueue(queueId, queue)
       res2 <- client.lookupQueue(queue.name)
       (outId, outQueue) = res2.value
-      _ <- client.patchQueueParameters(
-        outId,
-        QueueParameters(
-          schema = Some(queue2.schema),
-          maxConcurrentTransfers = Some(queue2.maxConcurrentTransfers)
-        )
-      )
+      _ <- client.patchQueueParameters(outId, updateParameters)
       res3 <- client.lookupQueue(queue.name)
       (updatedId, updatedQueue) = res3.value
       _ <- client.deleteQueue(queueId)
@@ -117,7 +116,8 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
       outQueue shouldBe queue
 
       updatedId shouldBe queueId
-      updatedQueue shouldBe queue2
+      updatedQueue.schema shouldBe updateParameters.schema.value
+      updatedQueue.maxConcurrentTransfers shouldBe updateParameters.maxConcurrentTransfers.value
 
       res4 shouldBe None
     }
@@ -170,6 +170,25 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
       postTransfers shouldBe 10
 
       statuses shouldBe Set(TransferStatus.Pending)
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "check if a request ID is registered under a queue" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val requests = BulkRequest(List.fill(10)(json"{}"))
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, requests)
+      submittedRequestIsRegistered <- client.checkRequestInQueue(queueId, reqId)
+      randomRequestIsRegistered <- client.checkRequestInQueue(queueId, UUID.randomUUID())
+    } yield {
+      submittedRequestIsRegistered shouldBe true
+      randomRequestIsRegistered shouldBe false
     }
 
     checks.unsafeRunSync()
@@ -364,8 +383,13 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     val client = new DbClient.Impl(transactor)
 
     val queueId2 = UUID.randomUUID()
-    val queue2 =
-      queue.copy(name = "foo", requestTopic = "requests2", maxConcurrentTransfers = 10)
+    val queue2 = queue.copy(
+      name = "foo",
+      requestTopic = "requests2",
+      progressTopic = "progress2",
+      responseTopic = "responses2",
+      maxConcurrentTransfers = 10
+    )
 
     val request1 = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
       json"""{ "i": $i }"""
@@ -546,6 +570,195 @@ class DbClientSpec extends PostgresSpec with EitherValues with OptionValues {
     } yield {
       submittedIds should have length queue.maxConcurrentTransfers.toLong
       submittedIds.distinct shouldBe submittedIds
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "update transfers with collected results" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, request)
+      ids <- sql"select id from transfers where request_id = $reqId"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+      idsToUpdate = ids.zipWithIndex.collect { case (id, i) if i % 2 == 0 => id }
+
+      summaries = idsToUpdate.map { id =>
+        TransferSummary(TransferResult.Success, json"$id", id, reqId)
+      }
+      _ <- client.updateTransfers(summaries.map(queue.responseTopic -> _))
+      details <- ids.flatTraverse(
+        client.lookupTransferDetails(queueId, reqId, _).map(_.toList)
+      )
+    } yield {
+      details.foreach { detail =>
+        if (idsToUpdate.contains(detail.id)) {
+          detail.status shouldBe TransferStatus.Succeeded
+          detail.reportedInfo.value shouldBe json"${detail.id}"
+          detail.updatedAt.value shouldBe odt(initNow)
+        } else {
+          detail.status shouldBe TransferStatus.Pending
+          detail.reportedInfo shouldBe None
+          detail.updatedAt shouldBe None
+        }
+      }
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "not update transfers if IDs are mismatched" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, request)
+      _ <- client.recordTransferRequest(queueId, request)
+      ids <- sql"select id from transfers"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+
+      summaries = ids.map { id =>
+        TransferSummary(TransferResult.FatalFailure, json"$id", id, reqId)
+      }
+
+      _ <- client.updateTransfers(summaries.map(queue.responseTopic -> _))
+      updatedRequests <- sql"select request_id from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        .query[UUID]
+        .to[Set]
+        .transact(transactor)
+    } yield {
+      updatedRequests shouldBe Set(reqId)
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "not update transfers if queue is mismatched" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, request)
+      ids <- sql"select id from transfers where request_id = $reqId"
+        .query[UUID]
+        .to[List]
+        .transact(transactor)
+
+      summaries = ids.map { id =>
+        TransferSummary(TransferResult.FatalFailure, json"$id", id, reqId)
+      }
+
+      _ <- client.updateTransfers(summaries.map("some-other-topic" -> _))
+      numUpdated <- sql"select count(1) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        .query[Long]
+        .unique
+        .transact(transactor)
+    } yield {
+      numUpdated shouldBe 0L
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "reset failed transfers to pending within a request" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, request)
+      _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus}".update.run.void
+        .transact(transactor)
+      _ <- client.resetTransferFailures(queueId, reqId)
+      numFailed <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        .query[Int]
+        .unique
+        .transact(transactor)
+    } yield {
+      numFailed shouldBe 0
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "not reset failed transfers if IDs are mismatched" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      _ <- client.recordTransferRequest(queueId, request)
+      numTransfers <- sql"select count(*) from transfers"
+        .query[Int]
+        .unique
+        .transact(transactor)
+      _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus}".update.run.void
+        .transact(transactor)
+      _ <- client.resetTransferFailures(queueId, UUID.randomUUID())
+      numFailed <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        .query[Int]
+        .unique
+        .transact(transactor)
+    } yield {
+      numFailed shouldBe numTransfers
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "not reset failed transfers if queue is mismatched" in {
+    val transactor = testTransactor(container.password)
+    val client = new DbClient.Impl(transactor)
+
+    val request = BulkRequest(List.tabulate(queue.maxConcurrentTransfers * 2) { i =>
+      json"""{ "i": $i }"""
+    })
+
+    val checks = for {
+      _ <- client.createQueue(queueId, queue)
+      reqId <- client.recordTransferRequest(queueId, request)
+      numTransfers <- sql"select count(*) from transfers"
+        .query[Int]
+        .unique
+        .transact(transactor)
+      _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus}".update.run.void
+        .transact(transactor)
+      _ <- client.resetTransferFailures(UUID.randomUUID(), reqId)
+      numFailed <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        .query[Int]
+        .unique
+        .transact(transactor)
+    } yield {
+      numFailed shouldBe numTransfers
     }
 
     checks.unsafeRunSync()
