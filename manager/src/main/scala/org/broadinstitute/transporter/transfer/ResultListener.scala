@@ -33,14 +33,14 @@ class ResultListener private[transfer] (
 
   /** Process a single batch of results received from some number of Transporter agents. */
   private[transfer] def processBatch(
-    batch: List[KafkaConsumer.Attempt[TransferSummary[Json]]]
+    batch: List[(String, KafkaConsumer.Attempt[TransferSummary[Json]])]
   ): IO[Unit] = {
-    val (numMalformed, results) = batch.foldMap {
-      case Right(res) => (0, List(res))
-      case Left(_)    => (1, Nil)
+    val (numMalformed, numGood, resultsByTopic) = batch.foldMap {
+      case (topic, Right(res)) => (0, 1, List(topic -> res))
+      case (_, Left(_))        => (1, 0, Nil)
     }
 
-    val logPrefix = s"Recording ${results.length} transfer results"
+    val logPrefix = s"Recording $numGood transfer results"
 
     for {
       _ <- if (numMalformed > 0) {
@@ -48,7 +48,7 @@ class ResultListener private[transfer] (
       } else {
         logger.info(logPrefix)
       }
-      _ <- dbClient.updateTransfers(results)
+      _ <- dbClient.updateTransfers(resultsByTopic)
     } yield ()
   }
 }

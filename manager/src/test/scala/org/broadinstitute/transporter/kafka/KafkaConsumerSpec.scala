@@ -23,7 +23,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
 
     val consumed = withKafka { (config, embeddedConfig) =>
       val roundTrip = for {
-        q <- Queue.unbounded[IO, UUID]
+        q <- Queue.unbounded[IO, (String, UUID)]
         _ <- IO.delay(createCustomTopic("the-topic")(embeddedConfig))
         _ <- IO.delay {
           publishToKafka("the-topic", messages)(
@@ -36,7 +36,14 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           .resource(topicPattern, config, Deserializer.uuid)
           .use { consumer =>
             val fiber = consumer.runForeach { batch =>
-              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+              Stream
+                .emits(batch)
+                .covary[IO]
+                .map { case (topic, attempt) => attempt.map(topic -> _) }
+                .rethrow
+                .through(q.enqueue)
+                .compile
+                .drain
             }.start
 
             fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
@@ -48,7 +55,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
       roundTrip.unsafeRunSync()
     }
 
-    consumed shouldBe messages.map(_._2)
+    consumed shouldBe messages.map { case (_, m) => ("the-topic", m) }
   }
 
   it should "process well-formed messages added to the topic post-startup" in {
@@ -56,13 +63,20 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
 
     val consumed = withKafka { (config, embeddedConfig) =>
       val roundTrip = for {
-        q <- Queue.unbounded[IO, UUID]
+        q <- Queue.unbounded[IO, (String, UUID)]
         _ <- IO.delay(createCustomTopic("the-topic")(embeddedConfig))
         out <- KafkaConsumer
           .resource(topicPattern, config, Deserializer.uuid)
           .use { consumer =>
             val fiber = consumer.runForeach { batch =>
-              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+              Stream
+                .emits(batch)
+                .covary[IO]
+                .map { case (topic, attempt) => attempt.map(topic -> _) }
+                .rethrow
+                .through(q.enqueue)
+                .compile
+                .drain
             }.start
 
             fiber.bracket({ _ =>
@@ -82,7 +96,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
       roundTrip.unsafeRunSync()
     }
 
-    consumed shouldBe messages.map(_._2)
+    consumed shouldBe messages.map { case (_, m) => ("the-topic", m) }
   }
 
   it should "not double-process messages on restart" in {
@@ -90,7 +104,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
 
     val consumed = withKafka { (config, embeddedConfig) =>
       val roundTrip = for {
-        q <- Queue.unbounded[IO, UUID]
+        q <- Queue.unbounded[IO, (String, UUID)]
         _ <- IO.delay(createCustomTopic("the-topic")(embeddedConfig))
         _ <- IO.delay {
           publishToKafka("the-topic", messages)(
@@ -103,7 +117,14 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           .resource(topicPattern, config, Deserializer.uuid)
           .use { consumer =>
             val fiber = consumer.runForeach { batch =>
-              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+              Stream
+                .emits(batch)
+                .covary[IO]
+                .map { case (topic, attempt) => attempt.map(topic -> _) }
+                .rethrow
+                .through(q.enqueue)
+                .compile
+                .drain
             }.start
 
             fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)
@@ -124,7 +145,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
       roundTrip.unsafeRunSync()
     }
 
-    consumed shouldBe messages.map(_._2)
+    consumed shouldBe messages.map { case (_, m) => ("the-topic", m) }
   }
 
   it should "process malformed messages" in {
@@ -148,7 +169,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
               Stream
                 .emits(batch)
                 .covary[IO]
-                .collect { case Left(err) => err }
+                .collect { case (_, Left(err)) => err }
                 .through(q.enqueue)
                 .compile
                 .drain
@@ -173,7 +194,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
 
     val consumed = withKafka { (config, embeddedConfig) =>
       val roundTrip = for {
-        q <- Queue.unbounded[IO, UUID]
+        q <- Queue.unbounded[IO, (String, UUID)]
         _ <- IO.delay(createCustomTopic("the-topic")(embeddedConfig))
         _ <- IO.delay {
           publishToKafka("the-topic", messages1)(
@@ -186,7 +207,14 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
           .resource(topicPattern, config, Deserializer.uuid)
           .use { consumer =>
             val fiber = consumer.runForeach { batch =>
-              Stream.emits(batch).covary[IO].rethrow.through(q.enqueue).compile.drain
+              Stream
+                .emits(batch)
+                .covary[IO]
+                .map { case (topic, attempt) => attempt.map(topic -> _) }
+                .rethrow
+                .through(q.enqueue)
+                .compile
+                .drain
             }.start
 
             fiber.bracket({ _ =>
@@ -219,7 +247,11 @@ class KafkaConsumerSpec extends BaseKafkaSpec {
       roundTrip.unsafeRunSync()
     }
 
-    consumed should contain inOrderElementsOf (messages1 ::: messages3).map(_._2)
-    consumed should contain inOrderElementsOf messages2.map(_._2)
+    consumed should contain inOrderElementsOf (messages1 ::: messages3).map {
+      case (_, m) => ("the-topic", m)
+    }
+    consumed should contain inOrderElementsOf messages2.map {
+      case (_, m) => ("the-topic2", m)
+    }
   }
 }

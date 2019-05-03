@@ -70,6 +70,9 @@ trait DbClient {
     */
   def recordTransferRequest(queueId: UUID, request: BulkRequest): IO[UUID]
 
+  /** Check if an ID is registered to a transfer request under a given queue. */
+  def checkRequestInQueue(queueId: UUID, requestId: UUID): IO[Boolean]
+
   /** Fetch summary info for transfers in a request, grouped by current status. */
   def summarizeTransfersByStatus(
     queueId: UUID,
@@ -83,6 +86,12 @@ trait DbClient {
     status: TransferStatus
   ): IO[List[TransferMessage]]
 
+  /**
+    * Reset the state of all failed transfers under a request to 'pending',
+    * to be picked up by the submission sweeper.
+    */
+  def resetTransferFailures(queueId: UUID, requestId: UUID): IO[Unit]
+
   /** Fetch detailed information about a single transfer. */
   def lookupTransferDetails(
     queueId: UUID,
@@ -90,6 +99,16 @@ trait DbClient {
     transferId: UUID
   ): IO[Option[TransferDetails]]
 
+  /**
+    * Extract a set of transfers which are eligible for submission from the DB,
+    * submit them, and mark their state change.
+    *
+    * The submission action is run within the context of the DB transaction so
+    * that if it fails, the DB state change will be rolled back.
+    *
+    * @param doSubmit logic to run on the extracted set of transfers to actually
+    *                 submit them to agents
+    */
   def submitTransfers[Out](
     doSubmit: List[(String, List[TransferRequest[Json]])] => IO[Out]
   ): IO[Out]
@@ -98,10 +117,10 @@ trait DbClient {
     * Update the current view of the status of a set of in-flight transfers
     * based on a batch of results returned by some number of agents.
     *
-    * @param results batch of ID -> result pairs pulled from Kafka which
-    *                should be pushed into the DB
+    * @param summariesByTopic batch of (response-topic -> summary) messages pulled from
+    *                         Kafka which should be pushed into the DB
     */
-  def updateTransfers(results: List[TransferSummary[Json]]): IO[Unit]
+  def updateTransfers(summariesByTopic: List[(String, TransferSummary[Json])]): IO[Unit]
 }
 
 object DbClient extends PostgresInstances with JsonInstances {
@@ -263,10 +282,20 @@ object DbClient extends PostgresInstances with JsonInstances {
       insertRequest.flatMap(_ => insertTransfers).transact(transactor).as(requestId)
     }
 
+    override def checkRequestInQueue(queueId: UUID, requestId: UUID): IO[Boolean] =
+      List(
+        fr"select count(1) from transfer_requests r join queues q on r.queue_id = q.id",
+        Fragments.whereAnd(fr"q.id = $queueId", fr"r.id = $requestId")
+      ).reduce(_ ++ _)
+        .query[Long]
+        .unique
+        .map(_ > 0L)
+        .transact(transactor)
+
     private val transfersJoinTable =
       fr"""transfers t
-           left join transfer_requests r on t.request_id = r.id
-           left join queues q on r.queue_id = q.id"""
+           join transfer_requests r on t.request_id = r.id
+           join queues q on r.queue_id = q.id"""
 
     override def summarizeTransfersByStatus(
       queueId: UUID,
@@ -306,6 +335,19 @@ object DbClient extends PostgresInstances with JsonInstances {
         .query[TransferMessage]
         .to[List]
         .transact(transactor)
+
+    override def resetTransferFailures(queueId: UUID, requestId: UUID): IO[Unit] =
+      List(
+        fr"update transfers t set status = ${TransferStatus.Pending: TransferStatus}",
+        fr"from transfer_requests r, queues q",
+        Fragments.whereAnd(
+          fr"t.request_id = r.id",
+          fr"r.queue_id = q.id",
+          fr"q.id = $queueId",
+          fr"r.id = $requestId",
+          fr"t.status = ${TransferStatus.Failed: TransferStatus}"
+        )
+      ).reduce(_ ++ _).update.run.void.transact(transactor)
 
     override def lookupTransferDetails(
       queueId: UUID,
@@ -358,8 +400,8 @@ object DbClient extends PostgresInstances with JsonInstances {
     }
 
     /**
-      * Get a mapping from Kafka topic name to the number of requests which could
-      * currently be submitted to that topic.
+      * Build a statement which will get a mapping from Kafka topic name to the
+      * number of requests which could currently be submitted to that topic.
       *
       * The eligible request count is computed based on:
       *   1. The number of pending transfers registered in the DB
@@ -380,6 +422,10 @@ object DbClient extends PostgresInstances with JsonInstances {
         }.toList
       }
 
+    /**
+      * Build a statement which will get the number of transfers associated with
+      * each request topic registered in the DB which have a particular status.
+      */
     private def getCountsInState(
       status: TransferStatus
     ): ConnectionIO[Map[String, Long]] =
@@ -392,6 +438,15 @@ object DbClient extends PostgresInstances with JsonInstances {
         .to[List]
         .map(_.toMap)
 
+    /**
+      * Build a statement which will mark a batch of transfers associated with
+      * a request topic as 'submitted', returning those transfers for use in
+      * the actual submission logic.
+      *
+      * @param requestTopic Kafka topic that the requests will be submitted into
+      * @param batchLimit maximum number of transfers to mark and extract
+      * @param nowMillis epoch timestamp to mark each of the extracted transfers with
+      */
     private def prepSubmissionBatch(
       requestTopic: String,
       batchLimit: Long,
@@ -424,31 +479,36 @@ object DbClient extends PostgresInstances with JsonInstances {
         .toList
     }
 
-    override def updateTransfers(summaries: List[TransferSummary[Json]]): IO[Unit] =
+    override def updateTransfers(
+      summariesByTopic: List[(String, TransferSummary[Json])]
+    ): IO[Unit] =
       for {
         now <- clk.realTime(scala.concurrent.duration.MILLISECONDS)
-        _ <- updateTransfers(summaries, now).transact(transactor)
+        _ <- updateTransfers(summariesByTopic, now).transact(transactor)
       } yield ()
 
     /** Build a transaction which will update info stored for in-flight transfers. */
     private def updateTransfers(
-      summaries: List[TransferSummary[Json]],
+      summariesByTopic: List[(String, TransferSummary[Json])],
       nowMillis: Long
     ): ConnectionIO[Unit] = {
-      val newStatuses = summaries.map { s =>
-        val status = s.result match {
-          case TransferResult.Success      => TransferStatus.Succeeded
-          case TransferResult.FatalFailure => TransferStatus.Failed
-        }
+      val summaryData = summariesByTopic.map {
+        case (responseTopic, summary) =>
+          val status = summary.result match {
+            case TransferResult.Success      => TransferStatus.Succeeded
+            case TransferResult.FatalFailure => TransferStatus.Failed
+          }
 
-        (status, s.info, s.id, s.requestId)
+          (status, summary.info, summary.id, summary.requestId, responseTopic)
       }
 
-      Update[(TransferStatus, Json, UUID, UUID)](
+      Update[(TransferStatus, Json, UUID, UUID, String)](
         s"""update transfers
            |set status = ?, info = ?, updated_at = ${timestampSql(nowMillis)}
-           |where id = ? and request_id = ?""".stripMargin
-      ).updateMany(newStatuses).void
+           |from transfer_requests, queues
+           |where transfers.request_id = transfer_requests.id and transfer_requests.queue_id = queues.id
+           |and transfers.id = ? and transfer_requests.id = ? and queues.response_topic = ?""".stripMargin
+      ).updateMany(summaryData).void
     }
 
     private def timestampSql(millis: Long): String =

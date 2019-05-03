@@ -25,7 +25,7 @@ trait KafkaConsumer[M] {
     * The returned `IO` will run until cancelled. Messages will be committed
     * in batches as they are successfully processed by `f`.
     */
-  def runForeach(f: List[KafkaConsumer.Attempt[M]] => IO[Unit]): IO[Unit]
+  def runForeach(f: List[(String, KafkaConsumer.Attempt[M])] => IO[Unit]): IO[Unit]
 }
 
 object KafkaConsumer {
@@ -82,15 +82,15 @@ object KafkaConsumer {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def runForeach(f: List[Attempt[M]] => IO[Unit]): IO[Unit] =
+    override def runForeach(f: List[(String, Attempt[M])] => IO[Unit]): IO[Unit] =
       consumer.stream.evalTap { message =>
         logger.info(s"Got message from topic ${message.record.topic}")
-      }.map(message => message.record.value() -> message.committableOffset)
-        .evalTap {
-          case (Right(m), _)  => logger.debug(s"Decoded message from Kafka: $m")
-          case (Left(err), _) => logger.warn(err)("Failed to decode Kafka message")
-        }
-        .groupWithin(batchConfig.maxRecords, batchConfig.waitTime)
+      }.map { message =>
+        ((message.record.topic(), message.record.value()), message.committableOffset)
+      }.evalTap {
+        case ((_, Right(m)), _)  => logger.debug(s"Decoded message from Kafka: $m")
+        case ((_, Left(err)), _) => logger.warn(err)("Failed to decode Kafka message")
+      }.groupWithin(batchConfig.maxRecords, batchConfig.waitTime)
         .evalMap { chunk =>
           // There's probably a more efficient way to do this, but I doubt
           // it'll have noticeable impact unless `maxRecords` is huge.
