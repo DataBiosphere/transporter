@@ -40,17 +40,38 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   /** Build an API route prefix beginning with the given HTTP method. */
   private def api(m: Method) = m / "api" / "transporter" / "v1"
 
-  /**
-    * Build a 500 error response containing the given message,
-    * using our uniform error response model.
-    *
-    * Logs the error causing the 500 response.
-    */
-  private def ISE(message: String, err: Throwable) =
-    for {
-      _ <- log.error(err)(message)
-      ise <- InternalServerError(ErrorResponse(message))
-    } yield ise
+  /** Build an appropriate response for an error from the main app code. */
+  private def buildResponse[Out](exec: IO[Out], iseMessage: String)(
+    implicit e: EntityEncoder[IO, Out]
+  ) =
+    exec.attempt.flatMap {
+      case Right(out) => Ok(out)
+      case Left(err) =>
+        err match {
+          case QueueAlreadyExists(name) =>
+            Conflict(ErrorResponse(s"Queue $name already exists"))
+          case InvalidQueueParameter(name, message) =>
+            BadRequest(ErrorResponse(s"Invalid parameter for queue $name: $message"))
+          case InvalidRequest(failures) =>
+            BadRequest(
+              ErrorResponse(
+                s"${failures.length} invalid transfers in request",
+                failures.map(_.getMessage).toList
+              )
+            )
+          case NoSuchQueue(name) =>
+            NotFound(ErrorResponse(s"Queue $name does not exist"))
+          case NoSuchRequest(name, id) =>
+            NotFound(ErrorResponse(s"Request $name/$id does not exist"))
+          case NoSuchTransfer(name, reqId, id) =>
+            NotFound(ErrorResponse(s"Transfer $name/$reqId/$id does not exist"))
+          case _ =>
+            log
+              .error(err)(iseMessage)
+              .flatMap(_ => InternalServerError(ErrorResponse(iseMessage)))
+
+        }
+    }
 
   private val createQueue = (api(POST) / "queues")
     .withDescription("Create a new queue of transfer requests")
@@ -95,101 +116,65 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
 
   createQueue.decoding(EntityDecoder[IO, QueueRequest]).bindAction {
     request: QueueRequest =>
-      queueController.createQueue(request).attempt.map {
-        case Right(queue)                   => Ok(queue)
-        case Left(e: QueueAlreadyExists)    => Conflict(ErrorResponse(e.getMessage))
-        case Left(e: InvalidQueueParameter) => BadRequest(ErrorResponse(e.getMessage))
-        case Left(err)                      => ISE(s"Failed to create queue ${request.name}", err)
-      }
+      buildResponse(
+        queueController.createQueue(request),
+        s"Failed to create queue ${request.name}"
+      )
   }
 
   patchQueue.decoding(EntityDecoder[IO, QueueParameters]).bindAction {
     (name: String, params: QueueParameters) =>
-      queueController.patchQueue(name, params).attempt.map {
-        case Right(queue)                   => Ok(queue)
-        case Left(e: NoSuchQueue)           => NotFound(ErrorResponse(e.getMessage))
-        case Left(e: InvalidQueueParameter) => BadRequest(ErrorResponse(e.getMessage))
-        case Left(err)                      => ISE(s"Failed to update parameters for queue $name", err)
-      }
+      buildResponse(
+        queueController.patchQueue(name, params),
+        s"Failed to update parameters for queue $name"
+      )
   }
 
   lookupQueue.bindAction { name: String =>
-    queueController.lookupQueue(name).attempt.map {
-      case Right(queue)         => Ok(queue)
-      case Left(e: NoSuchQueue) => NotFound(ErrorResponse(e.getMessage))
-      case Left(err)            => ISE(s"Failed to lookup queue $name", err)
-    }
+    buildResponse(queueController.lookupQueue(name), s"Failed to lookup queue $name")
   }
 
   submitBatchTransfer.decoding(EntityDecoder[IO, BulkRequest]).bindAction {
     (name: String, request: BulkRequest) =>
-      transferController.submitTransfer(name, request).attempt.map {
-        case Right(ack)              => Ok(ack)
-        case Left(e: NoSuchQueue)    => NotFound(ErrorResponse(e.getMessage))
-        case Left(e: InvalidRequest) => BadRequest(ErrorResponse(e.getMessage))
-        case Left(err)               => ISE(s"Failed to submit request to $name", err)
-      }
+      buildResponse(
+        transferController.submitTransfer(name, request),
+        s"Failed to submit request to $name"
+      )
   }
 
   lookupRequestStatus.bindAction { (queueName: String, requestId: UUID) =>
-    transferController
-      .lookupRequestStatus(queueName, requestId)
-      .attempt
-      .map {
-        case Right(status)          => Ok(status)
-        case Left(e: NoSuchQueue)   => NotFound(ErrorResponse(e.getMessage))
-        case Left(e: NoSuchRequest) => NotFound(ErrorResponse(e.getMessage))
-        case Left(err)              => ISE(s"Failed to look up request status for $requestId", err)
-      }
+    buildResponse(
+      transferController.lookupRequestStatus(queueName, requestId),
+      s"Failed to look up request status for $requestId"
+    )
   }
 
   lookupRequestOutputs.bindAction { (queueName: String, requestId: UUID) =>
-    transferController
-      .lookupRequestOutputs(queueName, requestId)
-      .attempt
-      .map {
-        case Right(messages)        => Ok(messages)
-        case Left(e: NoSuchQueue)   => NotFound(ErrorResponse(e.getMessage))
-        case Left(e: NoSuchRequest) => NotFound(ErrorResponse(e.getMessage))
-        case Left(err)              => ISE(s"Failed to look up outputs for $requestId", err)
-      }
+    buildResponse(
+      transferController.lookupRequestOutputs(queueName, requestId),
+      s"Failed to look up outputs for $requestId"
+    )
   }
 
   lookupRequestFailures.bindAction { (queueName: String, requestId: UUID) =>
-    transferController
-      .lookupRequestFailures(queueName, requestId)
-      .attempt
-      .map {
-        case Right(messages)        => Ok(messages)
-        case Left(e: NoSuchQueue)   => NotFound(ErrorResponse(e.getMessage))
-        case Left(e: NoSuchRequest) => NotFound(ErrorResponse(e.getMessage))
-        case Left(err)              => ISE(s"Failed to look up failures for $requestId", err)
-      }
+    buildResponse(
+      transferController.lookupRequestFailures(queueName, requestId),
+      s"Failed to look up failures for $requestId"
+    )
   }
 
   reconsiderRequest.bindAction { (queueName: String, requestId: UUID) =>
-    transferController
-      .reconsiderRequest(queueName, requestId)
-      .attempt
-      .map {
-        case Right(ack)             => Ok(ack)
-        case Left(e: NoSuchQueue)   => NotFound(ErrorResponse(e.getMessage))
-        case Left(e: NoSuchRequest) => NotFound(ErrorResponse(e.getMessage))
-        case Left(err)              => ISE(s"Failed to reconsider transfers for $requestId", err)
-      }
+    buildResponse(
+      transferController.reconsiderRequest(queueName, requestId),
+      s"Failed to reconsider transfers for $requestId"
+    )
   }
 
   lookupTransferDetail.bindAction {
     (queueName: String, requestId: UUID, transferId: UUID) =>
-      transferController
-        .lookupTransferDetails(queueName, requestId, transferId)
-        .attempt
-        .map {
-          case Right(details)          => Ok(details)
-          case Left(e: NoSuchQueue)    => NotFound(ErrorResponse(e.getMessage))
-          case Left(e: NoSuchRequest)  => NotFound(ErrorResponse(e.getMessage))
-          case Left(e: NoSuchTransfer) => NotFound(ErrorResponse(e.getMessage))
-          case Left(err)               => ISE(s"Failed to look up details for $transferId", err)
-        }
+      buildResponse(
+        transferController.lookupTransferDetails(queueName, requestId, transferId),
+        s"Failed to look up details for $transferId"
+      )
   }
 }

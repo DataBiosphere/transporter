@@ -66,20 +66,14 @@ object TransferController {
 
   /** Exception used to mark when a user submits transfers that don't match a queue's expected schema. */
   case class InvalidRequest(failures: NonEmptyList[Throwable])
-      extends IllegalArgumentException(
-        s"Request includes ${failures.length} invalid transfers"
-      )
+      extends IllegalArgumentException
 
   /** Exception used to mark when a user attempts to interact with a nonexistent request. */
-  case class NoSuchRequest(queue: String, id: UUID)
-      extends IllegalArgumentException(
-        s"No request with ID $id registered under queue $queue "
-      )
+  case class NoSuchRequest(queue: String, id: UUID) extends IllegalArgumentException
 
+  /** Exception used to mark when a user attempt to interact with a nonexistent transfer. */
   case class NoSuchTransfer(queue: String, requestId: UUID, id: UUID)
-      extends IllegalArgumentException(
-        s"No transfer with ID $id registered under request $requestId in queue $queue"
-      )
+      extends IllegalArgumentException
 
   /**
     * Concrete implementation of the controller used by mainline code.

@@ -53,17 +53,14 @@ object QueueController {
     new Impl(dbClient, kafkaClient)
 
   /** Exception used to mark when a user attempts to interact with a nonexistent queue. */
-  case class NoSuchQueue(name: String)
-      extends IllegalArgumentException(s"Queue '$name' does not exist")
+  case class NoSuchQueue(name: String) extends IllegalArgumentException
 
   /** Exception used to mark when a user attempts to create a queue that already exists. */
-  case class QueueAlreadyExists(name: String)
-      extends IllegalArgumentException(s"Queue '$name' already exists")
+  case class QueueAlreadyExists(name: String) extends IllegalArgumentException
 
+  /** Exception used to mark when a user attempts to overwrite a queue parameter with an invalid value. */
   case class InvalidQueueParameter(name: String, message: String)
-      extends IllegalArgumentException(
-        s"Invalid parameter given for queue '$name': $message"
-      )
+      extends IllegalArgumentException
 
   /**
     * Concrete implementation of the controller used by mainline code.
