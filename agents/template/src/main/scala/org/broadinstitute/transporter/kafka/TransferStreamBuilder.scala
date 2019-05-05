@@ -10,19 +10,17 @@ import io.circe.syntax._
 import org.apache.kafka.common.errors.SerializationException
 import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.Topology
-import org.apache.kafka.streams.scala.{Serdes, StreamsBuilder}
+import org.apache.kafka.streams.scala.{Serdes => KSerdes, StreamsBuilder}
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer.{
-  TransferProgress,
-  TransferRequest,
+  TransferMessage,
   TransferResult,
-  TransferRunner,
-  TransferSummary
+  TransferRunner
 }
 
 class TransferStreamBuilder(queue: Queue) {
   import org.apache.kafka.streams.scala.ImplicitConversions._
-  import Serdes._
+  import KSerdes._
   import TransferStreamBuilder._
 
   /**
@@ -53,21 +51,23 @@ class TransferStreamBuilder(queue: Queue) {
     for {
       Array(failures, successes) <- IO.delay {
         builder
-          .stream[Array[Byte], TransferRequest[Json]](queue.requestTopic)
+          .stream[Array[Byte], TransferMessage[Json]](queue.requestTopic)
           .mapValues { transfer =>
+            val ids = transfer.ids
+            val payload = transfer.message
+
             logger.info(
-              s"Received transfer ${transfer.id} from request ${transfer.requestId}"
+              s"Received transfer ${ids.transfer} from request ${ids.request}"
             )
 
-            val payload = transfer.transfer
             logger.debug(
-              s"Attempting to parse payload for ${transfer.id} into expected model: ${payload.spaces2}"
+              s"Attempting to parse payload for ${ids.transfer} into expected model: ${payload.spaces2}"
             )
 
             val initializedOrError = for {
               input <- payload.as[In]
               _ = logger.info(
-                s"Initializing transfer ${transfer.id} from request ${transfer.requestId}"
+                s"Initializing transfer ${ids.transfer} from request ${ids.request}"
               )
               zeroProgress <- Either.catchNonFatal(runner.initialize(input))
             } yield {
@@ -77,22 +77,19 @@ class TransferStreamBuilder(queue: Queue) {
             initializedOrError.bimap(
               err => {
                 val message =
-                  s"Failed to initialize transfer ${transfer.id} from request ${transfer.requestId}"
+                  s"Failed to initialize transfer ${ids.transfer} from request ${ids.request}"
                 logger.error(err)(message)
-                TransferSummary(
-                  TransferResult.FatalFailure,
-                  UnhandledErrorInfo(message, err.getMessage),
-                  id = transfer.id,
-                  requestId = transfer.requestId
+                TransferMessage(
+                  ids,
+                  (
+                    TransferResult.FatalFailure: TransferResult,
+                    UnhandledErrorInfo(message, err.getMessage)
+                  ).asJson
                 )
               },
               zero => {
-                logger.info(s"Enqueueing zero progress for transfer ${transfer.id}")
-                TransferProgress(
-                  zero,
-                  id = transfer.id,
-                  requestId = transfer.requestId
-                )
+                logger.info(s"Enqueueing zero progress for transfer ${ids.transfer}")
+                TransferMessage(ids, zero.asJson)
               }
             )
           }
@@ -114,44 +111,40 @@ class TransferStreamBuilder(queue: Queue) {
     for {
       Array(progresses, summaries) <- IO.delay {
         builder
-          .stream[Array[Byte], TransferProgress[Progress]](queue.progressTopic)
+          .stream[Array[Byte], TransferMessage[Progress]](queue.progressTopic)
           .mapValues { progress =>
+            val ids = progress.ids
+
             logger.info(
-              s"Received incremental progress for transfer ${progress.id} from request ${progress.requestId}"
+              s"Received incremental progress for transfer ${ids.transfer} from request ${ids.request}"
             )
 
             Either
-              .catchNonFatal(runner.step(progress.progress))
+              .catchNonFatal(runner.step(progress.message))
               .fold(
                 err => {
                   val message =
-                    s"Failed to run step on transfer ${progress.id} from request ${progress.requestId}"
+                    s"Failed to run step on transfer ${ids.transfer} from request ${ids.request}"
                   logger.error(err)(message)
-                  val errSummary = TransferSummary(
-                    TransferResult.FatalFailure,
-                    UnhandledErrorInfo(message, err.getMessage).asJson,
-                    id = progress.id,
-                    requestId = progress.requestId
+                  val errSummary = TransferMessage(
+                    ids,
+                    (
+                      TransferResult.FatalFailure: TransferResult,
+                      UnhandledErrorInfo(message, err.getMessage)
+                    ).asJson
                   )
                   Either.right(errSummary)
                 },
                 nextStepOrOutput => {
                   logger.info(
-                    s"Successfully ran transfer step for ${progress.id} from request ${progress.requestId}"
+                    s"Successfully ran transfer step for ${ids.transfer} from request ${ids.request}"
                   )
                   nextStepOrOutput.bimap(
-                    nextStep =>
-                      TransferProgress(
-                        nextStep,
-                        id = progress.id,
-                        requestId = progress.requestId
-                      ),
+                    nextStep => TransferMessage(ids, nextStep.asJson),
                     output =>
-                      TransferSummary(
-                        TransferResult.Success,
-                        output.asJson,
-                        id = progress.id,
-                        requestId = progress.requestId
+                      TransferMessage(
+                        ids,
+                        (TransferResult.Success: TransferResult, output).asJson
                       )
                   )
                 }
@@ -175,7 +168,7 @@ object TransferStreamBuilder {
 
   private[this] val parser = new JawnParser()
 
-  implicit def jsonSerde[A >: Null: Encoder: Decoder]: Serde[A] = Serdes.fromFn[A](
+  implicit def jsonSerde[A >: Null: Encoder: Decoder]: Serde[A] = KSerdes.fromFn[A](
     (message: A) => message.asJson.noSpaces.getBytes,
     (bytes: Array[Byte]) =>
       parser

@@ -127,17 +127,30 @@ lazy val `transporter-common` = project
     // Needed to resolve JSON schema lib.
     resolvers += "Jitpack" at "https://jitpack.io",
     libraryDependencies ++= Seq(
+      "ch.qos.logback" % "logback-classic" % logbackVersion,
       "com.beachape" %% "enumeratum" % enumeratumVersion,
       "com.beachape" %% "enumeratum-circe" % enumeratumCirceVersion,
       "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
+      "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
+      "com.github.pureconfig" %% "pureconfig-cats" % pureConfigVersion,
+      "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
+      "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
       "io.circe" %% "circe-core" % circeVersion,
       "io.circe" %% "circe-derivation" % circeDerivationVersion,
       "io.circe" %% "circe-parser" % circeVersion
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
+      "io.github.embeddedkafka" %% "embedded-kafka" % kafkaVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion
-    ).map(_ % Test)
+    ).map(_ % Test),
+    dependencyOverrides ++= Seq(
+      "co.fs2" %% "fs2-core" % fs2Version,
+      "co.fs2" %% "fs2-io" % fs2Version,
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
+      "org.typelevel" %% "cats-core" % catsVersion,
+      "org.typelevel" %% "cats-effect" % catsEffectVersion
+    )
   )
 
 /**
@@ -206,12 +219,7 @@ lazy val `transporter-manager` = project
   .settings(commonSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "ch.qos.logback" % "logback-classic" % logbackVersion,
-      "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
-      "com.github.pureconfig" %% "pureconfig-cats" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
-      "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
-      "io.chrisdavenport" %% "log4cats-slf4j" % log4catsVersion,
       "org.http4s" %% "http4s-blaze-server" % http4sVersion,
       "org.http4s" %% "http4s-circe" % http4sVersion,
       "org.http4s" %% "http4s-dsl" % http4sVersion,
@@ -234,7 +242,6 @@ lazy val `transporter-manager` = project
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
-      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
       "org.postgresql" % "postgresql" % postgresqlDriverVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
@@ -256,15 +263,12 @@ lazy val `transporter-agent-template` = project
   .settings(commonSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "ch.qos.logback" % "logback-classic" % logbackVersion,
-      "com.github.pureconfig" %% "pureconfig" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.github.pureconfig" %% "pureconfig-http4s" % pureConfigVersion,
       "io.chrisdavenport" %% "log4cats-log4s" % log4catsVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
       "org.http4s" %% "http4s-blaze-client" % http4sVersion,
-      "org.http4s" %% "http4s-circe" % http4sVersion,
-      "org.log4s" %% "log4s" % log4sVersion
+      "org.http4s" %% "http4s-circe" % http4sVersion
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
@@ -274,7 +278,6 @@ lazy val `transporter-agent-template` = project
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version,
-      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
       "org.typelevel" %% "cats-core" % catsVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion
     )

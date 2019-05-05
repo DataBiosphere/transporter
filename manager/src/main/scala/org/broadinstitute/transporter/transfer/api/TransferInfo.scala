@@ -9,10 +9,10 @@ import io.circe.derivation.deriveEncoder
   * Info about a transfer job collected by the manager.
   *
   * @param id unique ID of the transfer within its enclosing request
-  * @param message JSON output sent to the manager by an agent about the transfer
+  * @param info JSON output sent to the manager by an agent about the transfer
   */
-case class TransferMessage(id: UUID, message: Json)
+case class TransferInfo(id: UUID, info: Json)
 
-object TransferMessage {
-  implicit val encoder: Encoder[TransferMessage] = deriveEncoder
+object TransferInfo {
+  implicit val encoder: Encoder[TransferInfo] = deriveEncoder
 }

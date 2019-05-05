@@ -3,15 +3,15 @@ package org.broadinstitute.transporter.kafka
 import java.time.Duration
 import java.util.concurrent.{CancellationException, CompletionException}
 
-import cats.effect._
+import cats.effect.{CancelToken, ContextShift, ExitCase, IO, Resource}
 import cats.implicits._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.apache.kafka.clients.admin.{NewTopic, AdminClient => JAdminClient}
+import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
 import org.apache.kafka.common.KafkaFuture
-import org.broadinstitute.transporter.kafka.config.KafkaConfig
+import org.broadinstitute.transporter.kafka.config.{AdminConfig, ConnectionConfig}
 
-import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
+import scala.concurrent.ExecutionContext
 
 /**
   * Client responsible for managing "admin" operations in Transporter's Kafka cluster.
@@ -19,10 +19,13 @@ import scala.collection.JavaConverters._
   * Admin ops include querying cluster-level state, creating/modifying/deleting topics,
   * and settings ACLs (though we don't handle that yet).
   */
-trait AdminClient {
+trait KafkaAdminClient {
 
-  /** Check if the client can interact with the backing cluster. */
-  def checkReady: IO[Boolean]
+  /**
+    * Check if the Kafka cluster contains enough brokers to meet the replication-factor
+    * requirements of new topics created by this client.
+    */
+  def checkEnoughBrokers: IO[Boolean]
 
   /**
     * Create new Kafka topics with the given name, using global config
@@ -34,12 +37,9 @@ trait AdminClient {
     * the error.
     */
   def createTopics(topicNames: String*): IO[Unit]
-
-  /** Check that the given topics exist in Kafka. */
-  def topicsExist(topicNames: String*): IO[Boolean]
 }
 
-object AdminClient {
+object KafkaAdminClient {
 
   /**
     * Extension methods for Kafka's bespoke Future implementation.
@@ -85,35 +85,25 @@ object AdminClient {
         s"Failed to create topics: ${failures.map(_._1).mkString(", ")}"
       )
 
-  /**
-    * Construct a Kafka client, wrapped in logic which will:
-    *   1. Automatically set up underlying Kafka client instances
-    *      in separate thread pools on startup, and
-    *   2. Automatically clean up the underlying clients and their
-    *      pools on shutdown
-    *
-    * @param config settings for the underlying Kafka client
-    * @param blockingEc execution context which should run the blocking I/O
-    *                   required to set up / tear down the client
-    * @param cs proof of the ability to shift IO-wrapped computations
-    *           onto other threads
-    */
-  def resource(config: KafkaConfig, blockingEc: ExecutionContext)(
+  def resource(conn: ConnectionConfig, admin: AdminConfig, blockingEc: ExecutionContext)(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, AdminClient] =
-    adminResource(config, blockingEc).map(
-      new Impl(_, KafkaConfig.TopicPartitions, config.replicationFactor)
+  ): Resource[IO, KafkaAdminClient] =
+    adminResource(conn, blockingEc).map(
+      new Impl(_, AdminConfig.TopicPartitions, admin.replicationFactor)
     )
 
   /** Construct a Kafka admin client, wrapped in setup and teardown logic. */
-  private[kafka] def adminResource(config: KafkaConfig, blockingEc: ExecutionContext)(
+  private[kafka] def adminResource(
+    config: ConnectionConfig,
+    blockingEc: ExecutionContext
+  )(
     implicit cs: ContextShift[IO]
-  ): Resource[IO, JAdminClient] = {
+  ): Resource[IO, AdminClient] = {
     val settings = config.adminSettings
     val initClient = cs.evalOn(blockingEc) {
       settings.adminClientFactory.create[IO](settings)
     }
-    val closeClient = (client: JAdminClient) =>
+    val closeClient = (client: AdminClient) =>
       cs.evalOn(blockingEc)(IO.delay {
         client.close(Duration.ofMillis(settings.closeTimeout.toMillis))
       })
@@ -136,27 +126,23 @@ object AdminClient {
     *           onto other threads
     */
   private[kafka] class Impl(
-    adminClient: JAdminClient,
+    adminClient: AdminClient,
     newTopicPartitionCount: Int,
     newTopicReplicationFactor: Short
   )(implicit cs: ContextShift[IO])
-      extends AdminClient {
+      extends KafkaAdminClient {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def checkReady: IO[Boolean] = {
-      val okCheck = for {
-        _ <- logger.info("Running status check against Kafka cluster...")
-        id <- IO.suspend(adminClient.describeCluster().clusterId().cancelable)
-        _ <- logger.debug(s"Got cluster ID $id")
+    override def checkEnoughBrokers: IO[Boolean] =
+      for {
+        _ <- logger.info("Querying Kafka cluster state...")
+        clusterInfo <- IO.suspend(adminClient.describeCluster().nodes().cancelable)
+        _ <- logger.debug(s"Got cluster info: $clusterInfo")
+        _ <- logger.info("Checking cluster state...")
       } yield {
-        true
+        clusterInfo.size() >= newTopicReplicationFactor
       }
-
-      okCheck.handleErrorWith { err =>
-        logger.error(err)("Kafka status check hit error").as(false)
-      }
-    }
 
     override def createTopics(topicNames: String*): IO[Unit] = {
       val topics = topicNames.mkString(", ")
@@ -172,22 +158,6 @@ object AdminClient {
         }
       } yield ()
     }
-
-    override def topicsExist(topicNames: String*): IO[Boolean] =
-      for {
-        _ <- logger.info(s"Checking for existence of topics: ${topicNames.mkString(",")}")
-        existingTopics <- listTopics
-      } yield {
-        topicNames.toSet.subsetOf(existingTopics)
-      }
-
-    /**
-      * Get the list of all non-internal topics in Transporter's backing Kafka cluster.
-      *
-      * Exposed for testing.
-      */
-    private[kafka] def listTopics: IO[scala.collection.mutable.Set[String]] =
-      IO.suspend(adminClient.listTopics().names().cancelable).map(_.asScala)
 
     /**
       * Attempt to create new topics with the given names in Kafka, and summarize the results.

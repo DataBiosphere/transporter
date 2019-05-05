@@ -2,8 +2,8 @@ package org.broadinstitute.transporter.kafka
 
 import java.util.UUID
 
-import io.circe.{Decoder, Encoder}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
+import io.circe.{Decoder, Encoder}
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
 class SerdesSpec extends FlatSpec with Matchers with EitherValues {

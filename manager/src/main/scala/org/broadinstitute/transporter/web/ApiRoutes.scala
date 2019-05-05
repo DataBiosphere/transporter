@@ -4,20 +4,18 @@ import java.util.UUID
 
 import cats.effect.IO
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRequest}
-import org.broadinstitute.transporter.queue.QueueController
-import org.broadinstitute.transporter.queue.QueueController.{
+import org.broadinstitute.transporter.error.{
   InvalidQueueParameter,
+  InvalidRequest,
   NoSuchQueue,
+  NoSuchRequest,
+  NoSuchTransfer,
   QueueAlreadyExists
 }
+import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRequest}
+import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.TransferController
-import org.broadinstitute.transporter.transfer.TransferController.{
-  InvalidRequest,
-  NoSuchRequest,
-  NoSuchTransfer
-}
 import org.http4s.circe.{CirceEntityDecoder, CirceInstances}
 import org.http4s.{EntityDecoder, EntityEncoder, Method}
 import org.http4s.rho.RhoRoutes
@@ -33,7 +31,7 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   private implicit val ackEncoder: EntityEncoder[IO, RequestAck] = jsonEncoderOf
   private implicit val detailsEncoder: EntityEncoder[IO, TransferDetails] = jsonEncoderOf
   private implicit val errEncoder: EntityEncoder[IO, ErrorResponse] = jsonEncoderOf
-  private implicit val messagesEncoder: EntityEncoder[IO, RequestMessages] = jsonEncoderOf
+  private implicit val messagesEncoder: EntityEncoder[IO, RequestInfo] = jsonEncoderOf
   private implicit val queueEncoder: EntityEncoder[IO, Queue] = jsonEncoderOf
   private implicit val statusEncoder: EntityEncoder[IO, RequestStatus] = jsonEncoderOf
 
@@ -137,7 +135,7 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   submitBatchTransfer.decoding(EntityDecoder[IO, BulkRequest]).bindAction {
     (name: String, request: BulkRequest) =>
       buildResponse(
-        transferController.submitTransfer(name, request),
+        transferController.recordTransfer(name, request),
         s"Failed to submit request to $name"
       )
   }

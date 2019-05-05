@@ -18,10 +18,10 @@ import org.broadinstitute.transporter.kafka.TransferStreamBuilder.UnhandledError
 import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer.{
-  TransferRequest,
+  TransferIds,
+  TransferMessage,
   TransferResult,
-  TransferRunner,
-  TransferSummary
+  TransferRunner
 }
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
@@ -75,7 +75,7 @@ class TransferStreamBuilderSpec
     requests: List[Json],
     failInit: Boolean = false,
     failStep: Boolean = false
-  ): List[TransferSummary[Json]] = {
+  ): List[TransferMessage[(TransferResult, Json)]] = {
     implicit val baseConfig: EmbeddedKafkaConfig = embeddedConfig
 
     val topology = builder.build(new LoopRunner(failInit, failStep)).unsafeRunSync()
@@ -96,14 +96,18 @@ class TransferStreamBuilderSpec
       implicit val consumerConfig: ConsumerRetryConfig =
         ConsumerRetryConfig(maximumAttempts = 10)
 
-      implicit val decoder: ConsumerRecord[Array[Byte], String] => TransferSummary[Json] =
+      implicit val decoder: ConsumerRecord[Array[Byte], String] => TransferMessage[
+        (TransferResult, Json)
+      ] =
         record =>
-          parse(record.value()).flatMap(_.as[TransferSummary[Json]]).valueOr(throw _)
+          parse(record.value())
+            .flatMap(_.as[TransferMessage[(TransferResult, Json)]])
+            .valueOr(throw _)
 
       val consumer = newConsumer[Array[Byte], String]
 
       val results = consumer
-        .consumeLazily[TransferSummary[Json]](queue.responseTopic)
+        .consumeLazily[TransferMessage[(TransferResult, Json)]](queue.responseTopic)
         .take(requests.length)
         .toList
 
@@ -113,19 +117,15 @@ class TransferStreamBuilderSpec
     }
   }
 
+  private val ids = TransferIds(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
+
   behavior of "TransferStream"
 
   it should "receive requests, execute transfers, and push responses" in {
-    val request = TransferRequest(
-      LoopRequest(3),
-      id = UUID.randomUUID(),
-      requestId = UUID.randomUUID()
-    )
-    val expectedResponse = TransferSummary(
-      TransferResult.Success,
-      LoopProgress(loopsSoFar = 3, loopsToGo = 0).asJson,
-      request.id,
-      request.requestId
+    val request = TransferMessage(ids, LoopRequest(3))
+    val expectedResponse = TransferMessage(
+      ids,
+      (TransferResult.Success, LoopProgress(loopsSoFar = 3, loopsToGo = 0).asJson)
     )
 
     val results = roundTripTransfers(List(request.asJson))
@@ -136,32 +136,23 @@ class TransferStreamBuilderSpec
     val longRunningCount = 5
     val quickCount = 1
 
-    val longRunning = TransferRequest(
-      LoopRequest(loopCount = longRunningCount),
-      id = UUID.randomUUID(),
-      requestId = UUID.randomUUID()
-    )
-    val quick = TransferRequest(
-      LoopRequest(loopCount = quickCount),
-      id = UUID.randomUUID(),
-      requestId = longRunning.requestId
+    val longRunning = TransferMessage(ids, LoopRequest(loopCount = longRunningCount))
+    val quick = TransferMessage(
+      ids.copy(transfer = UUID.randomUUID()),
+      LoopRequest(loopCount = quickCount)
     )
 
     val messages = List(longRunning, quick)
 
     // The quick result should arrive before the long-running one.
     roundTripTransfers(messages.map(_.asJson)) shouldBe List(
-      TransferSummary(
-        TransferResult.Success,
-        LoopProgress(quickCount, 0).asJson,
-        quick.id,
-        quick.requestId
+      TransferMessage(
+        quick.ids,
+        (TransferResult.Success, LoopProgress(quickCount, 0).asJson)
       ),
-      TransferSummary(
-        TransferResult.Success,
-        LoopProgress(longRunningCount, 0).asJson,
-        longRunning.id,
-        longRunning.requestId
+      TransferMessage(
+        longRunning.ids,
+        (TransferResult.Success, LoopProgress(longRunningCount, 0).asJson)
       )
     )
   }
@@ -169,68 +160,60 @@ class TransferStreamBuilderSpec
   it should "bail out if malformed request payloads end up on the request topic" in {
     val messages = List(
       "How did I get here???".asJson,
-      TransferRequest(
-        LoopRequest(0),
-        id = UUID.randomUUID(),
-        requestId = UUID.randomUUID()
-      ).asJson
+      TransferMessage(ids, LoopRequest(0)).asJson
     )
 
     roundTripTransfers(messages) shouldBe empty
   }
 
   it should "push error results if transfers with a bad schema ends up on the request topic" in {
-    val badSchema = TransferRequest(
-      json"""{ "problem": "not the right schema" }""",
-      id = UUID.randomUUID(),
-      requestId = UUID.randomUUID()
+    val badSchema = TransferMessage(
+      ids,
+      json"""{ "problem": "not the right schema" }"""
     )
-    val goodSchema = TransferRequest(
-      LoopRequest(0).asJson,
-      id = UUID.randomUUID(),
-      requestId = UUID.randomUUID()
+    val goodSchema = TransferMessage(
+      ids.copy(transfer = UUID.randomUUID()),
+      LoopRequest(0).asJson
     )
 
     val List(result1, result2) =
       roundTripTransfers(List(badSchema, goodSchema).map(_.asJson))
 
-    result1.result shouldBe TransferResult.FatalFailure
-    result1.info.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
-    result1.id shouldBe badSchema.id
-    result1.requestId shouldBe badSchema.requestId
+    result1.ids shouldBe badSchema.ids
+    val (res1, info1) = result1.message
+    res1 shouldBe TransferResult.FatalFailure
+    info1.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
 
-    result2 shouldBe TransferSummary(
-      TransferResult.Success,
-      LoopProgress(0, 0).asJson,
-      goodSchema.id,
-      goodSchema.requestId
+    result2 shouldBe TransferMessage(
+      goodSchema.ids,
+      (TransferResult.Success: TransferResult, LoopProgress(0, 0).asJson)
     )
   }
 
   it should "push error results if initializing a transfer fails" in {
     val messages = List.tabulate(2) { i =>
-      TransferRequest(LoopRequest(i), UUID.randomUUID(), UUID.randomUUID()).asJson
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i)).asJson
     }
     val List(result1, result2) = roundTripTransfers(messages, failInit = true)
 
-    result1.result shouldBe TransferResult.FatalFailure
-    result2.result shouldBe TransferResult.FatalFailure
+    result1.message._1 shouldBe TransferResult.FatalFailure
+    result2.message._1 shouldBe TransferResult.FatalFailure
 
-    List(result1.info, result2.info).foreach { jsonInfo =>
+    List(result1.message._2, result2.message._2).foreach { jsonInfo =>
       jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
     }
   }
 
   it should "push error results if processing a transfer fails" in {
     val messages = List.tabulate(2) { i =>
-      TransferRequest(LoopRequest(i), UUID.randomUUID(), UUID.randomUUID()).asJson
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i)).asJson
     }
     val List(result1, result2) = roundTripTransfers(messages, failStep = true)
 
-    result1.result shouldBe TransferResult.FatalFailure
-    result2.result shouldBe TransferResult.FatalFailure
+    result1.message._1 shouldBe TransferResult.FatalFailure
+    result2.message._1 shouldBe TransferResult.FatalFailure
 
-    List(result1.info, result2.info).foreach { jsonInfo =>
+    List(result1.message._2, result2.message._2).foreach { jsonInfo =>
       jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
     }
   }

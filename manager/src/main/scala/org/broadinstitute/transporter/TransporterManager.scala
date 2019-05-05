@@ -1,8 +1,26 @@
 package org.broadinstitute.transporter
 
+import cats.data.NonEmptyList
 import cats.effect._
+import cats.implicits._
 import doobie.util.ExecutionContexts
+import fs2.Stream
+import io.circe.Json
+import org.broadinstitute.transporter.db.DbTransactor
+import org.broadinstitute.transporter.info.InfoController
+import org.broadinstitute.transporter.kafka.{
+  KafkaAdminClient,
+  KafkaConsumer,
+  KafkaProducer,
+  TopicApi
+}
+import org.broadinstitute.transporter.queue.QueueController
+import org.broadinstitute.transporter.transfer.{TransferController, TransferResult}
+import org.broadinstitute.transporter.web.{ApiRoutes, InfoRoutes, SwaggerMiddleware}
+import org.http4s.implicits._
 import org.http4s.rho.swagger.models.Info
+import org.http4s.server.blaze.BlazeServerBuilder
+import org.http4s.server.middleware.Logger
 import pureconfig.module.catseffect._
 
 import scala.concurrent.ExecutionContext
@@ -29,6 +47,53 @@ object TransporterManager extends IOApp.WithContext {
 
   /** [[IOApp]] equivalent of `main`. */
   override def run(args: List[String]): IO[ExitCode] =
-    loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter")
-      .flatMap(ManagerApp.resource(_, appInfo).use(_.run))
+    loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter").flatMap { config =>
+      import org.broadinstitute.transporter.kafka.Serdes._
+
+      val components = for {
+        // Set up a thread pool to run all blocking I/O throughout the app.
+        blockingEc <- ExecutionContexts.cachedThreadPool[IO]
+        // Build clients for interacting with external resources, for use
+        // across controllers in the app.
+        transactor <- DbTransactor.resource(config.db, blockingEc)
+        admin <- KafkaAdminClient.resource(
+          config.kafka.connection,
+          config.kafka.admin,
+          blockingEc
+        )
+        producer <- KafkaProducer.resource[Json](config.kafka.connection)
+        consumer <- KafkaConsumer
+          .ofTopicPattern[(TransferResult, Json)](TopicApi.ResponseSubscriptionPattern)
+          .apply(config.kafka.connection, config.kafka.consumer)
+      } yield {
+        val transferController = new TransferController(transactor, producer)
+
+        val routes = NonEmptyList.of(
+          new InfoRoutes(new InfoController(appInfo.version, transactor, admin)),
+          new ApiRoutes(
+            new QueueController(transactor, admin),
+            transferController
+          )
+        )
+        val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
+        val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
+
+        val server = BlazeServerBuilder[IO]
+          .bindHttp(port = config.web.port, host = config.web.host)
+          .withHttpApp(http)
+          .serve
+          .compile
+          .lastOrError
+        val submissionSweeper = Stream
+          .fixedDelay(config.submissionInterval)
+          .evalMap(_ => transferController.submitEligibleTransfers)
+          .compile
+          .drain
+        val resultListener = consumer.runForeach(transferController.recordTransferResults)
+
+        (server, submissionSweeper, resultListener)
+      }
+
+      components.use(_.parTupled.map(_._1))
+    }
 }

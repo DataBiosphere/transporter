@@ -3,150 +3,217 @@ package org.broadinstitute.transporter.queue
 import java.util.UUID
 
 import cats.effect.IO
+import cats.implicits._
+import doobie._
+import doobie.implicits._
 import io.circe.Json
-import org.broadinstitute.transporter.db.DbClient
-import org.broadinstitute.transporter.kafka.AdminClient
+import org.broadinstitute.transporter.PostgresSpec
+import org.broadinstitute.transporter.error.{
+  InvalidQueueParameter,
+  NoSuchQueue,
+  QueueAlreadyExists
+}
+import org.broadinstitute.transporter.kafka.{KafkaAdminClient, TopicApi}
 import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRequest}
 import org.scalamock.scalatest.MockFactory
-import org.scalatest.{EitherValues, FlatSpec, Matchers}
+import org.scalatest.EitherValues
 
-class QueueControllerSpec
-    extends FlatSpec
-    with Matchers
-    with MockFactory
-    with EitherValues {
+class QueueControllerSpec extends PostgresSpec with MockFactory with EitherValues {
+  import org.broadinstitute.transporter.db.DoobieInstances._
 
-  private val db = mock[DbClient]
-  private val kafka = mock[AdminClient]
-
-  private def controller = new QueueController.Impl(db, kafka)
+  private val kafka = mock[KafkaAdminClient]
 
   private val request =
     QueueRequest("test-queue", Json.obj().as[QueueSchema].right.value, 2)
 
-  private val id = UUID.randomUUID()
-  private val queue = Queue(
-    request.name,
-    "requests",
-    "progress",
-    "responses",
-    request.schema,
-    request.maxConcurrentTransfers
-  )
-  private val dbInfo = (id, queue)
+  private val countQueues =
+    sql"select count(*) from queues where name = ${request.name}".query[Long].unique
+
+  def withController(test: (Transactor[IO], QueueController) => Any): Unit = {
+    val tx = transactor
+    test(tx, new QueueController(tx, kafka))
+    ()
+  }
 
   behavior of "QueueController"
 
-  it should "look up queue information by name in the DB" in {
-    (db.lookupQueue _).expects(queue.name).returning(IO.pure(None))
-
-    controller
-      .lookupQueue(queue.name)
-      .attempt
-      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queue.name))
-  }
-
-  it should "verify Kafka is consistent with the DB on lookups" in {
-    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
-    (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
-      .returning(IO.pure(false))
-
-    controller
-      .lookupQueue(queue.name)
-      .attempt
-      .unsafeRunSync() shouldBe Left(QueueController.NoSuchQueue(queue.name))
-  }
-
-  it should "look up queues with consistent state" in {
-    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
-    (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
-      .returning(IO.pure(true))
-
-    controller.lookupQueue(queue.name).unsafeRunSync() shouldBe queue
-  }
-
-  it should "create new queues" in {
-    (db.lookupQueue _).expects(request.name).returning(IO.pure(None))
-    (db.createQueue _).expects(*, *).returning(IO.unit)
-    (kafka.createTopics _).expects(*).returning(IO.unit)
-
-    val created = controller.createQueue(request).unsafeRunSync()
-    created.name shouldBe request.name
-    created.schema shouldBe request.schema
-  }
-
-  it should "clean up the DB if topic creation fails" in {
-    val err = new RuntimeException("OH NO")
-
-    (db.lookupQueue _).expects(queue.name).returning(IO.pure(None))
-    (db.createQueue _).expects(*, *).returning(IO.unit)
-    (kafka.createTopics _).expects(*).throwing(err)
-    (db.deleteQueue _).expects(*).returning(IO.unit)
-
-    controller
-      .createQueue(request)
-      .attempt
-      .unsafeRunSync()
-      .left
-      .value shouldBe err
-  }
-
-  it should "reject negative max-in-flight parameters" in {
-    (db.lookupQueue _).expects(request.name).returning(IO.pure(None))
-
-    controller
-      .createQueue(request.copy(maxConcurrentTransfers = -1))
-      .attempt
-      .unsafeRunSync()
-      .left
-      .value shouldBe a[QueueController.InvalidQueueParameter]
-  }
-
-  it should "not overwrite existing, consistent queues" in {
-    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
-    (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
-      .returning(IO.pure(true))
-
-    controller
-      .createQueue(request)
-      .attempt
-      .unsafeRunSync()
-      .left
-      .value shouldBe a[QueueController.QueueAlreadyExists]
-  }
-
-  it should "detect and attempt to correct inconsistent state on creation" in {
-    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
-    (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
-      .returning(IO.pure(false))
-    (db.patchQueueParameters _)
-      .expects(
-        id,
-        QueueParameters(Some(queue.schema), Some(queue.maxConcurrentTransfers))
-      )
-      .returning(IO.unit)
+  it should "create new queues" in withController { (tx, controller) =>
     (kafka.createTopics _)
-      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
+      .expects(where { topics: Seq[String] =>
+        topics.length == 3 &&
+        topics.exists(_.matches(TopicApi.RequestSubscriptionPattern.regex)) &&
+        topics.exists(_.matches(TopicApi.ProgressSubscriptionPattern.regex)) &&
+        topics.exists(_.matches(TopicApi.ResponseSubscriptionPattern.regex))
+      })
       .returning(IO.unit)
 
-    controller.createQueue(request).unsafeRunSync() shouldBe queue
+    val checks = for {
+      initCount <- countQueues.transact(tx)
+      queue <- controller.createQueue(request)
+      afterCount <- countQueues.transact(tx)
+    } yield {
+      initCount shouldBe 0
+      afterCount shouldBe 1
+
+      queue.name shouldBe request.name
+      queue.schema shouldBe request.schema
+      queue.maxConcurrentTransfers shouldBe request.maxConcurrentTransfers
+      queue.requestTopic should fullyMatch regex TopicApi.RequestSubscriptionPattern
+      queue.progressTopic should fullyMatch regex TopicApi.ProgressSubscriptionPattern
+      queue.responseTopic should fullyMatch regex TopicApi.ResponseSubscriptionPattern
+    }
+
+    checks.unsafeRunSync()
   }
 
-  it should "reject negative max-in-flight parameters when correcting inconsistent state" in {
-    (db.lookupQueue _).expects(queue.name).returning(IO.pure(Some(dbInfo)))
-    (kafka.topicsExist _)
-      .expects(List(queue.requestTopic, queue.progressTopic, queue.responseTopic))
-      .returning(IO.pure(false))
+  it should "roll back DB changes if topic creation fails" in withController {
+    (tx, controller) =>
+      val err = new RuntimeException("OH NO")
 
-    controller
-      .createQueue(request.copy(maxConcurrentTransfers = -1))
-      .attempt
-      .unsafeRunSync()
-      .left
-      .value shouldBe a[QueueController.InvalidQueueParameter]
+      (kafka.createTopics _)
+        .expects(*)
+        .returning(IO.raiseError(err))
+
+      val checks = for {
+        initCount <- countQueues.transact(tx)
+        queueOrError <- controller.createQueue(request).attempt
+        afterCount <- countQueues.transact(tx)
+      } yield {
+        initCount shouldBe 0
+        afterCount shouldBe 0
+        queueOrError.left.value shouldBe err
+      }
+
+      checks.unsafeRunSync()
+  }
+
+  it should "reject illegal queue parameters on creation" in withController {
+    (tx, controller) =>
+      val checks = for {
+        initCount <- countQueues.transact(tx)
+        queueOrError <- controller
+          .createQueue(request.copy(maxConcurrentTransfers = -1))
+          .attempt
+        afterCount <- countQueues.transact(tx)
+      } yield {
+        initCount shouldBe 0
+        afterCount shouldBe 0
+        queueOrError.left.value shouldBe an[InvalidQueueParameter]
+      }
+
+      checks.unsafeRunSync()
+  }
+
+  private val existingQueue = Queue(
+    request.name,
+    "req",
+    "prog",
+    "resp",
+    Json.obj("type" -> Json.fromString("object")).as[QueueSchema].right.value,
+    4
+  )
+
+  private val insertExisting = {
+    val id = UUID.randomUUID()
+    List(
+      fr"insert into queues",
+      fr"(id, name, request_topic, progress_topic, response_topic, request_schema, max_in_flight) values",
+      Fragments.parentheses {
+        List(
+          fr"$id",
+          fr"${existingQueue.name}",
+          fr"${existingQueue.requestTopic}",
+          fr"${existingQueue.progressTopic}",
+          fr"${existingQueue.responseTopic}",
+          fr"${existingQueue.schema}",
+          fr"${existingQueue.maxConcurrentTransfers}"
+        ).intercalate(fr",")
+      }
+    ).combineAll.update.run
+  }
+
+  private val newParameters =
+    QueueParameters(Some(request.schema), Some(request.maxConcurrentTransfers))
+
+  it should "not overwrite existing queues" in withController { (tx, controller) =>
+    val checks = for {
+      _ <- insertExisting.transact(tx)
+      queueOrError <- controller.createQueue(request).attempt
+      (requestTopic, progressTopic, responseTopic) <- sql"""select request_topic, progress_topic, response_topic
+              from queues where name = ${request.name}"""
+        .query[(String, String, String)]
+        .unique
+        .transact(transactor)
+    } yield {
+      queueOrError.left.value shouldBe QueueAlreadyExists(request.name)
+      requestTopic shouldBe "req"
+      progressTopic shouldBe "prog"
+      responseTopic shouldBe "resp"
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "patch existing queue parameters" in withController { (tx, controller) =>
+    val checks = for {
+      _ <- insertExisting.transact(tx)
+      updated <- controller.patchQueue(request.name, newParameters)
+    } yield {
+      updated shouldBe Queue(
+        request.name,
+        "req",
+        "prog",
+        "resp",
+        request.schema,
+        request.maxConcurrentTransfers
+      )
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "fail to patch a nonexistent queue" in withController { (tx, controller) =>
+    val checks = for {
+      initCount <- countQueues.transact(tx)
+      updatedOrError <- controller.patchQueue(request.name, newParameters).attempt
+      afterCount <- countQueues.transact(tx)
+    } yield {
+      initCount shouldBe 0
+      afterCount shouldBe 0
+      updatedOrError.left.value shouldBe NoSuchQueue(request.name)
+    }
+
+    checks.unsafeRunSync()
+  }
+
+  it should "reject illegal queue parameters on patch" in withController {
+    (tx, controller) =>
+      val checks = for {
+        _ <- insertExisting.transact(tx)
+        updatedOrError <- controller
+          .patchQueue(request.name, newParameters.copy(maxConcurrentTransfers = Some(-1)))
+          .attempt
+        (schema, max) <- sql"select request_schema, max_in_flight from queues where name = ${request.name}"
+          .query[(QueueSchema, Int)]
+          .unique
+          .transact(tx)
+      } yield {
+        updatedOrError.left.value shouldBe a[InvalidQueueParameter]
+        schema shouldBe existingQueue.schema
+        max shouldBe existingQueue.maxConcurrentTransfers
+      }
+
+      checks.unsafeRunSync()
+  }
+
+  it should "look up queues by name" in withController { (tx, controller) =>
+    val checks = for {
+      _ <- insertExisting.transact(tx)
+      lookedUp <- controller.lookupQueue(request.name)
+    } yield {
+      lookedUp shouldBe existingQueue
+    }
+
+    checks.unsafeRunSync()
   }
 }
