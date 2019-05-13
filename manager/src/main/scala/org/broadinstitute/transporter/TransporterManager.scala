@@ -62,7 +62,10 @@ object TransporterManager extends IOApp.WithContext {
           blockingEc
         )
         producer <- KafkaProducer.resource[Json](config.kafka.connection)
-        consumer <- KafkaConsumer
+        progressConsumer <- KafkaConsumer
+          .ofTopicPattern[Json](TopicApi.ProgressSubscriptionPattern)
+          .apply(config.kafka.connection, config.kafka.consumer)
+        resultConsumer <- KafkaConsumer
           .ofTopicPattern[(TransferResult, Json)](TopicApi.ResponseSubscriptionPattern)
           .apply(config.kafka.connection, config.kafka.consumer)
       } yield {
@@ -84,14 +87,19 @@ object TransporterManager extends IOApp.WithContext {
           .serve
           .compile
           .lastOrError
+
         val submissionSweeper = Stream
           .fixedDelay(config.submissionInterval)
           .evalMap(_ => transferController.submitEligibleTransfers)
           .compile
           .drain
-        val resultListener = consumer.runForeach(transferController.recordTransferResults)
 
-        (server, submissionSweeper, resultListener)
+        val progressListener =
+          progressConsumer.runForeach(transferController.markTransfersInProgress)
+        val resultListener =
+          resultConsumer.runForeach(transferController.recordTransferResults)
+
+        (server, submissionSweeper, progressListener, resultListener)
       }
 
       components.use(_.parTupled.map(_._1))

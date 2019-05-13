@@ -188,7 +188,63 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     }
   }
 
-  it should "prioritize 'submitted' status over all in request summaries" in withRequest {
+  it should "prioritize 'inprogress' status over all in request summaries" in withRequest {
+    (tx, controller) =>
+      val now = Instant.now
+      val fakeSubmitted = request1Transfers.take(3).map(_._1)
+      val fakeInProgress = request1Transfers(6)._1
+      val fakeSucceeded = request1Transfers.takeRight(2).map(_._1)
+      val fakeFailed = request1Transfers.slice(3, 6).map(_._1)
+
+      val transaction = for {
+        _ <- fakeSubmitted.traverse_ { id =>
+          sql"""update transfers set
+                status = ${TransferStatus.Submitted: TransferStatus},
+                submitted_at = ${Timestamp.from(now)}
+                where id = $id""".update.run
+        }
+        _ <- sql"""update transfers set
+                   status = ${TransferStatus.InProgress: TransferStatus},
+                   submitted_at = ${Timestamp.from(now)},
+                   updated_at = ${Timestamp.from(now.plusMillis(10000))}
+                   where id = $fakeInProgress""".update.run
+        _ <- fakeSucceeded.traverse_ { id =>
+          sql"""update transfers set
+                status = ${TransferStatus.Succeeded: TransferStatus},
+                submitted_at = ${Timestamp.from(now.minusMillis(30000))},
+                updated_at = ${Timestamp.from(now)}
+                where id = $id""".update.run
+        }
+        _ <- fakeFailed.traverse_ { id =>
+          sql"""update transfers set
+                status = ${TransferStatus.Failed: TransferStatus},
+                submitted_at = ${Timestamp.from(now.plusMillis(30000))},
+                updated_at = ${Timestamp.from(now.minusMillis(30000))}
+                where id = $id""".update.run
+        }
+      } yield ()
+
+      for {
+        _ <- transaction.transact(tx)
+        summary <- controller.lookupRequestStatus(queueName, request1Id)
+      } yield {
+        summary shouldBe RequestStatus(
+          request1Id,
+          TransferStatus.InProgress,
+          Map(
+            TransferStatus.Pending -> 1,
+            TransferStatus.Submitted -> 3,
+            TransferStatus.Failed -> 3,
+            TransferStatus.Succeeded -> 2,
+            TransferStatus.InProgress -> 1
+          ),
+          Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
+          Some(OffsetDateTime.ofInstant(now.plusMillis(10000), ZoneId.of("UTC")))
+        )
+      }
+  }
+
+  it should "prioritize 'submitted' status over 'pending' in request summaries" in withRequest {
     (tx, controller) =>
       val now = Instant.now
       val fakeSubmitted = request1Transfers.take(3).map(_._1)
@@ -229,7 +285,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
             TransferStatus.Pending -> 2,
             TransferStatus.Submitted -> 3,
             TransferStatus.Failed -> 3,
-            TransferStatus.Succeeded -> 2
+            TransferStatus.Succeeded -> 2,
+            TransferStatus.InProgress -> 0
           ),
           Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(now, ZoneId.of("UTC")))
@@ -271,7 +328,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
             TransferStatus.Pending -> 2,
             TransferStatus.Submitted -> 0,
             TransferStatus.Succeeded -> 4,
-            TransferStatus.Failed -> 4
+            TransferStatus.Failed -> 4,
+            TransferStatus.InProgress -> 0
           ),
           Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(now, ZoneId.of("UTC")))
@@ -313,7 +371,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
             TransferStatus.Pending -> 0,
             TransferStatus.Submitted -> 0,
             TransferStatus.Succeeded -> 8,
-            TransferStatus.Failed -> 2
+            TransferStatus.Failed -> 2,
+            TransferStatus.InProgress -> 0
           ),
           Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(now, ZoneId.of("UTC")))
@@ -678,14 +737,36 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
                 where id = $id""".update.run.void
         }.transact(tx)
         _ <- controller.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*)
-                                from transfers
+        totalSubmitted <- sql"""select count(*) from transfers
                                 where status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[Long]
           .unique
           .transact(tx)
       } yield {
         totalSubmitted shouldBe preSubmitted.length
+      }
+  }
+
+  it should "count in-progress transfers when sweeping for submissions" in withRequest {
+    (tx, controller) =>
+      val inProgress = request1Transfers.map(_._1).take(queueConcurrency)
+
+      (kafka.submit _).expects(Nil).returning(IO.unit)
+
+      for {
+        _ <- inProgress.traverse_ { id =>
+          sql"""update transfers
+              set status = ${TransferStatus.InProgress: TransferStatus}
+              where id = $id""".update.run.void
+        }.transact(tx)
+        _ <- controller.submitEligibleTransfers
+        totalSubmitted <- sql"""select count(*) from transfers
+                             where status = ${TransferStatus.Submitted: TransferStatus}"""
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        totalSubmitted shouldBe 0
       }
   }
 
@@ -729,6 +810,105 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- controller.recordTransferResults(updates)
+        updated <- sql"select id, status, info from transfers where updated_at is not null"
+          .query[(UUID, TransferStatus, Json)]
+          .to[List]
+          .transact(tx)
+      } yield {
+        updated shouldBe empty
+      }
+  }
+
+  it should "mark submitted transfers as in progress" in withRequest { (tx, controller) =>
+    val updates = request1Transfers.zipWithIndex.collect {
+      case ((id, _), i) if i % 3 != 0 =>
+        (TransferIds(queueId, request1Id, id), json"""{ "i+1": $i }""")
+    }
+
+    for {
+      _ <- updates.traverse_ {
+        case (ids, _) =>
+          sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
+            .transact(tx)
+      }
+      _ <- controller.markTransfersInProgress(updates)
+      updated <- sql"select id, status, info from transfers where updated_at is not null"
+        .query[(UUID, TransferStatus, Json)]
+        .to[List]
+        .transact(tx)
+    } yield {
+      updated should contain theSameElementsAs updates.map {
+        case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
+      }
+    }
+  }
+
+  it should "keep the 'updated_at' and 'info' fields of in-progress transfers up-to-date" in withRequest {
+    (tx, controller) =>
+      val updates = request1Transfers.zipWithIndex.collect {
+        case ((id, _), i) if i % 3 != 0 =>
+          (TransferIds(queueId, request1Id, id), json"""{ "i+1": $i }""")
+      }
+
+      for {
+        _ <- updates.traverse_ {
+          case (ids, _) =>
+            sql"""update transfers set
+                  status = 'inprogress',
+                  updated_at = TO_TIMESTAMP(0),
+                  info = '{}'
+                  where id = ${ids.transfer}""".update.run.void
+              .transact(tx)
+        }
+        _ <- controller.markTransfersInProgress(updates)
+        updated <- sql"select id, status, info from transfers where updated_at > TO_TIMESTAMP(0)"
+          .query[(UUID, TransferStatus, Json)]
+          .to[List]
+          .transact(tx)
+      } yield {
+        updated should contain theSameElementsAs updates.map {
+          case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
+        }
+      }
+  }
+
+  it should "not mark transfers in a terminal state to in progress" in withRequest {
+    (tx, controller) =>
+      val updates = request1Transfers.zipWithIndex.collect {
+        case ((id, _), i) if i % 3 != 0 =>
+          (TransferIds(queueId, request1Id, id), json"""{ "i+1": $i }""")
+      }
+
+      for {
+        _ <- updates.traverse_ {
+          case (ids, _) =>
+            sql"update transfers set status = 'succeeded' where id = ${ids.transfer}".update.run.void
+              .transact(tx)
+        }
+        _ <- controller.markTransfersInProgress(updates)
+        updated <- sql"select id, status, info from transfers where updated_at is not null"
+          .query[(UUID, TransferStatus, Json)]
+          .to[List]
+          .transact(tx)
+      } yield {
+        updated shouldBe empty
+      }
+  }
+
+  it should "not mark transfers as in progress if IDs are mismatched" in withRequest {
+    (tx, controller) =>
+      val updates = request1Transfers.zipWithIndex.collect {
+        case ((id, _), i) if i % 3 != 0 =>
+          (TransferIds(queueId, request2Id, id), json"""{ "i+1": $i }""")
+      }
+
+      for {
+        _ <- updates.traverse_ {
+          case (ids, _) =>
+            sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
+              .transact(tx)
+        }
+        _ <- controller.markTransfersInProgress(updates)
         updated <- sql"select id, status, info from transfers where updated_at is not null"
           .query[(UUID, TransferStatus, Json)]
           .to[List]

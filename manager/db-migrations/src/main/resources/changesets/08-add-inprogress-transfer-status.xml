@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="8" author="danmoran">
+
+        <sql>
+            LOCK TABLE ONLY transfers IN EXCLUSIVE MODE;
+            ALTER TYPE transfer_status RENAME TO _transfer_status;
+            CREATE TYPE transfer_status AS ENUM ('pending', 'submitted', 'inprogress', 'failed', 'succeeded');
+            ALTER TABLE transfers ALTER COLUMN status TYPE transfer_status USING status::text::transfer_status;
+            DROP TYPE _transfer_status
+        </sql>
+
+        <rollback>
+            <sql>
+                LOCK TABLE ONLY transfers IN EXCLUSIVE MODE;
+                ALTER TYPE transfer_status RENAME TO _transfer_status;
+                CREATE TYPE transfer_status AS ENUM ('pending', 'submitted', 'failed', 'succeeded');
+                ALTER TABLE transfers ALTER COLUMN status TYPE transfer_status USING status::text::transfer_status;
+                DROP TYPE _transfer_status
+            </sql>
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>
