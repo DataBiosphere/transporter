@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.kafka
 
 import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
+import cats.implicits._
 import doobie.util.ExecutionContexts
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.broadinstitute.transporter.kafka.config.{AdminConfig, ConnectionConfig}
@@ -119,5 +120,31 @@ class KafkaAdminClientSpec extends FlatSpec with Matchers with EmbeddedKafka {
 
       errored shouldBe true
       createdTopics shouldBe empty
+  }
+
+  it should "increase partition counts for topics" in withKafka { implicit config =>
+    val existingTopics = List("foo" -> 1, "bar" -> 3)
+    val newTopics = List("foo" -> 4, "bar" -> 5)
+
+    val resource = for {
+      ec <- ExecutionContexts.cachedThreadPool[IO]
+      jAdmin <- KafkaAdminClient.adminResource(connConfig(config), ec)
+    } yield (jAdmin, new KafkaAdminClient.Impl(jAdmin, 1))
+
+    resource.use {
+      case (jClient, client) =>
+        for {
+          _ <- existingTopics.traverse_ {
+            case (t, p) => IO.delay(createCustomTopic(t, partitions = p))
+          }
+          _ <- client.increasePartitionCounts(newTopics)
+          descriptions <- IO.suspend(
+            jClient.describeTopics(newTopics.map(_._1).asJava).all().cancelable
+          )
+        } yield {
+          val updated = descriptions.asScala.mapValues(_.partitions().size()).toList
+          updated should contain theSameElementsAs newTopics
+        }
+    }.unsafeRunSync()
   }
 }

@@ -50,9 +50,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   def withQueue(test: (Transactor[IO], TransferController) => IO[Any]): Unit =
     withController { (tx, controller) =>
       sql"""insert into queues
-          (id, name, request_topic, progress_topic, response_topic, request_schema, max_in_flight)
+          (id, name, request_topic, progress_topic, response_topic, request_schema, max_in_flight, partition_count)
           values
-          ($queueId, $queueName, 'requests', 'progress', 'responses', $queueSchema, $queueConcurrency)""".update.run
+          ($queueId, $queueName, 'requests', 'progress', 'responses', $queueSchema, $queueConcurrency, 1)""".update.run
         .transact(tx)
         .void
         .flatMap(_ => test(tx, controller))

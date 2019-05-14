@@ -190,6 +190,10 @@ class QueueControllerSpec extends PostgresSpec with MockFactory with EitherValue
   }
 
   it should "patch existing queue parameters" in withController { (tx, controller) =>
+    (kafka.increasePartitionCounts _)
+      .expects(List("requests", "progress", "responses").map(_ -> request.partitionCount))
+      .returning(IO.unit)
+
     val checks = for {
       _ <- insertExisting.transact(tx)
       updated <- controller.patchQueue(request.name, newParameters)
@@ -206,6 +210,31 @@ class QueueControllerSpec extends PostgresSpec with MockFactory with EitherValue
     }
 
     checks.unsafeRunSync()
+  }
+
+  it should "roll back DB changes if increasing partitions fails" in withController {
+    (tx, controller) =>
+      val boom = new RuntimeException("BOOM")
+      (kafka.increasePartitionCounts _)
+        .expects(
+          List("req", "prog", "resp").map(_ -> request.partitionCount)
+        )
+        .returning(IO.raiseError(boom))
+
+      val checks = for {
+        _ <- insertExisting.transact(tx)
+        updatedOrError <- controller.patchQueue(request.name, newParameters).attempt
+        (schema, parts) <- sql"select request_schema, partition_count from queues where name = ${request.name}"
+          .query[(QueueSchema, Int)]
+          .unique
+          .transact(tx)
+      } yield {
+        updatedOrError.left.value shouldBe boom
+        schema shouldBe existingQueue.schema
+        parts shouldBe existingQueue.partitionCount
+      }
+
+      checks.unsafeRunSync()
   }
 
   it should "fail to patch a nonexistent queue" in withController { (tx, controller) =>

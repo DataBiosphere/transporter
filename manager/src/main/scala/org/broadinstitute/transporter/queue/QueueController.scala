@@ -171,6 +171,14 @@ class QueueController(
       id <- maybeId.liftTo[ConnectionIO](NoSuchQueue(name))
       queue <- (fr"update queues" ++ updates ++ fr"where id = $id").update
         .withUniqueGeneratedKeys[Queue](queueColumns: _*)
+      _ <- newParameters.partitionCount
+        .fold(IO.unit) { newCount =>
+          kafkaClient.increasePartitionCounts(
+            List(queue.requestTopic, queue.progressTopic, queue.responseTopic)
+              .map(_ -> newCount)
+          )
+        }
+        .to[ConnectionIO]
     } yield {
       queue
     }

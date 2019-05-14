@@ -7,7 +7,7 @@ import cats.effect.{CancelToken, ContextShift, ExitCase, IO, Resource}
 import cats.implicits._
 import fs2.kafka.AdminClientSettings
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
+import org.apache.kafka.clients.admin.{AdminClient, NewPartitions, NewTopic}
 import org.apache.kafka.common.KafkaFuture
 import org.broadinstitute.transporter.kafka.config.{AdminConfig, ConnectionConfig}
 
@@ -38,6 +38,15 @@ trait KafkaAdminClient {
     * the error.
     */
   def createTopics(topicPartitions: List[(String, Int)]): IO[Unit]
+
+  /**
+    * Increase the partition counts for a set of topics to a new value.
+    *
+    * Kafka only supports increasing partitions, not decreasing them. This
+    * method will fail if one of the given numbers is lower than the existing
+    * partition count for the corresponding topic.
+    */
+  def increasePartitionCounts(newTopicPartitions: List[(String, Int)]): IO[Unit]
 }
 
 object KafkaAdminClient {
@@ -158,10 +167,25 @@ object KafkaAdminClient {
           case ExitCase.Completed => logger.debug(s"Successfully created topics: $topics")
           case ExitCase.Canceled  => logger.warn(s"Topic creation canceled: $topics")
           case ExitCase.Error(TopicCreationFailed(failures)) =>
-            reportAndRollback(topicPartitions.toList, failures)
+            reportAndRollback(topicPartitions, failures)
           case ExitCase.Error(err) =>
             logger.error(err)(s"Failed to create topics: $topics")
         }
+      } yield ()
+    }
+
+    override def increasePartitionCounts(
+      newTopicPartitions: List[(String, Int)]
+    ): IO[Unit] = {
+      val topicPartString = newTopicPartitions.map { case (t, p) => s"$t -> $p" }
+        .mkString("[", ", ", "]")
+      val newPartitionCounts = newTopicPartitions.map {
+        case (topic, num) => topic -> NewPartitions.increaseTo(num)
+      }.toMap.asJava
+
+      for {
+        _ <- logger.info(s"Increasing Kafka topic partition counts: $topicPartString")
+        _ <- IO.suspend(adminClient.createPartitions(newPartitionCounts).all().cancelable)
       } yield ()
     }
 
