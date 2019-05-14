@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.kafka
 
 import cats.data.NonEmptyList
 import cats.effect.{ContextShift, IO}
+import cats.implicits._
 import doobie.util.ExecutionContexts
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.broadinstitute.transporter.kafka.config.{AdminConfig, ConnectionConfig}
@@ -59,18 +60,40 @@ class KafkaAdminClientSpec extends FlatSpec with Matchers with EmbeddedKafka {
     val resource = for {
       ec <- ExecutionContexts.cachedThreadPool[IO]
       jAdmin <- KafkaAdminClient.adminResource(connConfig(config), ec)
-    } yield (jAdmin, new KafkaAdminClient.Impl(jAdmin, 3, 1))
+    } yield (jAdmin, new KafkaAdminClient.Impl(jAdmin, 1))
 
     resource.use {
       case (jClient, client) =>
         for {
           originalTopics <- IO.suspend(jClient.listTopics.names.cancelable.map(_.asScala))
-          _ <- client.createTopics(topics: _*)
+          _ <- client.createTopics(topics.map(_ -> 3))
           newTopics <- IO.suspend(jClient.listTopics.names.cancelable.map(_.asScala))
         } yield {
           newTopics.diff(originalTopics)
         }
     }.unsafeRunSync() shouldBe topics.toSet
+  }
+
+  it should "create topics with specified partition counts" in withKafka { config =>
+    val topicPartitions = List("foo" -> 2, "bar" -> 1)
+
+    val resource = for {
+      ec <- ExecutionContexts.cachedThreadPool[IO]
+      jAdmin <- KafkaAdminClient.adminResource(connConfig(config), ec)
+    } yield (jAdmin, new KafkaAdminClient.Impl(jAdmin, 1))
+
+    resource.use {
+      case (jClient, client) =>
+        for {
+          _ <- client.createTopics(topicPartitions)
+          descriptions <- IO.suspend(
+            jClient.describeTopics(topicPartitions.map(_._1).asJava).all().cancelable
+          )
+        } yield {
+          val created = descriptions.asScala.mapValues(_.partitions().size()).toList
+          created should contain theSameElementsAs topicPartitions
+        }
+    }.unsafeRunSync()
   }
 
   it should "roll back successfully created topics when other topics in the request fail" in withKafka {
@@ -80,7 +103,7 @@ class KafkaAdminClientSpec extends FlatSpec with Matchers with EmbeddedKafka {
       val resource = for {
         ec <- ExecutionContexts.cachedThreadPool[IO]
         jAdmin <- KafkaAdminClient.adminResource(connConfig(config), ec)
-      } yield (jAdmin, new KafkaAdminClient.Impl(jAdmin, 3, 1))
+      } yield (jAdmin, new KafkaAdminClient.Impl(jAdmin, 1))
 
       val (errored, createdTopics) = resource.use {
         case (jClient, client) =>
@@ -88,7 +111,7 @@ class KafkaAdminClientSpec extends FlatSpec with Matchers with EmbeddedKafka {
             originalTopics <- IO.suspend(
               jClient.listTopics.names.cancelable.map(_.asScala)
             )
-            attempt <- client.createTopics(topics: _*).attempt
+            attempt <- client.createTopics(topics.map(_ -> 3)).attempt
             newTopics <- IO.suspend(jClient.listTopics.names.cancelable.map(_.asScala))
           } yield {
             (attempt.isLeft, newTopics.diff(originalTopics))
@@ -97,5 +120,31 @@ class KafkaAdminClientSpec extends FlatSpec with Matchers with EmbeddedKafka {
 
       errored shouldBe true
       createdTopics shouldBe empty
+  }
+
+  it should "increase partition counts for topics" in withKafka { implicit config =>
+    val existingTopics = List("foo" -> 1, "bar" -> 3)
+    val newTopics = List("foo" -> 4, "bar" -> 5)
+
+    val resource = for {
+      ec <- ExecutionContexts.cachedThreadPool[IO]
+      jAdmin <- KafkaAdminClient.adminResource(connConfig(config), ec)
+    } yield (jAdmin, new KafkaAdminClient.Impl(jAdmin, 1))
+
+    resource.use {
+      case (jClient, client) =>
+        for {
+          _ <- existingTopics.traverse_ {
+            case (t, p) => IO.delay(createCustomTopic(t, partitions = p))
+          }
+          _ <- client.increasePartitionCounts(newTopics)
+          descriptions <- IO.suspend(
+            jClient.describeTopics(newTopics.map(_._1).asJava).all().cancelable
+          )
+        } yield {
+          val updated = descriptions.asScala.mapValues(_.partitions().size()).toList
+          updated should contain theSameElementsAs newTopics
+        }
+    }.unsafeRunSync()
   }
 }

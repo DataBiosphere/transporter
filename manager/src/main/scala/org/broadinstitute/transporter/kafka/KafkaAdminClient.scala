@@ -5,8 +5,9 @@ import java.util.concurrent.{CancellationException, CompletionException}
 
 import cats.effect.{CancelToken, ContextShift, ExitCase, IO, Resource}
 import cats.implicits._
+import fs2.kafka.AdminClientSettings
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
+import org.apache.kafka.clients.admin.{AdminClient, NewPartitions, NewTopic}
 import org.apache.kafka.common.KafkaFuture
 import org.broadinstitute.transporter.kafka.config.{AdminConfig, ConnectionConfig}
 
@@ -36,7 +37,16 @@ trait KafkaAdminClient {
     * created but others fail, we delete the successful topics before returning
     * the error.
     */
-  def createTopics(topicNames: String*): IO[Unit]
+  def createTopics(topicPartitions: List[(String, Int)]): IO[Unit]
+
+  /**
+    * Increase the partition counts for a set of topics to a new value.
+    *
+    * Kafka only supports increasing partitions, not decreasing them. This
+    * method will fail if one of the given numbers is lower than the existing
+    * partition count for the corresponding topic.
+    */
+  def increasePartitionCounts(newTopicPartitions: List[(String, Int)]): IO[Unit]
 }
 
 object KafkaAdminClient {
@@ -89,7 +99,7 @@ object KafkaAdminClient {
     implicit cs: ContextShift[IO]
   ): Resource[IO, KafkaAdminClient] =
     adminResource(conn, blockingEc).map(
-      new Impl(_, AdminConfig.TopicPartitions, admin.replicationFactor)
+      new Impl(_, admin.replicationFactor)
     )
 
   /** Construct a Kafka admin client, wrapped in setup and teardown logic. */
@@ -99,7 +109,15 @@ object KafkaAdminClient {
   )(
     implicit cs: ContextShift[IO]
   ): Resource[IO, AdminClient] = {
-    val settings = config.adminSettings
+    val settings = AdminClientSettings.Default
+    // Required to connect to Kafka at all.
+      .withBootstrapServers(config.bootstrapServers.mkString_(","))
+      // For debugging on the Kafka server; adds an ID to the logs.
+      .withClientId(config.clientId)
+      // No "official" recommendation on these values, we can tweak as we see fit.
+      .withRequestTimeout(config.requestTimeout)
+      .withCloseTimeout(config.closeTimeout)
+
     val initClient = cs.evalOn(blockingEc) {
       settings.adminClientFactory.create[IO](settings)
     }
@@ -118,8 +136,6 @@ object KafkaAdminClient {
     * the functionality we need.
     *
     * @param adminClient client which can execute "raw" Kafka requests
-    * @param newTopicPartitionCount partition count to use for all topics
-    *                               created by the client
     * @param newTopicReplicationFactor replication factor to use for all topics
     *                                  created by the client
     * @param cs proof of the ability to shift IO-wrapped computations
@@ -127,7 +143,6 @@ object KafkaAdminClient {
     */
   private[kafka] class Impl(
     adminClient: AdminClient,
-    newTopicPartitionCount: Int,
     newTopicReplicationFactor: Short
   )(implicit cs: ContextShift[IO])
       extends KafkaAdminClient {
@@ -144,18 +159,33 @@ object KafkaAdminClient {
         clusterInfo.size() >= newTopicReplicationFactor
       }
 
-    override def createTopics(topicNames: String*): IO[Unit] = {
-      val topics = topicNames.mkString(", ")
+    override def createTopics(topicPartitions: List[(String, Int)]): IO[Unit] = {
+      val topics = topicPartitions.mkString(", ")
       for {
         _ <- logger.info(s"Creating Kafka topics: $topics")
-        _ <- attemptCreateTopics(topicNames.toList).guaranteeCase {
+        _ <- attemptCreateTopics(topicPartitions).guaranteeCase {
           case ExitCase.Completed => logger.debug(s"Successfully created topics: $topics")
           case ExitCase.Canceled  => logger.warn(s"Topic creation canceled: $topics")
           case ExitCase.Error(TopicCreationFailed(failures)) =>
-            reportAndRollback(topicNames.toList, failures)
+            reportAndRollback(topicPartitions, failures)
           case ExitCase.Error(err) =>
             logger.error(err)(s"Failed to create topics: $topics")
         }
+      } yield ()
+    }
+
+    override def increasePartitionCounts(
+      newTopicPartitions: List[(String, Int)]
+    ): IO[Unit] = {
+      val topicPartString = newTopicPartitions.map { case (t, p) => s"$t -> $p" }
+        .mkString("[", ", ", "]")
+      val newPartitionCounts = newTopicPartitions.map {
+        case (topic, num) => topic -> NewPartitions.increaseTo(num)
+      }.toMap.asJava
+
+      for {
+        _ <- logger.info(s"Increasing Kafka topic partition counts: $topicPartString")
+        _ <- IO.suspend(adminClient.createPartitions(newPartitionCounts).all().cancelable)
       } yield ()
     }
 
@@ -165,9 +195,10 @@ object KafkaAdminClient {
       * If some topics are created but others fail, the failed [[IO]] will contain
       * a [[TopicCreationFailed]] exception summarizing the state for reporting / rollback.
       */
-    private def attemptCreateTopics(topicNames: List[String]): IO[Unit] = {
-      val newTopics = topicNames.map { name =>
-        new NewTopic(name, newTopicPartitionCount, newTopicReplicationFactor)
+    private def attemptCreateTopics(topicNames: List[(String, Int)]): IO[Unit] = {
+      val newTopics = topicNames.map {
+        case (name, partitions) =>
+          new NewTopic(name, partitions, newTopicReplicationFactor)
       }
 
       val attempts = IO.suspend {
@@ -199,10 +230,10 @@ object KafkaAdminClient {
       * creation of those that were successfully created.
       */
     private def reportAndRollback(
-      attempted: List[String],
+      attempted: List[(String, Int)],
       failures: List[(String, Throwable)]
     ): IO[Unit] = {
-      val successes = attempted.toSet.diff(failures.map(_._1).toSet)
+      val successes = attempted.map(_._1).toSet.diff(failures.map(_._1).toSet)
 
       for {
         _ <- logger.error(s"Errors hit while creating topics:")

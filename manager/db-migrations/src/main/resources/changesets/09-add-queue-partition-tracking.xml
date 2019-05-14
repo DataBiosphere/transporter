@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="9" author="danmoran">
+
+        <!-- Add the column as nullable to start for backwards-compat. -->
+        <addColumn tableName="queues">
+            <column name="partition_count" type="smallint" />
+        </addColumn>
+
+        <!-- Fill in the column with the conventional pattern the app will use. -->
+        <sql>
+            UPDATE queues SET partition_count = 3
+        </sql>
+
+        <!-- Lock down nullability. -->
+        <addNotNullConstraint tableName="queues" columnName="partition_count" />
+
+        <rollback>
+            <dropColumn tableName="queues" columnName="partition_count" />
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>
