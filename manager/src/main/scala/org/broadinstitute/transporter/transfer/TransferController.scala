@@ -172,6 +172,7 @@ class TransferController(
     }.map { summaries =>
       val counts = summaries.map { case (status, n, _, _) => status -> n }.toMap
       val maybeStatus = List(
+        TransferStatus.InProgress,
         TransferStatus.Submitted,
         TransferStatus.Pending,
         TransferStatus.Failed,
@@ -350,10 +351,14 @@ class TransferController(
         .to[List]
         .map(_.toMap)
       submittedCount <- getCountsInState(TransferStatus.Submitted)
+      inProgressCount <- getCountsInState(TransferStatus.InProgress)
     } yield {
       maxCounts.map {
         case (topic, max) =>
-          topic -> math.max(0L, max - submittedCount.getOrElse(topic, 0L))
+          val totalSubmitted =
+            submittedCount.getOrElse(topic, 0L) + inProgressCount.getOrElse(topic, 0L)
+
+          topic -> math.max(0L, max - totalSubmitted)
       }.toList
     }
 
@@ -420,7 +425,7 @@ class TransferController(
 
   /**
     * Update Transporter's view of a set of transfers based on
-    * results collected from Kafka.
+    * terminal results collected from Kafka.
     */
   def recordTransferResults(
     results: List[(TransferIds, (TransferResult, Json))]
@@ -443,4 +448,37 @@ class TransferController(
            |and transfers.id = ? and transfer_requests.id = ? and queues.id = ?""".stripMargin
       ).updateMany(statusUpdates).void.transact(dbClient)
     } yield ()
+
+  /**
+    * Update Transporter's view of a set of transfers based on
+    * incremental progress messages collected from Kafka.
+    */
+  def markTransfersInProgress(
+    progress: List[(TransferIds, Json)]
+  ): IO[Unit] = {
+    val statuses = List(TransferStatus.Submitted, TransferStatus.InProgress)
+      .map(_.entryName.toLowerCase)
+      .mkString("('", "','", "')")
+    for {
+      now <- getNow
+      statusUpdates = progress.map {
+        case (ids, info) =>
+          (
+            TransferStatus.InProgress: TransferStatus,
+            info,
+            ids.transfer,
+            ids.request,
+            ids.queue
+          )
+      }
+      _ <- Update[(TransferStatus, Json, UUID, UUID, UUID)](
+        s"""update transfers
+           |set status = ?, info = ?, updated_at = ${timestampSql(now)}
+           |from transfer_requests, queues
+           |where transfers.request_id = transfer_requests.id and transfer_requests.queue_id = queues.id
+           |and transfers.status in $statuses
+           |and transfers.id = ? and transfer_requests.id = ? and queues.id = ?""".stripMargin
+      ).updateMany(statusUpdates).void.transact(dbClient)
+    } yield ()
+  }
 }
