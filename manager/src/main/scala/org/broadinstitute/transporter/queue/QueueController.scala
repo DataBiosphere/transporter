@@ -26,7 +26,11 @@ import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRe
   * @param kafkaClient client which can perform admin-level operations against
   *                    Transporter's Kafka cluster
   */
-class QueueController(dbClient: Transactor[IO], kafkaClient: KafkaAdminClient) {
+class QueueController(
+  dbClient: Transactor[IO],
+  kafkaClient: KafkaAdminClient,
+  topicNames: UUID => (String, String, String) = TopicApi.queueTopics(_)
+) {
   import org.broadinstitute.transporter.db.DoobieInstances._
 
   private val logger = Slf4jLogger.getLogger[IO]
@@ -38,7 +42,8 @@ class QueueController(dbClient: Transactor[IO], kafkaClient: KafkaAdminClient) {
     "progress_topic",
     "response_topic",
     "request_schema",
-    "max_in_flight"
+    "max_in_flight",
+    "partition_count"
   )
   private val queueColsFragment = Fragment.const(queueColumns.mkString(", "))
 
@@ -67,7 +72,7 @@ class QueueController(dbClient: Transactor[IO], kafkaClient: KafkaAdminClient) {
           .flatMap(_ => IO.raiseError[Queue](QueueAlreadyExists(request.name)))
       case None =>
         val queueId = UUID.randomUUID()
-        val (requestTopic, progressTopic, responseTopic) = TopicApi.queueTopics(queueId)
+        val (requestTopic, progressTopic, responseTopic) = topicNames(queueId)
 
         val insert = List(
           fr"insert into queues",
@@ -81,22 +86,30 @@ class QueueController(dbClient: Transactor[IO], kafkaClient: KafkaAdminClient) {
               fr"$progressTopic",
               fr"$responseTopic",
               fr"${request.schema}",
-              fr"${request.maxConcurrentTransfers}"
+              fr"${request.maxConcurrentTransfers}",
+              fr"${request.partitionCount}"
             ).intercalate(fr",")
           }
         ).combineAll
 
         val initTransaction = for {
           queue <- insert.update.withUniqueGeneratedKeys[Queue](queueColumns: _*)
-          _ <- kafkaClient
-            .createTopics(requestTopic, progressTopic, responseTopic)
-            .to[ConnectionIO]
+          topicPartitions = List(requestTopic, progressTopic, responseTopic)
+            .map(_ -> request.partitionCount)
+          _ <- kafkaClient.createTopics(topicPartitions).to[ConnectionIO]
         } yield {
           queue
         }
 
         for {
-          _ <- checkConcurrencyValid(request.name, request.maxConcurrentTransfers)
+          _ <- checkParameters(
+            request.name,
+            QueueParameters(
+              schema = Some(request.schema),
+              maxConcurrentTransfers = Some(request.maxConcurrentTransfers),
+              partitionCount = Some(request.partitionCount)
+            )
+          )
           _ <- logger.info(s"Initializing resources for queue ${request.name}")
           newQueue <- initTransaction.transact(dbClient)
           _ <- logger.info(s"Successfully created queue ${request.name}")
@@ -105,18 +118,52 @@ class QueueController(dbClient: Transactor[IO], kafkaClient: KafkaAdminClient) {
         }
     }
 
-  /** Check if the concurrency parameter specified in a queue request is valid. */
-  private def checkConcurrencyValid(queueName: String, concurrency: Int): IO[Unit] =
-    IO.raiseError(
-        InvalidQueueParameter(queueName, "Max concurrent requests must be non-negative")
-      )
-      .whenA(concurrency < 0)
+  /** Check if user-defined parameters specified in a queue request are valid. */
+  private def checkParameters(queueName: String, params: QueueParameters): IO[Unit] = {
+    import QueueController._
+
+    val checkConcurrency = params.maxConcurrentTransfers.fold(IO.unit) { concurrency =>
+      IO.raiseError(
+          InvalidQueueParameter(queueName, "Max concurrent requests must be non-negative")
+        )
+        .whenA(concurrency < 0)
+    }
+
+    val checkPartitions = params.partitionCount.fold(IO.unit) { partitions =>
+      for {
+        _ <- IO
+          .raiseError(
+            InvalidQueueParameter(
+              queueName,
+              s"Partition count must be between $MinPartitions and $MaxPartitions"
+            )
+          )
+          .whenA(partitions < MinPartitions || partitions > MaxPartitions)
+        existingPartitions <- sql"select partition_count from queues where name = $queueName"
+          .query[Int]
+          .option
+          .transact(dbClient)
+        _ <- existingPartitions.fold(IO.unit) { existing =>
+          IO.raiseError(
+              InvalidQueueParameter(
+                queueName,
+                s"Cannot decrease partition count from $existing"
+              )
+            )
+            .whenA(existing > partitions)
+        }
+      } yield ()
+    }
+
+    (checkConcurrency, checkPartitions).tupled.void
+  }
 
   /** Update the user-defined parameters of an existing queue resource. */
   def patchQueue(name: String, newParameters: QueueParameters): IO[Queue] = {
     val updates = Fragments.setOpt(
       newParameters.schema.map(s => fr"request_schema = $s"),
-      newParameters.maxConcurrentTransfers.map(m => fr"max_in_flight = $m")
+      newParameters.maxConcurrentTransfers.map(m => fr"max_in_flight = $m"),
+      newParameters.partitionCount.map(p => fr"partition_count = $p")
     )
 
     val patchTransaction = for {
@@ -129,9 +176,7 @@ class QueueController(dbClient: Transactor[IO], kafkaClient: KafkaAdminClient) {
     }
 
     for {
-      _ <- newParameters.maxConcurrentTransfers.fold(IO.unit)(
-        checkConcurrencyValid(name, _)
-      )
+      _ <- checkParameters(name, newParameters)
       queue <- patchTransaction.transact(dbClient)
     } yield {
       queue
@@ -154,4 +199,13 @@ class QueueController(dbClient: Transactor[IO], kafkaClient: KafkaAdminClient) {
       queue
     }
 
+}
+
+object QueueController {
+
+  /** Minimum partitions supported for Kafka topics created by Transporter. */
+  val MinPartitions = 1
+
+  /** Maximum partitions supported for Kafka topics created by Transporter. */
+  val MaxPartitions = 64
 }

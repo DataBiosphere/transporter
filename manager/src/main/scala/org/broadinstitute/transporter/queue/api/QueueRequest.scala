@@ -12,8 +12,15 @@ import org.broadinstitute.transporter.queue.QueueSchema
   *               submitted to the new queue
   * @param maxConcurrentTransfers maximum number of transfers in the queue which
   *                               should be distributed to agents at a time
+  * @param partitionCount number of partitions to initialize in the Kafka topics
+  *                       created for the new queue
   */
-case class QueueRequest(name: String, schema: QueueSchema, maxConcurrentTransfers: Int)
+case class QueueRequest(
+  name: String,
+  schema: QueueSchema,
+  maxConcurrentTransfers: Int,
+  partitionCount: Int
+)
 
 object QueueRequest {
   implicit val decoder: Decoder[QueueRequest] = io.circe.derivation.deriveDecoder

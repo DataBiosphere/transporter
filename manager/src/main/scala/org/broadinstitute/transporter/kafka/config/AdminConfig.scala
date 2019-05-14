@@ -3,18 +3,15 @@ package org.broadinstitute.transporter.kafka.config
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
+/**
+  * Configuration for admin-level operations performed by Transporter in Kafka.
+  *
+  * @param replicationFactor replication factor to set on all new topics created
+  *                          by Transporter. Cannot be larger than the number of
+  *                          brokers in the Kafka cluster
+  */
 case class AdminConfig(replicationFactor: Short)
 
 object AdminConfig {
-
-  /**
-    * Number of partitions to initialize in topics created by Transporter.
-    *
-    * NOTE: This sets a max parallelism for all transfer queues. We should move
-    * this into the DB as a per-queue parameter, and allow users to increase it
-    * as necessary.
-    */
-  val TopicPartitions = 16
-
   implicit val reader: ConfigReader[AdminConfig] = deriveReader
 }

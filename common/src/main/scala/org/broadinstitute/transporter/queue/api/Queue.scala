@@ -20,6 +20,8 @@ import org.broadinstitute.transporter.queue.QueueSchema
   *               requests submitted to this transfer stream
   * @param maxConcurrentTransfers maximum number of transfers in this queue which
   *                               will be distributed to agents at a time
+  * @param partitionCount number of partitions included in each of `requestTopic`,
+  *                       `progressTopic`, and `responseTopic`
   */
 case class Queue(
   name: String,
@@ -27,7 +29,8 @@ case class Queue(
   progressTopic: String,
   responseTopic: String,
   schema: QueueSchema,
-  maxConcurrentTransfers: Int
+  maxConcurrentTransfers: Int,
+  partitionCount: Int
 )
 
 object Queue {
