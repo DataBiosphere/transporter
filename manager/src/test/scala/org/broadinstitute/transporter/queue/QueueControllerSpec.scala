@@ -191,7 +191,7 @@ class QueueControllerSpec extends PostgresSpec with MockFactory with EitherValue
 
   it should "patch existing queue parameters" in withController { (tx, controller) =>
     (kafka.increasePartitionCounts _)
-      .expects(List("requests", "progress", "responses").map(_ -> request.partitionCount))
+      .expects(List("req", "prog", "resp").map(_ -> request.partitionCount))
       .returning(IO.unit)
 
     val checks = for {
