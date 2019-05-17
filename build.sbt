@@ -41,7 +41,7 @@ inThisBuild(
 val betterMonadicForVersion = "0.3.0"
 
 // Configuration.
-val pureConfigVersion = "0.10.2"
+val pureConfigVersion = "0.11.0"
 
 // Data types & control flow.
 val catsVersion = "1.6.0"
@@ -49,7 +49,7 @@ val catsEffectVersion = "1.2.0"
 val fs2Version = "1.0.4"
 
 // DB.
-val doobieVersion = "0.7.0-M4"
+val doobieVersion = "0.7.0-M5"
 val postgresqlDriverVersion = "42.2.5"
 
 // JSON.
@@ -74,10 +74,10 @@ val googleAuthVersion = "0.15.0"
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val http4sVersion = "0.20.0"
+val http4sVersion = "0.20.1"
 val rhoVersion = "0.19.0-M8"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.22.0"
+val swaggerUiVersion = "3.22.1"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
