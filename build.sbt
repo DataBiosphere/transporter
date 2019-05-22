@@ -268,12 +268,17 @@ lazy val `transporter-agent-template` = project
       "io.chrisdavenport" %% "log4cats-log4s" % log4catsVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
       "org.http4s" %% "http4s-blaze-client" % http4sVersion,
-      "org.http4s" %% "http4s-circe" % http4sVersion
+      "org.http4s" %% "http4s-circe" % http4sVersion,
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
-      "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion,
-      "org.scalatest" %% "scalatest" % scalaTestVersion
+      "org.scalatest" %% "scalatest" % scalaTestVersion,
+      // NOTE: jakarta.ws.rs-api is the same project as javax.ws.rs-api, they just changed their
+      // organization ID. Something in how the change happend runs across a bug in sbt / coursier,
+      // so we have to manually exclude the old name and pull in the new name.
+      // See: https://github.com/sbt/sbt/issues/3618
+      "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion exclude("javax.ws.rs", "javax.ws.rs-api"),
+      "jakarta.ws.rs" % "jakarta.ws.rs-api" % "2.1.5"
     ).map(_ % Test),
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
