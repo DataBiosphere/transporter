@@ -69,7 +69,7 @@ $ brew services run postgresql@9.6 &&
   brew services run kafka
 ```
 
-Next, [migrate the DB](db-migrations/README.md).
+Next, run migrations on the DB. Instructions are [here](db-migrations/README.md).
 
 Finally, add local DB credentials to the Manager's `application.conf`:
 ```bash
@@ -89,4 +89,4 @@ sbt:transporter> transporter-manager/reStart
 sbt:transporter> transporter-manager/reStop
 ```
 
-You can then view the Swagger UI [on port 8080](localhost:8080).
+You can then view the Swagger UI [on port 8080](http://localhost:8080).

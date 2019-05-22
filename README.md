@@ -41,6 +41,10 @@ sbt:transporter> test
 It's also possible to run individual `sbt` commands directly from bash. This is _not_ the recommended way to use `sbt`,
 as you'll eat the tool's (nontrivial) startup costs on every command.
 
+## Running Locally
+1. Run the [Manager](manager/README.md)
+2. Run an [agent](agents/README.md)
+
 ## Developing
 Two main options exist for Scala development:
   1. IntelliJ + the Scala plugin is well-established, and provides the best support for refactoring. On the negative side,
