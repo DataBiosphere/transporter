@@ -2,7 +2,7 @@
 Specialized services for executing file transfers.
 
 ## Responsibilities
-Agents are the workhorses within Transporter. A single agent connects to a
+Agents are the workhorses within [Transporter](../README.md). A single agent connects to a
 queue resource initialized by the [Manager](../manager/README.md), and:
 * Consumes messages from the queue's "request" topic, using the data to:
    1. Perform storage-specific validation of the request
@@ -24,18 +24,16 @@ we've produced the following concrete implementation of the template:
 * [AWS->GCP](aws-to-gcp/README.md)
 
 ## Running Locally
-To run an agent locally, first run the [Manager](../manager/README.md)
-locally as a background process.
-
-Next, initialize a queue resource in the Manager for the agent to connect to.
-Use the JSON schema listed in the agent's documentation when sending the request.
-
-Finally, add the name of the local queue to the agent's `application.conf`. For example:
-```bash
-$ cat <<-EOF > agents/aws-to-gcp/src/main/resources/application.conf
-org.broadinstitute.transporter.queue.queue-name: "<the-queue>"
-EOF
-```
+To run an agent locally:
+1. Run the [Manager](../manager/README.md#running-locally) locally as a background process.
+2. Initialize a queue resource in the Manager for the agent to connect to.
+   Use the JSON schema listed in the agent's documentation when sending the request.
+3. Add the name of the local queue to the agent's `application.conf`. For example:
+   ```bash
+   $ cat <<-EOF > agents/aws-to-gcp/src/main/resources/application.conf
+   org.broadinstitute.transporter.queue.queue-name: "<the-queue>"
+   EOF
+   ```
 
 Once all this is done, the agent can be run through `sbt`:
 ```bash

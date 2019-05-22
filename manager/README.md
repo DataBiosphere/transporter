@@ -2,7 +2,7 @@
 Generic service for validating, orchestrating, and reporting bulk file transfers.
 
 ## Responsibilities
-The Manager is the single point of entry for transfer requests to enter Transporter's
+The Manager is the single point of entry for transfer requests to enter [Transporter](../README.md)'s
 internal messaging/tracking system. It:
 * Creates Kafka topics to route messages for user-requested "queue" resources
 * Accepts transfer submissions to a queue over a REST API
@@ -59,25 +59,25 @@ Paths below prefixed with `/api/transporter/v1/queues/{name}/transfers/{request-
 | GET | `/detail/{transfer-id}` | Get all information stored by the Manager about a specific transfer under a bulk request. |
 
 ## Running Locally
-To run the Manager locally, first install its dependencies. On OS X, they can be installed via Homebrew:
-```bash
-# Will also install Zookeeper, if not present.
-$ brew install postgresql@9.6 kafka
-# Replace 'run' with 'start' below to make the services auto-start on login:
-$ brew services run postgresql@9.6 &&
-  brew services run zookeeper &&
-  brew services run kafka
-```
+To run the Manager locally:
 
-Next, run migrations on the DB. Instructions are [here](db-migrations/README.md).
-
-Finally, add local DB credentials to the Manager's `application.conf`:
-```bash
-$ cat <<-EOF > manager/src/main/resources/application.conf
-org.broadinstitute.transporter.db.username = "$(whoami)"
-org.broadinstitute.transporter.db.password = ""
-EOF
-```
+1. Install its dependencies. On OS X, they can be installed via Homebrew:
+   ```bash
+   # Will also install Zookeeper, if not present.
+   $ brew install postgresql@9.6 kafka
+   # Replace 'run' with 'start' below to make the services auto-start on login:
+   $ brew services run postgresql@9.6 &&
+     brew services run zookeeper &&
+     brew services run kafka
+   ```
+2. Run migrations on the DB. Instructions are [here](db-migrations/README.md).
+3. Add local DB credentials to the Manager's `application.conf`:
+   ```bash
+   $ cat <<-EOF > manager/src/main/resources/application.conf
+   org.broadinstitute.transporter.db.username = "$(whoami)"
+   org.broadinstitute.transporter.db.password = ""
+   EOF
+   ```
 
 Once all this is done, you can run the Manager through `sbt`:
 ```bash
