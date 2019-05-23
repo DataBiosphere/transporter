@@ -65,6 +65,11 @@ To run the Manager locally:
    ```bash
    # Will also install Zookeeper, if not present.
    $ brew install postgresql@9.6 kafka
+
+   # Sometimes brew's version of Kafka can't connect to itself (sigh).
+   # Fix the problem by modifying the server config:
+   $ sed -i '' 's$#listeners=PLAINTEXT://:9092$listeners=PLAINTEXT://localhost:9092$g' /usr/local/etc/kafka/server.properties
+
    # Replace 'run' with 'start' below to make the services auto-start on login:
    $ brew services run postgresql@9.6 &&
      brew services run zookeeper &&
