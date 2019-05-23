@@ -84,7 +84,7 @@ class AwsToGcpRunner(
     path: String,
     expectedSize: Option[Long]
   ): IO[S3Metadata] = {
-    val s3HttpUri = s3Uri(bucket, path)
+    val s3HttpUri = s3Uri(bucket, region, path)
 
     for {
       s3Req <- IO.delay {
@@ -223,7 +223,7 @@ class AwsToGcpRunner(
     rangeStart: Long,
     rangeEnd: Long
   ): IO[Chunk[Byte]] = {
-    val s3HttpUri = s3Uri(bucket, path)
+    val s3HttpUri = s3Uri(bucket, region, path)
 
     for {
       s3Req <- IO.delay {
@@ -291,8 +291,8 @@ class AwsToGcpRunner(
     }
 
   /** Build the REST API endpoint for a bucket/path in S3. */
-  private def s3Uri(bucket: String, path: String): Uri =
-    Uri.unsafeFromString(s"https://$bucket.s3.amazonaws.com/$path")
+  private def s3Uri(bucket: String, region: String, path: String): Uri =
+    Uri.unsafeFromString(s"https://$bucket.s3-$region.amazonaws.com/$path")
 
   /** Build the REST API endpoint for a resumable upload to a GCS bucket. */
   private def baseGcsUploadUri(bucket: String): Uri =
