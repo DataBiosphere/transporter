@@ -6,6 +6,27 @@ Data ingest into our cloud environment requires bulk file transfer from both on-
 Similarly, data delivery requires uploading large files to external systems. Transporter aims to provide uniform
 (but extensible) APIs for submitting, monitoring, and executing bulk transfers between these various environments.
 
+## Components
+Transporter is a distributed system of services, connected via Kafka. The main services are:
+* The [Transporter "Manager"](manager/README.md), responsible for request validation, orchestration, and reporting.
+* [Transporter "agents"](agents/README.md), responsible for request execution.
+
+We intend for the Manager to be generic, and handle the orchestration of transfers between any arbitrary source
+and destination systems. On the other hand, we intend for agents to be specialized to handle specific transfer needs.
+We provide an abstract ["template"](agents/template/README.md) for agent programs to handle common requirements across
+all transfers.
+
+The overall system architecture is:
+![System Architecture](architecture.svg)
+
+## Deployment
+We package Transporter components into Docker images, and publish the images to
+[Dockerhub](https://hub.docker.com/search?q=broadinstitute%2Ftransporter-&type=image). Images tagged by Git hash
+are published on every merge to master.
+
+It should be possible to deploy Transporter anywhere Docker can run. We deploy to GKE using infrastructure in the
+[transporter-deploy](github.com/broadinstitute/transporter-deploy/README.md) repository.
+
 ## Building
 Transporter is built using `sbt`. Installation instructions for `sbt` are [here](https://www.scala-sbt.org/download.html).
 
@@ -20,40 +41,9 @@ sbt:transporter> test
 It's also possible to run individual `sbt` commands directly from bash. This is _not_ the recommended way to use `sbt`,
 as you'll eat the tool's (nontrivial) startup costs on every command.
 
-## Running
-For now, Transporter only runs locally.
-
-### Manager service
-Launch Transporter's manager service using:
-```bash
-$ sbt
-sbt:transporter> transporter-manager/run
-```
-
-Using default configuration the service will bind to port `8080`, and serve interactive API documentation at the
-[root path](http://localhost:8080/). To successfully execute requests, the manager needs:
-
-  1. PostgreSQL running locally on port 5432, with a default `postgres` database.
-  2. Kafka running locally, with a bootstrap server bound to port `9092`.
-
-On OS X, these services can be installed using `brew`:
-```bash
-# Will also install zookeeper, if not present:
-$ brew install postgresql@9.6 kafka
-# Replace 'run' with 'start' below to make the services auto-start on login:
-$ brew services run postgresql@9.6 &&
-  brew services run zookeeper &&
-  brew services run kafka
-```
-
-Finally, connecting to the DB requires filling out config in the manager's `application.conf`. For OS X's `brew`
-installation with default settings, the config should be:
-```bash
-$ cat <<-EOF > manager/src/main/resources/application.conf
-org.broadinstitute.transporter.db.username = "$(whoami)"
-org.broadinstitute.transporter.db.password = ""
-EOF
-```
+## Running Locally
+1. Run the [Manager](manager/README.md#running-locally)
+2. Run an [agent](agents/README.md#running-locally)
 
 ## Developing
 Two main options exist for Scala development:
