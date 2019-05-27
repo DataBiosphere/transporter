@@ -1,6 +1,5 @@
 package org.broadinstitute.transporter
 
-import cats.data.NonEmptyList
 import cats.effect._
 import cats.implicits._
 import doobie.util.ExecutionContexts
@@ -70,15 +69,18 @@ object TransporterManager extends IOApp.WithContext {
           .apply(config.kafka.connection, config.kafka.consumer)
       } yield {
         val transferController = new TransferController(transactor, producer)
-
-        val routes = NonEmptyList.of(
-          new InfoRoutes(new InfoController(appInfo.version, transactor, admin)),
-          new ApiRoutes(
+        val appRoutes = SwaggerMiddleware(
+          headerInfo = appInfo,
+          unauthedRoutes =
+            new InfoRoutes(new InfoController(appInfo.version, transactor, admin)),
+          apiRoutes = new ApiRoutes(
             new QueueController(transactor, admin),
-            transferController
-          )
-        )
-        val appRoutes = SwaggerMiddleware(routes, appInfo, blockingEc).orNotFound
+            transferController,
+            config.web.googleOauth.isDefined
+          ),
+          googleAuthConfig = config.web.googleOauth,
+          blockingEc = blockingEc
+        ).orNotFound
         val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
 
         val server = BlazeServerBuilder[IO]

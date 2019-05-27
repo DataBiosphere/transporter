@@ -49,7 +49,7 @@ val catsEffectVersion = "1.2.0"
 val fs2Version = "1.0.4"
 
 // DB.
-val doobieVersion = "0.7.0-M5"
+val doobieVersion = "0.7.0"
 val postgresqlDriverVersion = "42.2.5"
 
 // JSON.
@@ -77,13 +77,13 @@ val enumeratumVersion = "1.5.13"
 val http4sVersion = "0.20.1"
 val rhoVersion = "0.19.0-M8"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.22.1"
+val swaggerUiVersion = "3.22.2"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
 val scalaMockVersion = "4.2.0"
 val scalaTestVersion = "3.0.7"
-val testcontainersVersion = "1.11.2"
+val testcontainersVersion = "1.11.3"
 val testcontainersScalaVersion = "0.25.0"
 
 // Settings to apply to all sub-projects.
