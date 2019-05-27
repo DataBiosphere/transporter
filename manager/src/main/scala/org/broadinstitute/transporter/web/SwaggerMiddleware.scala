@@ -49,9 +49,14 @@ object SwaggerMiddleware {
      */
     s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/index.html"
 
+  /** Callback page for Google to redirect to on successful OAuth logins. */
   private val oauthRedirectPath =
     s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/oauth2-redirect.html"
 
+  /**
+    * Information to display in the "Authorize" box in Swagger,
+    * driving the authorization flow.
+    */
   private val googleAuthDefinition = OAuth2VendorExtensionsDefinition(
     authorizationUrl = "https://accounts.google.com/o/oauth2/auth",
     vendorExtensions = Map.empty,
@@ -89,8 +94,11 @@ object SwaggerMiddleware {
       Map.empty[String, SecuritySchemeDefinition]
     }
 
-    // Catch-all routes matching anything within the resources of the the Swagger webjar
-    // *except for* the index page, which we have to modify in-flight to inject OAuth secrets.
+    /*
+     * Catch-all routes matching anything within the resources of the the Swagger webjar
+     * _except for_ the index page, which we have to modify in-flight to inject app-specific
+     * info.
+     */
     val swaggerUiAssetRoutes = WebjarService[IO](
       config = Config(
         blockingEc,
@@ -101,6 +109,18 @@ object SwaggerMiddleware {
       )
     )
 
+    /*
+     * Route matching only the Swagger index page.
+     *
+     * We inject two types of information by rewriting the HTML on its way to the client:
+     *   1. We rewrite URLs to point at Transporter routes
+     *   2. If OAuth config is given, we add a call to the 'initOAuth' method
+     *
+     * This seems to be standard practice for apps that serve Swagger from resources,
+     * at least in DSP. For example, see CromIAM at:
+     *
+     * https://github.com/broadinstitute/cromwell/blob/master/CromIAM/src/main/scala/cromiam/webservice/SwaggerUiHttpService.scala
+     */
     val swaggerUiIndexRoutes = WebjarService[IO](
       config = Config(
         blockingEc,
@@ -113,11 +133,28 @@ object SwaggerMiddleware {
       if (response.status.isSuccess) {
         val newBody = fs2.text.lines(response.bodyAsText).map { line =>
           val withUrls = line.replace(
+            /*
+             * Replace the dummy "petstore" URL with the route to this app's API docs.
+             * Also replace the OAuth redirect URL here since it goes in the same method
+             * call on the front-end, even if OAuth isn't going to be enabled.
+             *
+             * NOTE: We redirect to a stable alias of '/oauth2-redirect' instead of the
+             * versioned HTML page in the resources jar because Google requires that
+             * allowable redirect URLs be white-listed in the cloud console, and this is
+             * easier to maintain than it would be to add a new white-listed URL every
+             * time we bump the Swagger UI's version.
+             */
             """url: "https://petstore.swagger.io/v2/swagger.json",""",
             s"""url: "/$apiDocsPath",
                |validatorUrl: null,
                |oauth2RedirectUrl: window.location.origin + "/oauth2-redirect",""".stripMargin
           )
+
+          /*
+           * If auth config is given, inject a call to initialize the OAuth dialog on
+           * the front-end. The OAuth client ID will be visible in the page's source code,
+           * but apparently that's Just How Swagger Works.
+           */
           googleAuthConfig.fold(withUrls) { config =>
             withUrls.replace(
               "window.ui = ui",
@@ -139,7 +176,7 @@ object SwaggerMiddleware {
       }
     }
 
-    // Convenience routes for redirecting users to the UI's specific route.
+    // Convenience routes for redirecting users to versioned Swagger routes.
     val swaggerUiRoutes = HttpRoutes.of[IO] {
       case GET -> Root =>
         TemporaryRedirect(Location(uri"/api-docs"))
