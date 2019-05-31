@@ -1,11 +1,11 @@
 package org.broadinstitute.transporter.transfer
 
-import java.time.{Instant, OffsetDateTime}
+import java.time.OffsetDateTime
 import java.util.UUID
 
 import cats.Order
 import cats.data.Validated.{Invalid, Valid}
-import cats.effect.{Clock, IO}
+import cats.effect.IO
 import cats.implicits._
 import doobie._
 import doobie.implicits._
@@ -33,7 +33,7 @@ import org.broadinstitute.transporter.transfer.config.TransferSchema
 class TransferController(
   schema: TransferSchema,
   dbClient: Transactor[IO]
-)(implicit clk: Clock[IO]) {
+) {
 
   import DoobieInstances._
   import Constants._
@@ -239,65 +239,4 @@ class TransferController(
     } yield {
       details
     }
-
-  private def getNow: IO[Instant] =
-    clk.realTime(scala.concurrent.duration.MILLISECONDS).map(Instant.ofEpochMilli)
-
-  /**
-    * Update Transporter's view of a set of transfers based on
-    * terminal results collected from Kafka.
-    */
-  def recordTransferResults(
-    results: List[(TransferIds, (TransferResult, Json))]
-  ): IO[Unit] =
-    for {
-      now <- getNow
-      statusUpdates = results.map {
-        case (ids, (result, info)) =>
-          val status = result match {
-            case TransferResult.Success      => TransferStatus.Succeeded
-            case TransferResult.FatalFailure => TransferStatus.Failed
-          }
-          (status, info, ids.transfer, ids.request)
-      }
-      _ <- Update[(TransferStatus, Json, UUID, UUID)](
-        s"""update $TransfersTable
-           |set status = ?, info = ?, updated_at = ${timestampSql(now)}
-           |from $RequestsTable
-           |where $TransfersTable.request_id = $RequestsTable.id
-           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
-      ).updateMany(statusUpdates).void.transact(dbClient)
-    } yield ()
-
-  /**
-    * Update Transporter's view of a set of transfers based on
-    * incremental progress messages collected from Kafka.
-    */
-  def markTransfersInProgress(
-    progress: List[(TransferIds, Json)]
-  ): IO[Unit] = {
-    val statuses = List(TransferStatus.Submitted, TransferStatus.InProgress)
-      .map(_.entryName.toLowerCase)
-      .mkString("('", "','", "')")
-    for {
-      now <- getNow
-      statusUpdates = progress.map {
-        case (ids, info) =>
-          (
-            TransferStatus.InProgress: TransferStatus,
-            info,
-            ids.transfer,
-            ids.request
-          )
-      }
-      _ <- Update[(TransferStatus, Json, UUID, UUID)](
-        s"""update $TransfersTable
-           |set status = ?, info = ?, updated_at = ${timestampSql(now)}
-           |from $RequestsTable
-           |where $TransfersTable.request_id = $RequestsTable.id
-           |and $TransfersTable.status in $statuses
-           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
-      ).updateMany(statusUpdates).void.transact(dbClient)
-    } yield ()
-  }
 }

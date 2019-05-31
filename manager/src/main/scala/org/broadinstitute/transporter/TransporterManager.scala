@@ -9,6 +9,7 @@ import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.kafka.{KafkaConsumer, KafkaProducer}
 import org.broadinstitute.transporter.transfer.{
   TransferController,
+  TransferListener,
   TransferResult,
   TransferSubmitter
 }
@@ -53,12 +54,16 @@ object TransporterManager extends IOApp.WithContext {
         // across controllers in the app.
         transactor <- DbTransactor.resource(config.db, blockingEc)
         producer <- KafkaProducer.resource[Json](config.kafka.connection)
-        progressConsumer <- KafkaConsumer
-          .ofTopic[Json](config.kafka.topics.progressTopic)
-          .apply(config.kafka.connection, config.kafka.consumer)
-        resultConsumer <- KafkaConsumer
-          .ofTopic[(TransferResult, Json)](config.kafka.topics.resultTopic)
-          .apply(config.kafka.connection, config.kafka.consumer)
+        progressConsumer <- KafkaConsumer.ofTopic[Json](
+          config.kafka.topics.progressTopic,
+          config.kafka.connection,
+          config.kafka.consumer
+        )
+        resultConsumer <- KafkaConsumer.ofTopic[(TransferResult, Json)](
+          config.kafka.topics.resultTopic,
+          config.kafka.connection,
+          config.kafka.consumer
+        )
       } yield {
         val transferController =
           new TransferController(config.transfer.schema, transactor)
@@ -89,12 +94,13 @@ object TransporterManager extends IOApp.WithContext {
           producer
         ).sweepSubmissions.compile.drain
 
-        val progressListener =
-          progressConsumer.runForeach(transferController.markTransfersInProgress)
-        val resultListener =
-          resultConsumer.runForeach(transferController.recordTransferResults)
+        val listener = new TransferListener(
+          transactor,
+          progressConsumer,
+          resultConsumer
+        ).listen.compile.drain
 
-        (server, submissionSweeper, progressListener, resultListener)
+        (server, submissionSweeper, listener)
       }
 
       components.use(_.parTupled.map(_._1))

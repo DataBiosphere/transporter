@@ -67,6 +67,8 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
     ()
   }
 
+  behavior of "TransferSubmitter"
+
   it should "submit batches of eligible transfers to Kafka" in withRequest {
     (tx, submitter) =>
       (kafka.submit _)

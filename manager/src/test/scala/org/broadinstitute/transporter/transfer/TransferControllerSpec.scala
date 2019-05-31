@@ -4,11 +4,10 @@ import java.sql.Timestamp
 import java.time.{Instant, OffsetDateTime, ZoneId}
 import java.util.UUID
 
-import cats.effect.{IO, Timer}
+import cats.effect.IO
 import cats.implicits._
 import doobie._
 import doobie.implicits._
-import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.error._
@@ -17,12 +16,8 @@ import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.EitherValues
 
-import scala.concurrent.ExecutionContext
-
 class TransferControllerSpec extends PostgresSpec with MockFactory with EitherValues {
   import org.broadinstitute.transporter.db.DoobieInstances._
-
-  private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
 
   private val requestSchema =
     json"""{ "type": "object" }""".as[TransferSchema].right.value
@@ -543,153 +538,5 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .map(
           _.left.value shouldBe NoSuchTransfer(request1Id, request2Transfers.head._1)
         )
-  }
-
-  it should "record transfer results" in withRequest { (tx, controller) =>
-    val updates = request1Transfers.zipWithIndex.collect {
-      case ((id, _), i) if i % 3 != 0 =>
-        val result =
-          if (i % 3 == 1) TransferResult.Success else TransferResult.FatalFailure
-        (TransferIds(request1Id, id), result -> json"""{ "i+1": $i }""")
-    }
-
-    for {
-      _ <- controller.recordTransferResults(updates)
-      updated <- sql"select id, status, info from transfers where updated_at is not null"
-        .query[(UUID, TransferStatus, Json)]
-        .to[List]
-        .transact(tx)
-    } yield {
-      updated should contain theSameElementsAs updates.map {
-        case (ids, (res, info)) =>
-          (
-            ids.transfer,
-            res match {
-              case TransferResult.Success      => TransferStatus.Succeeded
-              case TransferResult.FatalFailure => TransferStatus.Failed
-            },
-            info
-          )
-      }
-    }
-  }
-
-  it should "not update results if IDs are mismatched" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          val result =
-            if (i % 3 == 1) TransferResult.Success else TransferResult.FatalFailure
-          (TransferIds(request2Id, id), result -> json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- controller.recordTransferResults(updates)
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated shouldBe empty
-      }
-  }
-
-  it should "mark submitted transfers as in progress" in withRequest { (tx, controller) =>
-    val updates = request1Transfers.zipWithIndex.collect {
-      case ((id, _), i) if i % 3 != 0 =>
-        (TransferIds(request1Id, id), json"""{ "i+1": $i }""")
-    }
-
-    for {
-      _ <- updates.traverse_ {
-        case (ids, _) =>
-          sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
-            .transact(tx)
-      }
-      _ <- controller.markTransfersInProgress(updates)
-      updated <- sql"select id, status, info from transfers where updated_at is not null"
-        .query[(UUID, TransferStatus, Json)]
-        .to[List]
-        .transact(tx)
-    } yield {
-      updated should contain theSameElementsAs updates.map {
-        case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
-      }
-    }
-  }
-
-  it should "keep the 'updated_at' and 'info' fields of in-progress transfers up-to-date" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(request1Id, id), json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- updates.traverse_ {
-          case (ids, _) =>
-            sql"""update transfers set
-                  status = 'inprogress',
-                  updated_at = TO_TIMESTAMP(0),
-                  info = '{}'
-                  where id = ${ids.transfer}""".update.run.void
-              .transact(tx)
-        }
-        _ <- controller.markTransfersInProgress(updates)
-        updated <- sql"select id, status, info from transfers where updated_at > TO_TIMESTAMP(0)"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated should contain theSameElementsAs updates.map {
-          case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
-        }
-      }
-  }
-
-  it should "not mark transfers in a terminal state to in progress" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(request1Id, id), json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- updates.traverse_ {
-          case (ids, _) =>
-            sql"update transfers set status = 'succeeded' where id = ${ids.transfer}".update.run.void
-              .transact(tx)
-        }
-        _ <- controller.markTransfersInProgress(updates)
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated shouldBe empty
-      }
-  }
-
-  it should "not mark transfers as in progress if IDs are mismatched" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(request2Id, id), json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- updates.traverse_ {
-          case (ids, _) =>
-            sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
-              .transact(tx)
-        }
-        _ <- controller.markTransfersInProgress(updates)
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated shouldBe empty
-      }
   }
 }
