@@ -26,11 +26,10 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
   behavior of "KafkaConsumer"
 
   it should "process well-formed messages already in a topic on startup" in {
-    val queueId = UUID.randomUUID()
     val requestId = UUID.randomUUID()
     val messages = List.fill(5) {
       val transferId = UUID.randomUUID()
-      TransferMessage(TransferIds(queueId, requestId, transferId), transferId)
+      TransferMessage(TransferIds(requestId, transferId), transferId)
     }
 
     val consumed = withKafka { implicit embeddedConfig =>
@@ -66,11 +65,10 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
   }
 
   it should "process well-formed messages added to a topic post-startup" in {
-    val queueId = UUID.randomUUID()
     val requestId = UUID.randomUUID()
     val messages = List.fill(5) {
       val transferId = UUID.randomUUID()
-      TransferMessage(TransferIds(queueId, requestId, transferId), transferId)
+      TransferMessage(TransferIds(requestId, transferId), transferId)
     }
 
     val consumed = withKafka { implicit embeddedConfig =>
@@ -109,11 +107,10 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
   }
 
   it should "not double-process messages in a topic on restart" in {
-    val queueId = UUID.randomUUID()
     val requestId = UUID.randomUUID()
     val messages = List.fill(5) {
       val transferId = UUID.randomUUID()
-      TransferMessage(TransferIds(queueId, requestId, transferId), transferId)
+      TransferMessage(TransferIds(requestId, transferId), transferId)
     }
 
     val consumed = withKafka { implicit embeddedConfig =>
@@ -185,33 +182,32 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
   }
 
   it should "find new topics matching a subscription pattern" in {
-    val queueId = UUID.randomUUID()
     val messages1 = {
       val requestId = UUID.randomUUID()
       List.fill(3) {
         val transferId = UUID.randomUUID()
-        TransferMessage(TransferIds(queueId, requestId, transferId), transferId)
+        TransferMessage(TransferIds(requestId, transferId), transferId)
       }
     }
     val messages2 = {
       val requestId = UUID.randomUUID()
       List.fill(5) {
         val transferId = UUID.randomUUID()
-        TransferMessage(TransferIds(queueId, requestId, transferId), transferId)
+        TransferMessage(TransferIds(requestId, transferId), transferId)
       }
     }
     val messages3 = {
       val requestId = UUID.randomUUID()
       List.fill(2) {
         val transferId = UUID.randomUUID()
-        TransferMessage(TransferIds(queueId, requestId, transferId), transferId)
+        TransferMessage(TransferIds(requestId, transferId), transferId)
       }
     }
     val messages4 = {
       val requestId = UUID.randomUUID()
       List.fill(5) {
         val transferId = UUID.randomUUID()
-        TransferMessage(TransferIds(queueId, requestId, transferId), transferId)
+        TransferMessage(TransferIds(requestId, transferId), transferId)
       }
     }
 

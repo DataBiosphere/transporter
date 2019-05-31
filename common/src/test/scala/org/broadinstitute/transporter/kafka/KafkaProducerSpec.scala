@@ -14,7 +14,7 @@ class KafkaProducerSpec extends BaseKafkaSpec {
     val topic = "the-topic"
 
     val messages = List("foo", "bar", "baz").map {
-      TransferIds(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()) -> _
+      TransferIds(UUID.randomUUID(), UUID.randomUUID()) -> _
     }
 
     val published = withKafka { implicit embeddedConfig =>
@@ -46,10 +46,10 @@ class KafkaProducerSpec extends BaseKafkaSpec {
     val topic2 = "the-topic2"
 
     val messages1 = List("foo", "bar", "baz").map {
-      TransferIds(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()) -> _
+      TransferIds(UUID.randomUUID(), UUID.randomUUID()) -> _
     }
     val messages2 = List("zab", "rab", "oof").map {
-      TransferIds(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()) -> _
+      TransferIds(UUID.randomUUID(), UUID.randomUUID()) -> _
     }
 
     val published = withKafka { implicit embeddedConfig =>

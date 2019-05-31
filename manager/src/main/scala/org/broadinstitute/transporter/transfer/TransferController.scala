@@ -63,9 +63,8 @@ class TransferController(
   /** Record a batch of validated transfers with the given ID. */
   private def recordTransferRequest(request: BulkRequest): ConnectionIO[RequestAck] =
     for {
-      requestId <- Fragment
-        .const(s"insert into $RequestsTable (id) values (${UUID.randomUUID()}")
-        .update
+      requestId <- (Fragment
+        .const(s"insert into $RequestsTable (id) values") ++ fr"(${UUID.randomUUID()})").update
         .withUniqueGeneratedKeys[UUID]("id")
       transferInfo = request.transfers.map { body =>
         (UUID.randomUUID(), requestId, TransferStatus.Pending: TransferStatus, body)
@@ -207,7 +206,7 @@ class TransferController(
     checkAndExec(requestId) { rId =>
       List(
         Fragment.const(s"update $TransfersTable t"),
-        fr"t set status = ${TransferStatus.Pending: TransferStatus} from",
+        fr"set status = ${TransferStatus.Pending: TransferStatus} from",
         Fragment.const(s"$RequestsTable r"),
         Fragments.whereAnd(
           fr"t.request_id = r.id",

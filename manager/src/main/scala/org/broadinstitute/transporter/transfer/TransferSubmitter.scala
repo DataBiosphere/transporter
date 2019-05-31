@@ -43,7 +43,7 @@ class TransferSubmitter(
     * so that if submission fails the transfers remain eligible for submission on a
     * following sweep.
     */
-  private def submitEligibleTransfers: IO[Int] =
+  private[transfer] def submitEligibleTransfers: IO[Int] =
     for {
       now <- clk
         .realTime(scala.concurrent.duration.MILLISECONDS)
