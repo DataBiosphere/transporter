@@ -1,17 +1,21 @@
-package org.broadinstitute.transporter.queue
+package org.broadinstitute.transporter.transfer.config
 
 import cats.data.Validated
 import cats.implicits._
+import com.typesafe.config.{ConfigList, ConfigObject, ConfigValue, ConfigValueType}
 import io.circe.Decoder.Result
 import io.circe._
 import io.circe.syntax._
 import org.everit.json.schema.Schema
 import org.everit.json.schema.loader.SchemaLoader
 import org.json.{JSONArray, JSONObject, JSONTokener}
+import pureconfig.ConfigReader
+import pureconfig.error.{CannotConvert, ConfigReaderFailures, ConvertFailure}
+
+import scala.collection.JavaConverters._
 
 /**
-  * JSON schema wrapper facilitating conversions to/from circe's
-  * [[Json]] models.
+  * JSON schema for transfers submitted through the Transporter manager.
   *
   * @param json underlying JSON model which was used to build this
   *             instance. Stored by this class to make converting the
@@ -21,7 +25,7 @@ import org.json.{JSONArray, JSONObject, JSONTokener}
   *                  capable of validating if a JSON payload conforms
   *                  to the specified rules
   */
-class QueueSchema private (
+class TransferSchema private (
   private val json: Json,
   private[this] val validator: Schema
 ) {
@@ -29,7 +33,7 @@ class QueueSchema private (
   /** Check if the given JSON conforms to this schema. */
   def validate(json: Json): Validated[Throwable, Json] =
     Validated.catchNonFatal {
-      validator.validate(QueueSchema.circeToEverit(json))
+      validator.validate(TransferSchema.circeToEverit(json))
     }.as(json)
 
   /*
@@ -42,17 +46,17 @@ class QueueSchema private (
 
   override def hashCode(): Int = json.hashCode()
   override def equals(obj: Any): Boolean = obj match {
-    case qs: QueueSchema => json.equals(qs.json)
-    case _               => false
+    case qs: TransferSchema => json.equals(qs.json)
+    case _                  => false
   }
 
   override def toString: String = json.spaces2
 }
 
-object QueueSchema {
+object TransferSchema {
 
   /** Get the reference URL for the meta-schema of a JSON schema version. */
-  private[queue] def schemaUrl(v: Int): Json =
+  private[transfer] def schemaUrl(v: Int): Json =
     s"http://json-schema.org/draft-0$v/schema".asJson
 
   /** Convert a circe JSON object to the class expected by our schema validation lib. */
@@ -78,9 +82,9 @@ object QueueSchema {
       jsonObject = circeObjToEverit
     )
 
-  implicit val encoder: Encoder[QueueSchema] = _.json
+  implicit val encoder: Encoder[TransferSchema] = _.json
 
-  implicit val decoder: Decoder[QueueSchema] = new Decoder[QueueSchema] {
+  implicit val decoder: Decoder[TransferSchema] = new Decoder[TransferSchema] {
 
     /**
       * Meta-schema matching valid draft-4, draft-6, and draft-7 JSON schemas.
@@ -103,7 +107,7 @@ object QueueSchema {
       circeObjToEverit(schemaJson)
     }
 
-    override def apply(cursor: HCursor): Result[QueueSchema] =
+    override def apply(cursor: HCursor): Result[TransferSchema] =
       for {
         obj <- cursor.as[JsonObject]
         schema <- Either.catchNonFatal {
@@ -112,7 +116,51 @@ object QueueSchema {
           SchemaLoader.load(everitObj)
         }.leftMap(DecodingFailure.fromThrowable(_, Nil))
       } yield {
-        new QueueSchema(obj.asJson, schema)
+        new TransferSchema(obj.asJson, schema)
+      }
+  }
+
+  implicit val reader: ConfigReader[TransferSchema] = cfg => {
+    def convertValueUnsafe(value: ConfigValue): Json = value match {
+      case obj: ConfigObject =>
+        Json.fromFields(obj.asScala.mapValues(convertValueUnsafe))
+
+      case list: ConfigList =>
+        Json.fromValues(list.asScala.map(convertValueUnsafe))
+
+      case _ =>
+        (value.valueType, value.unwrapped) match {
+          case (ConfigValueType.NULL, _) =>
+            Json.Null
+          case (ConfigValueType.NUMBER, int: java.lang.Integer) =>
+            Json.fromInt(int)
+          case (ConfigValueType.NUMBER, long: java.lang.Long) =>
+            Json.fromLong(long)
+          case (ConfigValueType.NUMBER, double: java.lang.Double) =>
+            Json.fromDouble(double).getOrElse {
+              throw new NumberFormatException(s"Invalid numeric string ${value.render}")
+            }
+          case (ConfigValueType.BOOLEAN, boolean: java.lang.Boolean) =>
+            Json.fromBoolean(boolean)
+          case (ConfigValueType.STRING, str: String) =>
+            Json.fromString(str)
+
+          case (valueType, _) =>
+            throw new RuntimeException(s"No conversion for $valueType with value $value")
+        }
+    }
+
+    Either
+      .catchNonFatal(convertValueUnsafe(cfg.value))
+      .flatMap(_.as[TransferSchema])
+      .leftMap { err =>
+        ConfigReaderFailures(
+          ConvertFailure(
+            CannotConvert(cfg.value.render(), "TransferSchema", err.getMessage),
+            cfg.location,
+            cfg.path
+          )
+        )
       }
   }
 }

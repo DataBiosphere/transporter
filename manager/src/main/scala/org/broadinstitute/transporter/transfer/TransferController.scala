@@ -14,78 +14,71 @@ import doobie.util.transactor.Transactor
 import doobie.util.update.Update
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
-import org.broadinstitute.transporter.db.DbLogHandler
+import org.broadinstitute.transporter.db.{Constants, DbLogHandler, DoobieInstances}
 import org.broadinstitute.transporter.error.{
   InvalidRequest,
-  NoSuchQueue,
   NoSuchRequest,
   NoSuchTransfer
 }
-import org.broadinstitute.transporter.kafka.KafkaProducer
-import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.transfer.api._
+import org.broadinstitute.transporter.transfer.config.TransferSchema
 
 /**
   * Component responsible for updating and retrieving transfer-level information
   * for the Transporter system.
   *
+  * @param schema TODO
   * @param dbClient client which can interact with Transporter's backing DB
-  * @param producer client which can push messages into Transporter's Kafka cluster
   */
 class TransferController(
-  dbClient: Transactor[IO],
-  producer: KafkaProducer[Json]
+  schema: TransferSchema,
+  dbClient: Transactor[IO]
 )(implicit clk: Clock[IO]) {
-  import org.broadinstitute.transporter.db.DoobieInstances._
+
+  import DoobieInstances._
+  import Constants._
 
   private val logger = Slf4jLogger.getLogger[IO]
   private implicit val logHandler: LogHandler = DbLogHandler(logger)
 
   /**
-    * Record a new batch of transfers under a queue.
+    * Record a new batch of transfers.
     *
-    * Transfer payloads will be validated against the queue's recorded schema before
+    * Transfer payloads will be validated against a configured schema before
     * being recorded in the DB. Transfers are not immediately submitted to Kafka upon
     * being recorded; instead, a periodic sweeper pulls pending messages from the DB
-    * to maintain a user-defined per-queue parallelism factor.
+    * to maintain a configured parallelism factor.
     */
-  def recordTransfer(queueName: String, request: BulkRequest): IO[RequestAck] =
+  def recordTransfer(request: BulkRequest): IO[RequestAck] =
     for {
-      maybeInfo <- sql"select id, request_schema from queues where name = $queueName"
-        .query[(UUID, QueueSchema)]
-        .option
-        .transact(dbClient)
-      (queueId, schema) <- maybeInfo.liftTo[IO](NoSuchQueue(queueName))
-      _ <- validateRequests(request.transfers, schema)
+      _ <- validateRequests(request.transfers)
       _ <- logger.info(
-        s"Submitting ${request.transfers.length} transfers to queue $queueName"
+        s"Submitting ${request.transfers.length} transfers"
       )
-      ack <- recordTransferRequest(queueId, request).transact(dbClient)
+      ack <- recordTransferRequest(request).transact(dbClient)
     } yield {
       ack
     }
 
-  /** Record a batch of validated transfers under the queue with the given ID. */
-  private def recordTransferRequest(
-    queueId: UUID,
-    request: BulkRequest
-  ): ConnectionIO[RequestAck] =
+  /** Record a batch of validated transfers with the given ID. */
+  private def recordTransferRequest(request: BulkRequest): ConnectionIO[RequestAck] =
     for {
-      requestId <- sql"""insert into transfer_requests (id, queue_id)
-             values (${UUID.randomUUID()}, $queueId)""".update
+      requestId <- Fragment
+        .const(s"insert into $RequestsTable (id) values (${UUID.randomUUID()}")
+        .update
         .withUniqueGeneratedKeys[UUID]("id")
       transferInfo = request.transfers.map { body =>
         (UUID.randomUUID(), requestId, TransferStatus.Pending: TransferStatus, body)
       }
       transferCount <- Update[(UUID, UUID, TransferStatus, Json)](
-        "insert into transfers (id, request_id, status, body) values (?, ?, ?, ?)"
+        s"insert into $TransfersTable (id, request_id, status, body) values (?, ?, ?, ?)"
       ).updateMany(transferInfo)
     } yield {
       RequestAck(requestId, transferCount)
     }
 
-  /** Validate that every request in a batch matches the expected JSON schema for a queue. */
-  private def validateRequests(requests: List[Json], schema: QueueSchema): IO[Unit] =
+  /** Validate that every request in a batch matches an expected JSON schema. */
+  private def validateRequests(requests: List[Json]): IO[Unit] =
     for {
       _ <- logger.debug(s"Validating requests against schema: $schema")
       _ <- requests.traverse_(schema.validate(_).toValidatedNel) match {
@@ -109,23 +102,25 @@ class TransferController(
   private implicit val odtOrder: Order[OffsetDateTime] = _.compareTo(_)
 
   /**
-    * Check that a queue with the given name exists, and that a request with the given ID
-    * is registered under that queue; then run an operation using the queue's ID as input.
+    * Check that a request with the given ID exists, then run an operation using the ID as input.
     *
     * Utility for sharing guardrails across request-level operations in the controller.
     */
-  private def checkAndExec[Out](queueName: String, requestId: UUID)(
+  private def checkAndExec[Out](requestId: UUID)(
     f: UUID => ConnectionIO[Out]
   ): IO[Out] = {
     val transaction = for {
-      maybeId <- sql"select id from queues where name = $queueName".query[UUID].option
-      queueId <- maybeId.liftTo[ConnectionIO](NoSuchQueue(queueName))
-      requestInQueue <- checkRequestInQueue(queueId, requestId)
+      requestRow <- List(
+        Fragment.const(s"select 1 from $RequestsTable"),
+        fr"where id = $requestId limit 1"
+      ).combineAll
+        .query[Long]
+        .option
       _ <- IO
-        .raiseError(NoSuchRequest(queueName, requestId))
-        .whenA(!requestInQueue)
+        .raiseError(NoSuchRequest(requestId))
+        .whenA(requestRow.isEmpty)
         .to[ConnectionIO]
-      out <- f(queueId)
+      out <- f(requestId)
     } yield {
       out
     }
@@ -133,38 +128,13 @@ class TransferController(
     transaction.transact(dbClient)
   }
 
-  /** Check if a request with a certain ID is registered under a specific queue ID. */
-  private def checkRequestInQueue(
-    queueId: UUID,
-    requestId: UUID
-  ): ConnectionIO[Boolean] =
-    List(
-      fr"select count(1) from transfer_requests r join queues q on r.queue_id = q.id",
-      Fragments.whereAnd(fr"q.id = $queueId", fr"r.id = $requestId")
-    ).combineAll
-      .query[Long]
-      .unique
-      .map(_ > 0L)
-
-  /**
-    * SQL fragment linking transfer-level information to queue-level information via
-    * the requests table.
-    */
-  private val transfersJoinTable =
-    fr"""transfers t
-         join transfer_requests r on t.request_id = r.id
-         join queues q on r.queue_id = q.id"""
-
-  /** Get the current summary-level status for a request under a queue. */
-  def lookupRequestStatus(
-    queueName: String,
-    requestId: UUID
-  ): IO[RequestStatus] =
-    checkAndExec(queueName, requestId) { queueId =>
+  /** Get the current summary-level status for a request. */
+  def lookupRequestStatus(requestId: UUID): IO[RequestStatus] =
+    checkAndExec(requestId) { rId =>
       List(
         fr"select t.status, count(*), min(t.submitted_at), max(t.updated_at) from",
-        transfersJoinTable,
-        Fragments.whereAnd(fr"q.id = $queueId", fr"r.id = $requestId"),
+        TransfersJoinTable,
+        Fragments.whereAnd(fr"r.id = $rId"),
         fr"group by t.status"
       ).combineAll
         .query[(TransferStatus, Long, Option[OffsetDateTime], Option[OffsetDateTime])]
@@ -195,40 +165,32 @@ class TransferController(
 
   /**
     * Get the JSON payloads returned by agents for successfully-completed transfers
-    * under a request within a queue.
+    * under a request.
     */
-  def lookupRequestOutputs(
-    queueName: String,
-    requestId: UUID
-  ): IO[RequestInfo] =
-    lookupRequestInfo(queueName, requestId, TransferStatus.Succeeded)
+  def lookupRequestOutputs(requestId: UUID): IO[RequestInfo] =
+    lookupRequestInfo(requestId, TransferStatus.Succeeded)
 
   /**
     * Get the JSON payloads returned by agents for failed transfers
-    * under a request within a queue.
+    * under a request.
     */
-  def lookupRequestFailures(
-    queueName: String,
-    requestId: UUID
-  ): IO[RequestInfo] =
-    lookupRequestInfo(queueName, requestId, TransferStatus.Failed)
+  def lookupRequestFailures(requestId: UUID): IO[RequestInfo] =
+    lookupRequestInfo(requestId, TransferStatus.Failed)
 
   /**
     * Get any information collected by the manager from transfers under a previously-submitted
     * request which have a given status.
     */
   private def lookupRequestInfo(
-    queueName: String,
     requestId: UUID,
     status: TransferStatus
   ): IO[RequestInfo] =
-    checkAndExec(queueName, requestId) { queueId =>
+    checkAndExec(requestId) { rId =>
       List(
         fr"select t.id, t.info from",
-        transfersJoinTable,
+        TransfersJoinTable,
         Fragments.whereAnd(
-          fr"q.id = $queueId",
-          fr"r.id = $requestId",
+          fr"r.id = $rId",
           fr"t.status = $status",
           fr"t.info is not null"
         )
@@ -238,49 +200,42 @@ class TransferController(
     }.map(RequestInfo(requestId, _))
 
   /**
-    * Reset the statuses for all failed transfers under a request in a queue to 'pending',
+    * Reset the statuses for all failed transfers under a request to 'pending',
     * so that they will be re-submitted by the periodic sweeper.
     */
-  def reconsiderRequest(queueName: String, requestId: UUID): IO[RequestAck] =
-    checkAndExec(queueName, requestId) { queueId =>
+  def reconsiderRequest(requestId: UUID): IO[RequestAck] =
+    checkAndExec(requestId) { rId =>
       List(
-        fr"update transfers t set status = ${TransferStatus.Pending: TransferStatus}",
-        fr"from transfer_requests r, queues q",
+        Fragment.const(s"update $TransfersTable t"),
+        fr"t set status = ${TransferStatus.Pending: TransferStatus} from",
+        Fragment.const(s"$RequestsTable r"),
         Fragments.whereAnd(
           fr"t.request_id = r.id",
-          fr"r.queue_id = q.id",
-          fr"q.id = $queueId",
-          fr"r.id = $requestId",
+          fr"r.id = $rId",
           fr"t.status = ${TransferStatus.Failed: TransferStatus}"
         )
       ).combineAll.update.run
     }.map(RequestAck(requestId, _))
 
   /**
-    * Get all information stored by Transporter about a specific transfer under a request
-    * within a queue.
+    * Get all information stored by Transporter about a specific transfer under a request.
     */
   def lookupTransferDetails(
-    queueName: String,
     requestId: UUID,
     transferId: UUID
   ): IO[TransferDetails] =
     for {
-      maybeDetails <- checkAndExec(queueName, requestId) { queueId =>
+      maybeDetails <- checkAndExec(requestId) { rId =>
         List(
           fr"select t.id, t.status, t.body, t.submitted_at, t.updated_at, t.info from",
-          transfersJoinTable,
-          Fragments.whereAnd(
-            fr"q.id = $queueId",
-            fr"r.id = $requestId",
-            fr"t.id = $transferId"
-          )
+          TransfersJoinTable,
+          Fragments.whereAnd(fr"r.id = $rId", fr"t.id = $transferId")
         ).combineAll
           .query[TransferDetails]
           .option
       }
       details <- maybeDetails.liftTo[IO](
-        NoSuchTransfer(queueName, requestId, transferId)
+        NoSuchTransfer(requestId, transferId)
       )
     } yield {
       details
@@ -288,140 +243,6 @@ class TransferController(
 
   private def getNow: IO[Instant] =
     clk.realTime(scala.concurrent.duration.MILLISECONDS).map(Instant.ofEpochMilli)
-
-  /**
-    * Find and submit as many eligible pending transfers as possible to Kafka.
-    *
-    * Eligibility is determined on a per-queue basis based on the number of transfers
-    * currently running under that queue and the user-defined max parallelism for the queue.
-    *
-    * Submission to Kafka runs within the DB transaction which updates transfer status,
-    * so that if submission fails the transfers remain eligible for submission on a
-    * following sweep.
-    */
-  def submitEligibleTransfers: IO[Unit] =
-    for {
-      now <- getNow
-      extractPushAndMark = for {
-        submissionBatch <- extractSubmissionBatch(now)
-        submissionsByTopic = submissionBatch.foldMap {
-          case (topic, ids, message) => Map(topic -> List(ids -> message))
-        }.toList
-        _ <- producer.submit(submissionsByTopic).to[ConnectionIO]
-      } yield {
-        submissionBatch.length
-      }
-      _ <- logger.info("Submitting eligible transfers to Kafka...")
-      numSubmitted <- extractPushAndMark.transact(dbClient)
-      _ <- logger.info(s"Submitted $numSubmitted transfers")
-    } yield ()
-
-  /** Find as many eligible pending transfers as possible, and mark them for submission. */
-  private def extractSubmissionBatch(
-    submitTime: Instant
-  ): ConnectionIO[List[(String, TransferIds, Json)]] =
-    for {
-      /*
-       * Lock the transfers table up-front to prevent submitting a transfer
-       * multiple times on concurrent access from multiple manager apps.
-       */
-      _ <- sql"lock table transfers in share row exclusive mode".update.run
-      submittableCounts <- currentSubmittableCounts
-      submission <- submittableCounts.flatTraverse {
-        case (id, count) =>
-          prepSubmissionBatch(id, count, submitTime)
-      }
-    } yield {
-      submission
-    }
-
-  /**
-    * Build a statement which will get a mapping from Kafka topic name to the
-    * number of requests which could currently be submitted to that topic.
-    *
-    * The eligible request count is computed based on:
-    *   1. The number of pending transfers registered in the DB
-    *   2. The number of submitted transfers registered in the DB
-    *   3. The maximum number of in-flight transfers configured for the queue
-    */
-  private def currentSubmittableCounts: ConnectionIO[List[(UUID, Long)]] =
-    for {
-      maxCounts <- sql"select id, max_in_flight from queues"
-        .query[(UUID, Long)]
-        .to[List]
-        .map(_.toMap)
-      submittedCount <- getCountsInState(TransferStatus.Submitted)
-      inProgressCount <- getCountsInState(TransferStatus.InProgress)
-    } yield {
-      maxCounts.map {
-        case (topic, max) =>
-          val totalSubmitted =
-            submittedCount.getOrElse(topic, 0L) + inProgressCount.getOrElse(topic, 0L)
-
-          topic -> math.max(0L, max - totalSubmitted)
-      }.toList
-    }
-
-  /**
-    * Build a statement which will get the number of transfers associated with
-    * each request topic registered in the DB which have a particular status.
-    */
-  private def getCountsInState(
-    status: TransferStatus
-  ): ConnectionIO[Map[UUID, Long]] =
-    List(
-      fr"select q.id, count(t.id) from",
-      transfersJoinTable,
-      fr"where t.status = $status group by q.id"
-    ).combineAll
-      .query[(UUID, Long)]
-      .to[List]
-      .map(_.toMap)
-
-  private def timestampSql(now: Instant): String =
-    s"TO_TIMESTAMP(${now.toEpochMilli}::double precision / 1000)"
-
-  /**
-    * Build a statement which will mark a batch of transfers associated with
-    * a queue as 'submitted', returning those transfers for use in the actual
-    * submission logic.
-    */
-  private def prepSubmissionBatch(
-    queueId: UUID,
-    batchLimit: Long,
-    now: Instant
-  ): ConnectionIO[List[(String, TransferIds, Json)]] = {
-    val batchSelect = List(
-      fr"select t.body, t.id, r.id as request_id, q.id as queue_id, q.request_topic from",
-      transfersJoinTable,
-      Fragments.whereAnd(
-        fr"q.id = $queueId",
-        fr"t.status = ${TransferStatus.Pending: TransferStatus}"
-      ),
-      fr"limit $batchLimit"
-    ).combineAll
-
-    List(
-      fr"with batch as",
-      Fragments.parentheses(batchSelect),
-      fr"update transfers",
-      Fragments.set(
-        fr"status = ${TransferStatus.Submitted: TransferStatus}",
-        fr"submitted_at =" ++ Fragment.const(timestampSql(now))
-      ),
-      fr"from batch where transfers.id = batch.id",
-      fr"returning batch.request_topic, batch.queue_id, batch.request_id, batch.id, batch.body"
-    ).combineAll.update
-      .withGeneratedKeys[(String, TransferIds, Json)](
-        "request_topic",
-        "queue_id",
-        "request_id",
-        "id",
-        "body"
-      )
-      .compile
-      .toList
-  }
 
   /**
     * Update Transporter's view of a set of transfers based on
@@ -438,14 +259,14 @@ class TransferController(
             case TransferResult.Success      => TransferStatus.Succeeded
             case TransferResult.FatalFailure => TransferStatus.Failed
           }
-          (status, info, ids.transfer, ids.request, ids.queue)
+          (status, info, ids.transfer, ids.request)
       }
-      _ <- Update[(TransferStatus, Json, UUID, UUID, UUID)](
-        s"""update transfers
+      _ <- Update[(TransferStatus, Json, UUID, UUID)](
+        s"""update $TransfersTable
            |set status = ?, info = ?, updated_at = ${timestampSql(now)}
-           |from transfer_requests, queues
-           |where transfers.request_id = transfer_requests.id and transfer_requests.queue_id = queues.id
-           |and transfers.id = ? and transfer_requests.id = ? and queues.id = ?""".stripMargin
+           |from $RequestsTable
+           |where $TransfersTable.request_id = $RequestsTable.id
+           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
       ).updateMany(statusUpdates).void.transact(dbClient)
     } yield ()
 
@@ -467,17 +288,16 @@ class TransferController(
             TransferStatus.InProgress: TransferStatus,
             info,
             ids.transfer,
-            ids.request,
-            ids.queue
+            ids.request
           )
       }
-      _ <- Update[(TransferStatus, Json, UUID, UUID, UUID)](
-        s"""update transfers
+      _ <- Update[(TransferStatus, Json, UUID, UUID)](
+        s"""update $TransfersTable
            |set status = ?, info = ?, updated_at = ${timestampSql(now)}
-           |from transfer_requests, queues
-           |where transfers.request_id = transfer_requests.id and transfer_requests.queue_id = queues.id
-           |and transfers.status in $statuses
-           |and transfers.id = ? and transfer_requests.id = ? and queues.id = ?""".stripMargin
+           |from $RequestsTable
+           |where $TransfersTable.request_id = $RequestsTable.id
+           |and $TransfersTable.status in $statuses
+           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
       ).updateMany(statusUpdates).void.transact(dbClient)
     } yield ()
   }

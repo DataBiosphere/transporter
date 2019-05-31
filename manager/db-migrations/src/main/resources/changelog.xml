@@ -11,4 +11,5 @@
     <include file="changesets/07-index-topic-columns.xml" relativeToChangelogFile="true" />
     <include file="changesets/08-add-inprogress-transfer-status.xml" relativeToChangelogFile="true" />
     <include file="changesets/09-add-queue-partition-tracking.xml" relativeToChangelogFile="true" />
+    <include file="changesets/10-drop-queues.xml" relativeToChangelogFile="true" />
 </databaseChangeLog>

@@ -65,7 +65,7 @@ val kafkaVersion = "2.2.0"
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
-val log4sVersion = "1.7.0"
+val log4sVersion = "1.8.0"
 
 // Transfer.
 val googleAuthVersion = "0.15.0"
@@ -264,11 +264,8 @@ lazy val `transporter-agent-template` = project
   .settings(
     libraryDependencies ++= Seq(
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
-      "com.github.pureconfig" %% "pureconfig-http4s" % pureConfigVersion,
-      "io.chrisdavenport" %% "log4cats-log4s" % log4catsVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
-      "org.http4s" %% "http4s-blaze-client" % http4sVersion,
-      "org.http4s" %% "http4s-circe" % http4sVersion,
+      "org.log4s" %% "log4s" % log4sVersion
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
@@ -277,12 +274,10 @@ lazy val `transporter-agent-template` = project
       // organization ID. Something in how the change happend runs across a bug in sbt / coursier,
       // so we have to manually exclude the old name and pull in the new name.
       // See: https://github.com/sbt/sbt/issues/3618
-      "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion exclude("javax.ws.rs", "javax.ws.rs-api"),
+      "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion exclude ("javax.ws.rs", "javax.ws.rs-api"),
       "jakarta.ws.rs" % "jakarta.ws.rs-api" % "2.1.5"
     ).map(_ % Test),
     dependencyOverrides := Seq(
-      "co.fs2" %% "fs2-core" % fs2Version,
-      "co.fs2" %% "fs2-io" % fs2Version,
       "org.typelevel" %% "cats-core" % catsVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion
     )
@@ -304,9 +299,14 @@ lazy val `transporter-aws-to-gcp-agent` = project
   .settings(
     resolvers += Resolver.jcenterRepo,
     libraryDependencies ++= Seq(
+      "org.http4s" %% "http4s-blaze-client" % http4sVersion,
       "com.google.auth" % "google-auth-library-oauth2-http" % googleAuthVersion
     ),
     libraryDependencies ++= Seq(
       "org.scalatest" %% "scalatest" % scalaTestVersion
-    ).map(_ % Test)
+    ).map(_ % Test),
+    dependencyOverrides := Seq(
+      "co.fs2" %% "fs2-core" % fs2Version,
+      "co.fs2" %% "fs2-io" % fs2Version
+    )
   )

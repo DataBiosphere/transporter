@@ -4,7 +4,7 @@ import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import io.circe.Json
 import org.broadinstitute.transporter.BuildInfo
-import org.broadinstitute.transporter.queue.QueueSchema
+import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.broadinstitute.transporter.web.config.OAuthConfig
 import org.http4s.dsl.io._
 import org.http4s.headers.Location
@@ -208,7 +208,7 @@ object SwaggerMiddleware {
       produces = List("application/json"),
       securityDefinitions = securityDefinitions,
       swaggerFormats = DefaultSwaggerFormats
-        .withFieldSerializers(typeOf[QueueSchema], AbstractProperty(`type` = "object"))
+        .withFieldSerializers(typeOf[TransferSchema], AbstractProperty(`type` = "object"))
         .withFieldSerializers(typeOf[Json], AbstractProperty(`type` = "object"))
     )
 

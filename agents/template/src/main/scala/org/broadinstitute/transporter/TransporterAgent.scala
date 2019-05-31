@@ -3,17 +3,10 @@ package org.broadinstitute.transporter
 import java.util.concurrent.{ExecutorService, Executors}
 
 import cats.effect._
-import cats.implicits._
-import io.chrisdavenport.log4cats.log4s.Log4sLogger
 import io.circe.{Decoder, Encoder}
 import org.apache.kafka.streams.KafkaStreams
 import org.broadinstitute.transporter.kafka.{KStreamsConfig, TransferStreamBuilder}
-import org.broadinstitute.transporter.queue.QueueConfig
-import org.broadinstitute.transporter.queue.api.Queue
 import org.broadinstitute.transporter.transfer.TransferRunner
-import org.http4s.Request
-import org.http4s.circe.CirceEntityDecoder
-import org.http4s.client.blaze.BlazeClientBuilder
 import pureconfig.ConfigReader
 import pureconfig.module.catseffect._
 
@@ -31,10 +24,7 @@ abstract class TransporterAgent[
   In: Decoder,
   Progress: Encoder: Decoder,
   Out: Encoder
-] extends IOApp.WithContext
-    with CirceEntityDecoder {
-
-  private val logger = Log4sLogger.createLocal[IO]
+] extends IOApp.WithContext {
 
   // Use a single thread for the streams run loop.
   // Kafka Streams is an inherently synchronous API, so there's no point in
@@ -57,32 +47,7 @@ abstract class TransporterAgent[
   final override def run(args: List[String]): IO[ExitCode] =
     loadConfigF[IO, AgentConfig[Config]]("org.broadinstitute.transporter").flatMap {
       config =>
-        for {
-          maybeQueue <- lookupQueue(config.queue)
-          retCode <- maybeQueue match {
-            case Some(queue) =>
-              runnerResource(config.runnerConfig).use { runner =>
-                runStream(new TransferStreamBuilder(queue), runner, config.kafka)
-              }
-            case None =>
-              logger.error(s"No such queue: ${config.queue.queueName}").as(ExitCode.Error)
-          }
-        } yield {
-          retCode
-        }
-    }
-
-  /** Query the configured Transporter manager for information about a queue. */
-  private def lookupQueue(config: QueueConfig): IO[Option[Queue]] =
-    BlazeClientBuilder[IO](executionContext).resource.use { client =>
-      val request = Request[IO](
-        uri = config.managerUri / "api" / "transporter" / "v1" / "queues" / config.queueName
-      )
-      logger
-        .info(
-          s"Getting Kafka topics for queue '${config.queueName}' from Transporter at ${config.managerUri}"
-        )
-        .flatMap(_ => client.expectOption[Queue](request))
+        runnerResource(config.runnerConfig).use(runStream(_, config.kafka))
     }
 
   /**
@@ -93,12 +58,11 @@ abstract class TransporterAgent[
     * (i.e. by a Ctrl-C).
     */
   private def runStream(
-    builder: TransferStreamBuilder,
     runner: TransferRunner[In, Progress, Out],
     kafkaConfig: KStreamsConfig
   ): IO[ExitCode] =
     for {
-      topology <- builder.build(runner)
+      topology <- new TransferStreamBuilder(kafkaConfig.topics).build(runner)
       stream <- IO.delay(new KafkaStreams(topology, kafkaConfig.asProperties))
       _ <- IO.delay(stream.start())
       _ <- IO.cancelable[Unit](_ => IO.delay(stream.close()))

@@ -15,14 +15,8 @@ import net.manub.embeddedkafka.EmbeddedKafkaConfig
 import net.manub.embeddedkafka.streams.EmbeddedKafkaStreamsAllInOne
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.broadinstitute.transporter.kafka.TransferStreamBuilder.UnhandledErrorInfo
-import org.broadinstitute.transporter.queue.QueueSchema
 import org.broadinstitute.transporter.queue.api.Queue
-import org.broadinstitute.transporter.transfer.{
-  TransferIds,
-  TransferMessage,
-  TransferResult,
-  TransferRunner
-}
+import org.broadinstitute.transporter.transfer.{QueueSchema, TransferIds, TransferMessage, TransferResult, TransferRunner}
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
 class TransferStreamBuilderSpec
