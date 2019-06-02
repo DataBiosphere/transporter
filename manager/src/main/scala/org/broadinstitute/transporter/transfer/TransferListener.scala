@@ -16,7 +16,13 @@ import org.broadinstitute.transporter.kafka.KafkaConsumer
 import org.broadinstitute.transporter.kafka.config.KafkaConfig
 
 /**
-  * TODO
+  * Component responsible for pulling transfer updates from Kafka.
+  *
+  * @param dbClient client which can interact with Transporter's backing DB
+  * @param progressConsumer client which can pull incremental progress updates
+  *                         for transfers from Kafka
+  * @param resultConsumer client which can pull transfer result messages from
+  *                       Kafka
   */
 class TransferListener private[transfer] (
   dbClient: Transactor[IO],
@@ -29,7 +35,11 @@ class TransferListener private[transfer] (
   private val logger = Slf4jLogger.getLogger[IO]
 
   /**
-    * TODO
+    * Stream which, when run, pulls transfer updates from Kafka and records
+    * them in the manager's DB.
+    *
+    * The stream emits the number of messages pulled from Kafka after each
+    * batch is persisted to the DB.
     */
   def listen: Stream[IO, Int] = {
     val progressStream = progressConsumer.stream.evalMap { chunk =>
@@ -118,7 +128,13 @@ class TransferListener private[transfer] (
 object TransferListener {
   import org.broadinstitute.transporter.kafka.Serdes._
 
-  /** TODO */
+  /**
+    * Build a listener wrapped in setup / teardown logic for its underlying clients.
+    *
+    * @param dbClient client which can interact with Transporter's backing DB
+    * @param kafkaConfig parameters determining how Transporter should communicate
+    *                    with Kafka
+    */
   def resource(
     dbClient: Transactor[IO],
     kafkaConfig: KafkaConfig

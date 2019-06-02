@@ -24,10 +24,15 @@ import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.config.TransferSchema
 
 /**
-  * Component responsible for updating and retrieving transfer-level information
-  * for the Transporter system.
+  * Component responsible for backing Transporter's transfer-level web APIs.
   *
-  * @param schema TODO
+  * The controller records new transfer requests, but doesn't submit them to Kafka.
+  * We introduce an async delay between those two steps to allow for backpressure /
+  * priority queueing within the manager, since Kafka doesn't have native support
+  * for that functionality.
+  *
+  * @param schema JSON schema that transfer requests handled by this controller
+  *               must match in order to be recorded for later submission
   * @param dbClient client which can interact with Transporter's backing DB
   */
 class TransferController(

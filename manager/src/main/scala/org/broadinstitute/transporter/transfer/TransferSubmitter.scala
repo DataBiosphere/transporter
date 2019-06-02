@@ -19,7 +19,16 @@ import org.broadinstitute.transporter.transfer.config.TransferConfig
 import scala.concurrent.duration.FiniteDuration
 
 /**
-  * TODO
+  * Component responsible for pushing queued transfer requests into Kafka.
+  *
+  * @param requestTopic Kafka topic to push requests into
+  * @param maxTransfersInFlight max number of transfers which should be "live" in Kafka
+  *                             at any point. Used to implement back-pressure, since our
+  *                             approach to incremental progress tracking breaks Kafka's
+  *                             simple built-in implementation
+  * @param submissionInterval amount of time to wait between submissions
+  * @param dbClient client which can interact with Transporter's backing DB
+  * @param producer client which can push messages into Kafka
   */
 class TransferSubmitter private[transfer] (
   requestTopic: String,
@@ -28,7 +37,6 @@ class TransferSubmitter private[transfer] (
   dbClient: Transactor[IO],
   producer: KafkaProducer[Json]
 )(implicit clk: Clock[IO], t: Timer[IO]) {
-
   import Constants._
   import DoobieInstances._
 
@@ -36,7 +44,9 @@ class TransferSubmitter private[transfer] (
   private implicit val logHandler: LogHandler = DbLogHandler(logger)
 
   /**
-    * TODO
+    * Stream which, when run, triggers message submission at a fixed interval.
+    *
+    * The stream emits the number of messages pushed into Kafka after each submission.
     */
   def sweepSubmissions: Stream[IO, Int] =
     Stream.fixedDelay(submissionInterval).evalMap(_ => submitEligibleTransfers)
@@ -153,7 +163,15 @@ class TransferSubmitter private[transfer] (
 object TransferSubmitter {
   import org.broadinstitute.transporter.kafka.Serdes._
 
-  /** TODO */
+  /**
+    * Build a submitter wrapped in setup / teardown logic for its underlying clients.
+    *
+    * @param dbClient client which can interact with Transporter's backing DB
+    * @param transferConfig parameters determining how transfer batches should
+    *                       be constructed
+    * @param kafkaConfig parameters determining how Transporter should communicate
+    *                    with Kafka
+    */
   def resource(
     dbClient: Transactor[IO],
     transferConfig: TransferConfig,

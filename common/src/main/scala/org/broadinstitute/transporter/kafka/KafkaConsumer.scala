@@ -27,7 +27,11 @@ import scala.concurrent.duration.FiniteDuration
 trait KafkaConsumer[M] {
 
   /**
-    * TODO
+    * Stream emitting batches of messages pulled from Kafka, paired with their
+    * corresponding offsets.
+    *
+    * Processors of this stream must commit each offset after processing its
+    * paired message to let the Kafka broker know that it's been handled.
     */
   def stream: Stream[IO, Chunk[(TransferMessage[M], CommittableOffset[IO])]]
 }
@@ -104,8 +108,11 @@ object KafkaConsumer {
     * @param consumer client which can pull "raw" messages from Kafka.
     *                 NOTE: This class assumes a subscription has already
     *                 been initialized in the consumer
-    * @param maxPerBatch TODO
-    * @param waitTimePerBatch TODO
+    * @param maxPerBatch max number of messages to pull from Kafka before emitting
+    *                    the accumulated batch to downstream processors
+    * @param waitTimePerBatch max time to wait for the buffer to fill to `maxPerBatch`
+    *                         before emitting what's been received so far to downstream
+    *                         processors
     */
   private[kafka] class Impl[M](
     consumer: KConsumer[IO, Unit, Serdes.Attempt[TransferMessage[M]]],
