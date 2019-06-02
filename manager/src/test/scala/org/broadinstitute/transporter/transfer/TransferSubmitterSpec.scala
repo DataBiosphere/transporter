@@ -72,21 +72,16 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
   it should "submit batches of eligible transfers to Kafka" in withRequest {
     (tx, submitter) =>
       (kafka.submit _)
-        .expects(where { list: List[(String, List[(TransferIds, Json)])] =>
-          list.length == 1 && {
-            val (topic, submitted) = list.head
-
-            topic == theTopic &&
-            submitted.length == parallelism &&
-            submitted.forall {
-              case (TransferIds(request, transfer), body) =>
-                request == request1Id &&
-                  request1Transfers.contains(transfer -> body)
-            }
+        .expects(where { (topic: String, submitted: List[TransferMessage[Json]]) =>
+          topic == theTopic &&
+          submitted.length == parallelism &&
+          submitted.forall { message =>
+            message.ids.request == request1Id &&
+            request1Transfers.contains(message.ids.transfer -> message.message)
           }
         })
         .returning(IO.unit)
-      (kafka.submit _).expects(Nil).returning(IO.unit)
+      (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
 
       for {
         _ <- submitter.submitEligibleTransfers
@@ -116,7 +111,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
   it should "not mark transfers as submitted if producing to Kafka fails" in withRequest {
     (tx, controller) =>
       val err = new RuntimeException("BOOM")
-      (kafka.submit _).expects(*).returning(IO.raiseError(err))
+      (kafka.submit _).expects(theTopic, *).returning(IO.raiseError(err))
 
       for {
         attempt <- controller.submitEligibleTransfers.attempt
@@ -134,11 +129,11 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
   it should "not double-submit transfers on concurrent access" in withRequest {
     (tx, controller) =>
       (kafka.submit _)
-        .expects(where { list: List[(String, List[(TransferIds, Json)])] =>
-          list.length == 1 && list.head._2.length == parallelism
+        .expects(where { (topic: String, submitted: List[TransferMessage[Json]]) =>
+          topic == theTopic && submitted.length == parallelism
         })
         .returning(IO.unit)
-      (kafka.submit _).expects(Nil).twice().returning(IO.unit)
+      (kafka.submit _).expects(theTopic, Nil).twice().returning(IO.unit)
 
       for {
         _ <- List.fill(3)(controller.submitEligibleTransfers).parSequence_
@@ -168,7 +163,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
     (tx, controller) =>
       val preSubmitted = request1Transfers.map(_._1).take(parallelism * 2)
 
-      (kafka.submit _).expects(Nil).returning(IO.unit)
+      (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
 
       for {
         _ <- preSubmitted.traverse_ { id =>
@@ -191,7 +186,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
     (tx, controller) =>
       val inProgress = request1Transfers.map(_._1).take(parallelism)
 
-      (kafka.submit _).expects(Nil).returning(IO.unit)
+      (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
 
       for {
         _ <- inProgress.traverse_ { id =>

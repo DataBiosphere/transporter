@@ -69,7 +69,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       case ((id, _), i) if i % 3 != 0 =>
         val result =
           if (i % 3 == 1) TransferResult.Success else TransferResult.FatalFailure
-        (TransferIds(request1Id, id), result -> json"""{ "i+1": $i }""")
+        TransferMessage(TransferIds(request1Id, id), result -> json"""{ "i+1": $i }""")
     }
 
     for {
@@ -80,7 +80,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
         .transact(tx)
     } yield {
       updated should contain theSameElementsAs updates.map {
-        case (ids, (res, info)) =>
+        case TransferMessage(ids, (res, info)) =>
           (
             ids.transfer,
             res match {
@@ -98,7 +98,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       case ((id, _), i) if i % 3 != 0 =>
         val result =
           if (i % 3 == 1) TransferResult.Success else TransferResult.FatalFailure
-        (TransferIds(request2Id, id), result -> json"""{ "i+1": $i }""")
+        TransferMessage(TransferIds(request2Id, id), result -> json"""{ "i+1": $i }""")
     }
 
     for {
@@ -115,12 +115,12 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
   it should "mark submitted transfers as in progress" in withRequest { (tx, listener) =>
     val updates = request1Transfers.zipWithIndex.collect {
       case ((id, _), i) if i % 3 != 0 =>
-        (TransferIds(request1Id, id), json"""{ "i+1": $i }""")
+        TransferMessage(TransferIds(request1Id, id), json"""{ "i+1": $i }""")
     }
 
     for {
       _ <- updates.traverse_ {
-        case (ids, _) =>
+        case TransferMessage(ids, _) =>
           sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
             .transact(tx)
       }
@@ -131,7 +131,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
         .transact(tx)
     } yield {
       updated should contain theSameElementsAs updates.map {
-        case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
+        case TransferMessage(ids, info) => (ids.transfer, TransferStatus.InProgress, info)
       }
     }
   }
@@ -140,12 +140,12 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     (tx, listener) =>
       val updates = request1Transfers.zipWithIndex.collect {
         case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(request1Id, id), json"""{ "i+1": $i }""")
+          TransferMessage(TransferIds(request1Id, id), json"""{ "i+1": $i }""")
       }
 
       for {
         _ <- updates.traverse_ {
-          case (ids, _) =>
+          case TransferMessage(ids, _) =>
             sql"""update transfers set
                   status = 'inprogress',
                   updated_at = TO_TIMESTAMP(0),
@@ -160,7 +160,8 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
           .transact(tx)
       } yield {
         updated should contain theSameElementsAs updates.map {
-          case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
+          case TransferMessage(ids, info) =>
+            (ids.transfer, TransferStatus.InProgress, info)
         }
       }
   }
@@ -169,12 +170,12 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     (tx, listener) =>
       val updates = request1Transfers.zipWithIndex.collect {
         case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(request1Id, id), json"""{ "i+1": $i }""")
+          TransferMessage(TransferIds(request1Id, id), json"""{ "i+1": $i }""")
       }
 
       for {
         _ <- updates.traverse_ {
-          case (ids, _) =>
+          case TransferMessage(ids, _) =>
             sql"update transfers set status = 'succeeded' where id = ${ids.transfer}".update.run.void
               .transact(tx)
         }
@@ -192,12 +193,12 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     (tx, listener) =>
       val updates = request1Transfers.zipWithIndex.collect {
         case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(request2Id, id), json"""{ "i+1": $i }""")
+          TransferMessage(TransferIds(request2Id, id), json"""{ "i+1": $i }""")
       }
 
       for {
         _ <- updates.traverse_ {
-          case (ids, _) =>
+          case TransferMessage(ids, _) =>
             sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
               .transact(tx)
         }

@@ -2,7 +2,7 @@ package org.broadinstitute.transporter.transfer
 
 import java.time.Instant
 
-import cats.effect.{Clock, IO, Timer}
+import cats.effect.{Clock, ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import doobie._
 import doobie.implicits._
@@ -13,10 +13,15 @@ import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.{Constants, DbLogHandler, DoobieInstances}
 import org.broadinstitute.transporter.kafka.KafkaProducer
+import org.broadinstitute.transporter.kafka.config.KafkaConfig
+import org.broadinstitute.transporter.transfer.config.TransferConfig
 
 import scala.concurrent.duration.FiniteDuration
 
-class TransferSubmitter(
+/**
+  * TODO
+  */
+class TransferSubmitter private[transfer] (
   requestTopic: String,
   maxTransfersInFlight: Long,
   submissionInterval: FiniteDuration,
@@ -30,6 +35,9 @@ class TransferSubmitter(
   private val logger = Slf4jLogger.getLogger[IO]
   private implicit val logHandler: LogHandler = DbLogHandler(logger)
 
+  /**
+    * TODO
+    */
   def sweepSubmissions: Stream[IO, Int] =
     Stream.fixedDelay(submissionInterval).evalMap(_ => submitEligibleTransfers)
 
@@ -50,10 +58,7 @@ class TransferSubmitter(
         .map(Instant.ofEpochMilli)
       extractPushAndMark = for {
         submissionBatch <- extractSubmissionBatch(now)
-        submissionsByTopic = submissionBatch.foldMap {
-          case (ids, message) => Map(requestTopic -> List(ids -> message))
-        }.toList
-        _ <- producer.submit(submissionsByTopic).to[ConnectionIO]
+        _ <- producer.submit(requestTopic, submissionBatch).to[ConnectionIO]
       } yield {
         submissionBatch.length
       }
@@ -67,7 +72,7 @@ class TransferSubmitter(
   /** Find as many eligible pending transfers as possible, and mark them for submission. */
   private def extractSubmissionBatch(
     submitTime: Instant
-  ): ConnectionIO[List[(TransferIds, Json)]] =
+  ): ConnectionIO[List[TransferMessage[Json]]] =
     for {
       /*
        * Lock the transfers table up-front to prevent submitting a transfer
@@ -114,7 +119,7 @@ class TransferSubmitter(
   private def prepSubmissionBatch(
     batchLimit: Long,
     now: Instant
-  ): ConnectionIO[List[(TransferIds, Json)]] = {
+  ): ConnectionIO[List[TransferMessage[Json]]] = {
     val batchSelect = List(
       fr"select t.body, t.id, r.id as request_id from",
       TransfersJoinTable,
@@ -135,7 +140,7 @@ class TransferSubmitter(
       Fragment.const(s"from batch where $TransfersTable.id = batch.id"),
       fr"returning batch.request_id, batch.id, batch.body"
     ).combineAll.update
-      .withGeneratedKeys[(TransferIds, Json)](
+      .withGeneratedKeys[TransferMessage[Json]](
         "request_id",
         "id",
         "body"
@@ -143,4 +148,24 @@ class TransferSubmitter(
       .compile
       .toList
   }
+}
+
+object TransferSubmitter {
+  import org.broadinstitute.transporter.kafka.Serdes._
+
+  /** TODO */
+  def resource(
+    dbClient: Transactor[IO],
+    transferConfig: TransferConfig,
+    kafkaConfig: KafkaConfig
+  )(implicit cs: ContextShift[IO], t: Timer[IO]): Resource[IO, TransferSubmitter] =
+    KafkaProducer.resource[Json](kafkaConfig.connection).map { producer =>
+      new TransferSubmitter(
+        kafkaConfig.topics.requestTopic,
+        transferConfig.maxInFlight,
+        transferConfig.submissionInterval,
+        dbClient,
+        producer
+      )
+    }
 }

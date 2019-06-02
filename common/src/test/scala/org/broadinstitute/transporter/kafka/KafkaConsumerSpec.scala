@@ -21,7 +21,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
 
   private val topic = "the-topic"
 
-  private val consumerConfig = ConsumerConfig("test-group", 3, 500.millis, 250.millis)
+  private val consumerConfig = ConsumerConfig("test-group", 3, 500.millis)
 
   behavior of "KafkaConsumer"
 
@@ -47,8 +47,8 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
               .chunk(batch)
               .covary[IO]
               .evalMap {
-                case ((ids, m), offset) =>
-                  offset.commit.as(TransferMessage(ids, m))
+                case (message, offset) =>
+                  offset.commit.as(message)
               }
               .through(q.enqueue)
           }.compile.drain.start
@@ -86,8 +86,8 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
               .chunk(batch)
               .covary[IO]
               .evalMap {
-                case ((ids, m), offset) =>
-                  offset.commit.as(TransferMessage(ids, m))
+                case (message, offset) =>
+                  offset.commit.as(message)
               }
               .through(q.enqueue)
           }.compile.drain.start
@@ -132,8 +132,8 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
               .chunk(batch)
               .covary[IO]
               .evalMap {
-                case ((ids, m), offset) =>
-                  offset.commit.as(TransferMessage(ids, m))
+                case (message, offset) =>
+                  offset.commit.as(message)
               }
               .through(q.enqueue)
 

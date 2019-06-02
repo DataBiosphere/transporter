@@ -12,7 +12,7 @@ import fs2.kafka.{
 }
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.kafka.config.{ConnectionConfig, ConsumerConfig}
-import org.broadinstitute.transporter.transfer.{TransferIds, TransferMessage}
+import org.broadinstitute.transporter.transfer.TransferMessage
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -29,7 +29,7 @@ trait KafkaConsumer[M] {
   /**
     * TODO
     */
-  def stream: Stream[IO, Chunk[((TransferIds, M), CommittableOffset[IO])]]
+  def stream: Stream[IO, Chunk[(TransferMessage[M], CommittableOffset[IO])]]
 }
 
 object KafkaConsumer {
@@ -93,11 +93,6 @@ object KafkaConsumer {
          * a topic before the consumer subscribes to it.
          */
         .withAutoOffsetReset(AutoOffsetReset.Earliest)
-        // Sets the frequency at which the Kafka libs re-query brokers for new topic info.
-        .withProperty(
-          "metadata.max.age.ms",
-          consumer.topicMetadataTtl.toMillis.toString
-        )
         // No "official" recommendation on these values, we can tweak as we see fit.
         .withRequestTimeout(conn.requestTimeout)
         .withCloseTimeout(conn.closeTimeout)
@@ -109,6 +104,8 @@ object KafkaConsumer {
     * @param consumer client which can pull "raw" messages from Kafka.
     *                 NOTE: This class assumes a subscription has already
     *                 been initialized in the consumer
+    * @param maxPerBatch TODO
+    * @param waitTimePerBatch TODO
     */
   private[kafka] class Impl[M](
     consumer: KConsumer[IO, Unit, Serdes.Attempt[TransferMessage[M]]],
@@ -119,7 +116,7 @@ object KafkaConsumer {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def stream: Stream[IO, Chunk[((TransferIds, M), CommittableOffset[IO])]] =
+    override def stream: Stream[IO, Chunk[(TransferMessage[M], CommittableOffset[IO])]] =
       consumer.stream.evalTap { message =>
         logger.info(s"Got message from topic ${message.record.topic}")
       }.map { message =>
@@ -127,9 +124,7 @@ object KafkaConsumer {
       }.evalTap {
         case Right((m, _)) => logger.debug(s"Decoded message from Kafka: $m")
         case Left(err)     => logger.error(err)("Failed to decode Kafka message")
-      }.rethrow.map {
-        case (TransferMessage(ids, message), offset) => ((ids, message), offset)
-      }.groupWithin(maxPerBatch, waitTimePerBatch)
+      }.rethrow.groupWithin(maxPerBatch, waitTimePerBatch)
   }
 
 }

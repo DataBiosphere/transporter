@@ -10,11 +10,11 @@ class KafkaProducerSpec extends BaseKafkaSpec {
 
   behavior of "KafkaProducer"
 
-  it should "submit messages to one topic" in {
+  it should "submit messages to a topic" in {
     val topic = "the-topic"
 
-    val messages = List("foo", "bar", "baz").map {
-      TransferIds(UUID.randomUUID(), UUID.randomUUID()) -> _
+    val messages = List("foo", "bar", "baz").map { msg =>
+      TransferMessage(TransferIds(UUID.randomUUID(), UUID.randomUUID()), msg)
     }
 
     val published = withKafka { implicit embeddedConfig =>
@@ -22,8 +22,8 @@ class KafkaProducerSpec extends BaseKafkaSpec {
         .resource[String](connConfig(embeddedConfig))
         .use { producer =>
           for {
-            _ <- IO.delay(createCustomTopic(topic)(embeddedConfig))
-            _ <- producer.submit(List(topic -> messages))
+            _ <- IO.delay(createCustomTopic(topic))
+            _ <- producer.submit(topic, messages)
             consumed <- IO.delay {
               consumeNumberMessagesFrom[Attempt[TransferMessage[String]]](
                 topic,
@@ -38,46 +38,7 @@ class KafkaProducerSpec extends BaseKafkaSpec {
 
     }
 
-    published shouldBe messages.map { case (id, m) => Right(TransferMessage(id, m)) }
-  }
-
-  it should "submit messages to multiple topics" in {
-    val topic1 = "the-topic"
-    val topic2 = "the-topic2"
-
-    val messages1 = List("foo", "bar", "baz").map {
-      TransferIds(UUID.randomUUID(), UUID.randomUUID()) -> _
-    }
-    val messages2 = List("zab", "rab", "oof").map {
-      TransferIds(UUID.randomUUID(), UUID.randomUUID()) -> _
-    }
-
-    val published = withKafka { implicit embeddedConfig =>
-      KafkaProducer
-        .resource[String](connConfig(embeddedConfig))
-        .use { producer =>
-          for {
-            _ <- IO.delay(createCustomTopic(topic1)(embeddedConfig))
-            _ <- IO.delay(createCustomTopic(topic2)(embeddedConfig))
-            _ <- producer.submit(List(topic2 -> messages2, topic1 -> messages1))
-            consumed <- IO.delay {
-              consumeNumberMessagesFromTopics[Attempt[TransferMessage[String]]](
-                Set(topic1, topic2),
-                messages1.length + messages2.length
-              )
-            }
-          } yield {
-            consumed
-          }
-        }
-        .unsafeRunSync()
-
-    }
-
-    published shouldBe Map(
-      topic1 -> messages1.map { case (id, m) => Right(TransferMessage(id, m)) },
-      topic2 -> messages2.map { case (id, m) => Right(TransferMessage(id, m)) }
-    )
+    published shouldBe messages.map(Right(_))
   }
 
 }

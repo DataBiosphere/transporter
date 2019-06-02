@@ -13,15 +13,11 @@ import scala.concurrent.duration.FiniteDuration
   *                           before emitting to downstream processing
   * @param waitTimePerBatch max time consumers should wait for new records before
   *                         emitting to downstream processing
-  * @param topicMetadataTtl TTL for cached topic metadata within consumers. Determines
-  *                         how often consumers subscribed to a naming pattern will
-  *                         discover new topics.
   */
 case class ConsumerConfig(
   groupId: String,
   maxRecordsPerBatch: Int,
-  waitTimePerBatch: FiniteDuration,
-  topicMetadataTtl: FiniteDuration
+  waitTimePerBatch: FiniteDuration
 )
 
 object ConsumerConfig {
