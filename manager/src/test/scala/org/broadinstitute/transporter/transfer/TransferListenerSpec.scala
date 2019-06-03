@@ -21,7 +21,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
   private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
 
-  private val progress = mock[KafkaConsumer[Json]]
+  private val progress = mock[KafkaConsumer[(Int, Json)]]
   private val results = mock[KafkaConsumer[(TransferResult, Json)]]
 
   private val request1Id = UUID.randomUUID()
@@ -45,16 +45,16 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       _ <- request1Transfers.traverse_ {
         case (id, body) =>
           sql"""insert into transfers
-                  (id, request_id, body, status)
+                  (id, request_id, body, status, steps_run)
                   values
-                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus})""".update.run.void
+                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
       }
       _ <- request2Transfers.traverse_ {
         case (id, body) =>
           sql"""insert into transfers
-                  (id, request_id, body, status)
+                  (id, request_id, body, status, steps_run)
                   values
-                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus})""".update.run.void
+                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
       }
     } yield ()
 
@@ -115,7 +115,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
   it should "mark submitted transfers as in progress" in withRequest { (tx, listener) =>
     val updates = request1Transfers.zipWithIndex.collect {
       case ((id, _), i) if i % 3 != 0 =>
-        TransferMessage(TransferIds(request1Id, id), json"""{ "i+1": $i }""")
+        TransferMessage(TransferIds(request1Id, id), i -> json"""{ "i+1": $i }""")
     }
 
     for {
@@ -124,14 +124,16 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
           sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
             .transact(tx)
       }
-      _ <- listener.markTransfersInProgress(Chunk.seq(updates))
+      numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
       updated <- sql"select id, status, info from transfers where updated_at is not null"
         .query[(UUID, TransferStatus, Json)]
         .to[List]
         .transact(tx)
     } yield {
+      numUpdated shouldBe updated.length
       updated should contain theSameElementsAs updates.map {
-        case TransferMessage(ids, info) => (ids.transfer, TransferStatus.InProgress, info)
+        case TransferMessage(ids, (_, info)) =>
+          (ids.transfer, TransferStatus.InProgress, info)
       }
     }
   }
@@ -140,7 +142,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     (tx, listener) =>
       val updates = request1Transfers.zipWithIndex.collect {
         case ((id, _), i) if i % 3 != 0 =>
-          TransferMessage(TransferIds(request1Id, id), json"""{ "i+1": $i }""")
+          TransferMessage(TransferIds(request1Id, id), i -> json"""{ "i+1": $i }""")
       }
 
       for {
@@ -153,14 +155,15 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
                   where id = ${ids.transfer}""".update.run.void
               .transact(tx)
         }
-        _ <- listener.markTransfersInProgress(Chunk.seq(updates))
+        numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
         updated <- sql"select id, status, info from transfers where updated_at > TO_TIMESTAMP(0)"
           .query[(UUID, TransferStatus, Json)]
           .to[List]
           .transact(tx)
       } yield {
+        numUpdated shouldBe updates.length
         updated should contain theSameElementsAs updates.map {
-          case TransferMessage(ids, info) =>
+          case TransferMessage(ids, (_, info)) =>
             (ids.transfer, TransferStatus.InProgress, info)
         }
       }
@@ -170,7 +173,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     (tx, listener) =>
       val updates = request1Transfers.zipWithIndex.collect {
         case ((id, _), i) if i % 3 != 0 =>
-          TransferMessage(TransferIds(request1Id, id), json"""{ "i+1": $i }""")
+          TransferMessage(TransferIds(request1Id, id), i -> json"""{ "i+1": $i }""")
       }
 
       for {
@@ -179,12 +182,13 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
             sql"update transfers set status = 'succeeded' where id = ${ids.transfer}".update.run.void
               .transact(tx)
         }
-        _ <- listener.markTransfersInProgress(Chunk.seq(updates))
+        numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
         updated <- sql"select id, status, info from transfers where updated_at is not null"
           .query[(UUID, TransferStatus, Json)]
           .to[List]
           .transact(tx)
       } yield {
+        numUpdated shouldBe 0
         updated shouldBe empty
       }
   }
@@ -193,7 +197,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     (tx, listener) =>
       val updates = request1Transfers.zipWithIndex.collect {
         case ((id, _), i) if i % 3 != 0 =>
-          TransferMessage(TransferIds(request2Id, id), json"""{ "i+1": $i }""")
+          TransferMessage(TransferIds(request2Id, id), i -> json"""{ "i+1": $i }""")
       }
 
       for {
@@ -202,13 +206,64 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
             sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
               .transact(tx)
         }
-        _ <- listener.markTransfersInProgress(Chunk.seq(updates))
+        numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
         updated <- sql"select id, status, info from transfers where updated_at is not null"
           .query[(UUID, TransferStatus, Json)]
           .to[List]
           .transact(tx)
       } yield {
+        numUpdated shouldBe 0
         updated shouldBe empty
+      }
+  }
+
+  it should "use the latest message if multiple updates are in a batch for one transfer" in withRequest {
+    (tx, listener) =>
+      val id = request1Transfers.head._1
+      val updates = List.tabulate(3) { i =>
+        TransferMessage(
+          TransferIds(request1Id, id),
+          (3 - i) -> json"""{ "i+1": $i }"""
+        )
+      }
+
+      for {
+        _ <- sql"update transfers set status = 'submitted' where id = $id".update.run
+          .transact(tx)
+        numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
+        recorded <- sql"select info from transfers where id = $id"
+          .query[Json]
+          .unique
+          .transact(tx)
+      } yield {
+        numUpdated shouldBe 1
+        recorded shouldBe json"""{ "i+1": 0 }"""
+      }
+  }
+
+  it should "use the latest message on concurrent updates" in withRequest {
+    (tx, listener) =>
+      val id = request1Transfers.head._1
+      val stepCounts = List(1, 2, 3, 4, 3, 2, 1)
+      val updates = stepCounts.map { i =>
+        TransferMessage(
+          TransferIds(request1Id, id),
+          i -> json"""{ "step": $i }"""
+        )
+      }
+
+      for {
+        _ <- sql"update transfers set status = 'submitted' where id = $id".update.run
+          .transact(tx)
+        _ <- updates.parTraverse_ { message =>
+          listener.markTransfersInProgress(Chunk.singleton(message))
+        }
+        recorded <- sql"select info from transfers where id = $id"
+          .query[Json]
+          .unique
+          .transact(tx)
+      } yield {
+        recorded shouldBe json"""{ "step": 4 }"""
       }
   }
 }

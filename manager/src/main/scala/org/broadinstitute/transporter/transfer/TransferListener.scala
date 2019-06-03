@@ -26,7 +26,7 @@ import org.broadinstitute.transporter.kafka.config.KafkaConfig
   */
 class TransferListener private[transfer] (
   dbClient: Transactor[IO],
-  progressConsumer: KafkaConsumer[Json],
+  progressConsumer: KafkaConsumer[(Int, Json)],
   resultConsumer: KafkaConsumer[(TransferResult, Json)]
 )(implicit cs: ContextShift[IO], clk: Clock[IO]) {
   import Constants._
@@ -68,28 +68,38 @@ class TransferListener private[transfer] (
     * incremental progress messages collected from Kafka.
     */
   private[transfer] def markTransfersInProgress(
-    progress: Chunk[TransferMessage[Json]]
+    progress: Chunk[TransferMessage[(Int, Json)]]
   ): IO[Int] = {
     val statuses = List(TransferStatus.Submitted, TransferStatus.InProgress)
       .map(_.entryName.toLowerCase)
       .mkString("('", "','", "')")
     for {
       now <- getNow
-      statusUpdates = progress.map { message =>
-        (
-          TransferStatus.InProgress: TransferStatus,
-          message.message,
-          message.ids.transfer,
-          message.ids.request
-        )
-      }
-      numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
+      statusUpdates = progress.toVector
+        .groupBy(_.ids)
+        .mapValues(_.maxBy(_.message._1))
+        .values
+        .toList
+        .map {
+          case TransferMessage(ids, (stepCount, message)) =>
+            (
+              TransferStatus.InProgress: TransferStatus,
+              message,
+              stepCount,
+              ids.transfer,
+              ids.request,
+              stepCount
+            )
+        }
+
+      numUpdated <- Update[(TransferStatus, Json, Int, UUID, UUID, Int)](
         s"""update $TransfersTable
-           |set status = ?, info = ?, updated_at = ${timestampSql(now)}
+           |set status = ?, info = ?, updated_at = ${timestampSql(now)}, steps_run = ?
            |from $RequestsTable
            |where $TransfersTable.request_id = $RequestsTable.id
            |and $TransfersTable.status in $statuses
-           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
+           |and $TransfersTable.id = ? and $RequestsTable.id = ?
+           |and steps_run < ?""".stripMargin
       ).updateMany(statusUpdates).transact(dbClient)
     } yield {
       numUpdated
@@ -140,7 +150,7 @@ object TransferListener {
     kafkaConfig: KafkaConfig
   )(implicit cs: ContextShift[IO], t: Timer[IO]): Resource[IO, TransferListener] =
     for {
-      progressConsumer <- KafkaConsumer.ofTopic[Json](
+      progressConsumer <- KafkaConsumer.ofTopic[(Int, Json)](
         kafkaConfig.topics.progressTopic,
         kafkaConfig.connection,
         kafkaConfig.consumer
