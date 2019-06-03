@@ -42,8 +42,9 @@ It's also possible to run individual `sbt` commands directly from bash. This is 
 as you'll eat the tool's (nontrivial) startup costs on every command.
 
 ## Running Locally
-1. Run the [Manager](manager/README.md#running-locally)
-2. Run an [agent](agents/README.md#running-locally)
+1. Set up dependencies locally by running [`./setup-local-env`](setup-local-env)
+2. Run the [Manager](manager/README.md#running-locally)
+3. Run an [agent](agents/README.md#running-locally)
 
 ## Developing
 Two main options exist for Scala development:

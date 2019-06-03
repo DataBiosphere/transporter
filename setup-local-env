@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+declare -r SCRIPT_DIR=$(cd $(dirname $0) && pwd)
+
+declare -ra BREW_FORMULAS=(postgresql@9.6 zookeeper kafka)
+
+declare -ra KAFKA_CONFIG_PATCH_CMD=(
+  sed -i '""'
+  's$#listeners=PLAINTEXT://:9092$listeners=PLAINTEXT://localhost:9092$g'
+  /usr/local/etc/kafka/server.properties
+)
+
+declare -r KAFKA_TOPIC_PREFIX='transporter.local'
+
+function install_services () {
+  2>&1 echo Installing dependencies from Homebrew...
+  for service in ${BREW_FORMULAS[@]}; do
+    if ! brew ls --versions ${service} > /dev/null; then
+      brew install ${service}
+    fi
+  done
+
+  2>&1 echo Patching Kafka configs...
+  2>&1 echo ${KAFKA_CONFIG_PATCH_CMD[@]}
+  ${KAFKA_CONFIG_PATCH_CMD[@]}
+
+  2>&1 echo Launching services...
+  for service in ${BREW_FORMULAS[@]}; do
+    brew services restart ${service}
+  done
+
+  2>&1 echo Sleeping so ZK / Kafka can stabilize...
+  sleep 5
+}
+
+function init_topics () {
+  2>&1 echo Initializing Kafka topics...
+  for topic in requests progress results; do
+    local full_topic=${KAFKA_TOPIC_PREFIX}.${topic}
+    local topic_info=$(kafka-topics --describe --topic ${full_topic} --bootstrap-server localhost:9092)
+
+    if [[ -z "${topic_info}" ]]; then
+      kafka-topics --create \
+        --topic ${full_topic} \
+        --bootstrap-server localhost:9092 \
+        --partitions 3 \
+        --replication-factor 1
+    fi
+  done
+}
+
+function generate_configs () {
+  local -r manager_config=(
+    'org.broadinstitute.transporter {'
+    '  db {'
+    "    username: \"$(whoami)\""
+    '    password: ""'
+    '  }'
+    '  kafka.topics {'
+    "    request-topic: \"${KAFKA_TOPIC_PREFIX}.requests\""
+    "    progress-topic: \"${KAFKA_TOPIC_PREFIX}.progress\""
+    "    results-topic: \"${KAFKA_TOPIC_PREFIX}.results\""
+    '  }'
+    '}'
+  )
+
+  local -r agent_config=(
+    'org.broadinstitute.transporter.kafka.topics {'
+    "  request-topic: \"${KAFKA_TOPIC_PREFIX}.requests\""
+    "  progress-topic: \"${KAFKA_TOPIC_PREFIX}.progress\""
+    "  results-topic: \"${KAFKA_TOPIC_PREFIX}.results\""
+    '}'
+  )
+
+  2>&1 echo Writing local app config...
+  printf '%s\n' "${manager_config[@]}" > "${SCRIPT_DIR}/manager/src/main/resources/application.conf"
+  printf '%s\n' "${agent_config[@]}" > "${SCRIPT_DIR}/agents/template/src/main/resources/application.conf"
+}
+
+function main () {
+  install_services
+  init_topics
+  generate_configs
+}
+
+main

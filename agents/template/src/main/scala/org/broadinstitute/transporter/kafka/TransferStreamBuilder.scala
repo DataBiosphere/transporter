@@ -25,8 +25,8 @@ class TransferStreamBuilder(topics: TopicConfig) {
 
   /**
     * Construct a stream topology which, when started, will pull requests
-    * from a Transporter queue, execute the requests using a runner,
-    * then push the results back to the Transporter manager.
+    * from a Kafka topic, execute the requests using a runner, then push the
+    * results back to the Transporter manager.
     */
   def build[In: Decoder, Progress: Encoder: Decoder, Out: Encoder](
     runner: TransferRunner[In, Progress, Out]
@@ -162,10 +162,6 @@ class TransferStreamBuilder(topics: TopicConfig) {
   }
 }
 
-/**
-  * Kafka stream defining how the "request" and "response" topics
-  * of a Transporter queue should be plugged together.
-  */
 object TransferStreamBuilder {
 
   private[this] val parser = new JawnParser()
