@@ -43,14 +43,18 @@ class TransferListener private[transfer] (
     */
   def listen: Stream[IO, Int] = {
     val progressStream = progressConsumer.stream.evalMap { chunk =>
-      markTransfersInProgress(chunk.map(_._1))
-        .map(_ -> CommittableOffsetBatch.fromFoldable(chunk.map(_._2)))
+      markTransfersInProgress(chunk.map { case (update, _) => update })
+        .map(_ -> CommittableOffsetBatch.fromFoldable(chunk.map {
+          case (_, offset) => offset
+        }))
     }.evalTap {
       case (n, _) => logger.info(s"Recorded $n progress updates")
     }
     val resultStream = resultConsumer.stream.evalMap { chunk =>
-      recordTransferResults(chunk.map(_._1))
-        .map(_ -> CommittableOffsetBatch.fromFoldable(chunk.map(_._2)))
+      recordTransferResults(chunk.map { case (result, _) => result })
+        .map(_ -> CommittableOffsetBatch.fromFoldable(chunk.map {
+          case (_, offset) => offset
+        }))
     }.evalTap {
       case (n, _) => logger.info(s"Recorded $n transfer results")
     }
