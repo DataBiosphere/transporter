@@ -5,8 +5,8 @@ import pureconfig.generic.semiauto.deriveReader
 
 case class KafkaConfig(
   connection: ConnectionConfig,
-  admin: AdminConfig,
-  consumer: ConsumerConfig
+  consumer: ConsumerConfig,
+  topics: TopicConfig
 )
 
 object KafkaConfig {

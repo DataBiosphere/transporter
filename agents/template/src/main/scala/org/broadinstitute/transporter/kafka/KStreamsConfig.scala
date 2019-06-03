@@ -4,13 +4,18 @@ import java.util.Properties
 
 import org.apache.kafka.streams.StreamsConfig
 import org.apache.kafka.streams.errors.LogAndFailExceptionHandler
+import org.broadinstitute.transporter.kafka.config.TopicConfig
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
 import scala.collection.JavaConverters._
 
 /** Configuration describing how a Transporter agent should set up Kafka streams. */
-case class KStreamsConfig(applicationId: String, bootstrapServers: List[String]) {
+case class KStreamsConfig(
+  applicationId: String,
+  bootstrapServers: List[String],
+  topics: TopicConfig
+) {
 
   /**
     * Convert this config to a map mirroring the properties required by Kafka's API.

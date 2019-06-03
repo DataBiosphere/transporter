@@ -13,7 +13,7 @@ It should be reliable (and hopefully efficient!) to use as-is. If not, please
 file a bug report so we can improve transfers across the board!
 
 ## Expected schema
-Use this JSON schema to initialize Transporter queues for this agent:
+Use this JSON schema to configure a Manager paired with this agent:
 ```json
 {
   "$schema": "http://json-schema.org/draft-04/schema",

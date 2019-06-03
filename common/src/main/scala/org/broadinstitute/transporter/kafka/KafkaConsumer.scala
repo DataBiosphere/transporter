@@ -2,15 +2,19 @@ package org.broadinstitute.transporter.kafka
 
 import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
-import fs2.Chunk
-import fs2.kafka.{AutoOffsetReset, ConsumerSettings, Deserializer}
-import fs2.kafka.{KafkaConsumer => KConsumer}
+import fs2.{Chunk, Stream}
+import fs2.kafka.{
+  AutoOffsetReset,
+  CommittableOffset,
+  ConsumerSettings,
+  Deserializer,
+  KafkaConsumer => KConsumer
+}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.kafka.config.{ConnectionConfig, ConsumerConfig}
-import org.broadinstitute.transporter.transfer.{TransferIds, TransferMessage}
+import org.broadinstitute.transporter.transfer.TransferMessage
 
 import scala.concurrent.duration.FiniteDuration
-import scala.util.matching.Regex
 
 /**
   * Client responsible for processing messages from a single Kafka subscription.
@@ -23,55 +27,33 @@ import scala.util.matching.Regex
 trait KafkaConsumer[M] {
 
   /**
-    * Run an effecting operation on every batch of messages pulled from the Kafka subscription.
+    * Stream emitting batches of messages pulled from Kafka, paired with their
+    * corresponding offsets.
     *
-    * The returned `IO` will run until cancelled. Messages will be committed
-    * in batches as they are successfully processed by `f`.
+    * Processors of this stream must commit each offset after processing its
+    * paired message to let the Kafka broker know that it's been handled.
     */
-  def runForeach(f: List[(TransferIds, M)] => IO[Unit]): IO[Unit]
+  def stream: Stream[IO, Chunk[(TransferMessage[M], CommittableOffset[IO])]]
 }
 
 object KafkaConsumer {
 
   /**
-    * Function which will use Kafka configuration to set up an active
-    * Kafka consumer.
-    */
-  type UnconfiguredConsumer[M] =
-    (ConnectionConfig, ConsumerConfig) => Resource[IO, KafkaConsumer[M]]
-
-  /**
     * Partially set up a Kafka consumer so that the eventually-produced
     * consumer will read messages from a single topic.
     */
-  def ofTopic[M](topic: String)(
+  def ofTopic[M](
+    topic: String,
+    connectionConfig: ConnectionConfig,
+    consumerConfig: ConsumerConfig
+  )(
     implicit cs: ContextShift[IO],
     t: Timer[IO],
     d: Deserializer.Attempt[TransferMessage[M]]
-  ): UnconfiguredConsumer[M] = buildAndSubscribe(_.subscribeTo(topic))
-
-  /**
-    * Partially set up a Kafka consumer so that the eventually-produced
-    * consumer will read messages from all topics matching a naming pattern.
-    */
-  def ofTopicPattern[M](topicPattern: Regex)(
-    implicit cs: ContextShift[IO],
-    t: Timer[IO],
-    d: Deserializer.Attempt[TransferMessage[M]]
-  ): UnconfiguredConsumer[M] = buildAndSubscribe(_.subscribe(topicPattern))
-
-  /**
-    * Produce a function which, given the needed configuration, will set up
-    * a Kakfa consumer and subscribe it to some number of topics.
-    */
-  private def buildAndSubscribe[M](subscribe: KConsumer[IO, _, _] => IO[Unit])(
-    implicit cs: ContextShift[IO],
-    t: Timer[IO],
-    d: Deserializer.Attempt[TransferMessage[M]]
-  ): UnconfiguredConsumer[M] = (connConfig, consumerConfig) => {
+  ): Resource[IO, KafkaConsumer[M]] = {
     val built = for {
       settings <- consumerSettings[Unit, Serdes.Attempt[TransferMessage[M]]](
-        connConfig,
+        connectionConfig,
         consumerConfig
       )
       consumer <- fs2.kafka.consumerResource[IO].using(settings)
@@ -80,9 +62,9 @@ object KafkaConsumer {
     }
 
     built.evalMap { c =>
-      subscribe(c).as(
+      c.subscribeTo(topic).as {
         new Impl(c, consumerConfig.maxRecordsPerBatch, consumerConfig.waitTimePerBatch)
-      )
+      }
     }
   }
 
@@ -115,11 +97,6 @@ object KafkaConsumer {
          * a topic before the consumer subscribes to it.
          */
         .withAutoOffsetReset(AutoOffsetReset.Earliest)
-        // Sets the frequency at which the Kafka libs re-query brokers for new topic info.
-        .withProperty(
-          "metadata.max.age.ms",
-          consumer.topicMetadataTtl.toMillis.toString
-        )
         // No "official" recommendation on these values, we can tweak as we see fit.
         .withRequestTimeout(conn.requestTimeout)
         .withCloseTimeout(conn.closeTimeout)
@@ -131,6 +108,11 @@ object KafkaConsumer {
     * @param consumer client which can pull "raw" messages from Kafka.
     *                 NOTE: This class assumes a subscription has already
     *                 been initialized in the consumer
+    * @param maxPerBatch max number of messages to pull from Kafka before emitting
+    *                    the accumulated batch to downstream processors
+    * @param waitTimePerBatch max time to wait for the buffer to fill to `maxPerBatch`
+    *                         before emitting what's been received so far to downstream
+    *                         processors
     */
   private[kafka] class Impl[M](
     consumer: KConsumer[IO, Unit, Serdes.Attempt[TransferMessage[M]]],
@@ -141,7 +123,7 @@ object KafkaConsumer {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def runForeach(f: List[(TransferIds, M)] => IO[Unit]): IO[Unit] =
+    override def stream: Stream[IO, Chunk[(TransferMessage[M], CommittableOffset[IO])]] =
       consumer.stream.evalTap { message =>
         logger.info(s"Got message from topic ${message.record.topic}")
       }.map { message =>
@@ -149,17 +131,7 @@ object KafkaConsumer {
       }.evalTap {
         case Right((m, _)) => logger.debug(s"Decoded message from Kafka: $m")
         case Left(err)     => logger.error(err)("Failed to decode Kafka message")
-      }.rethrow
-        .groupWithin(maxPerBatch, waitTimePerBatch)
-        .evalMap { chunk =>
-          // There's probably a more efficient way to do this, but I doubt
-          // it'll have noticeable impact unless `maxRecords` is huge.
-          val (attempts, offsets) = chunk.toList.unzip
-          f(attempts.map(m => (m.ids, m.message))).as(Chunk.iterable(offsets))
-        }
-        .through(fs2.kafka.commitBatchChunk)
-        .compile
-        .drain
+      }.rethrow.groupWithin(maxPerBatch, waitTimePerBatch)
   }
 
 }

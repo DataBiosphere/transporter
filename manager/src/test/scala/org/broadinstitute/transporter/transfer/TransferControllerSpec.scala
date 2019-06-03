@@ -4,28 +4,23 @@ import java.sql.Timestamp
 import java.time.{Instant, OffsetDateTime, ZoneId}
 import java.util.UUID
 
-import cats.effect.{IO, Timer}
+import cats.effect.IO
 import cats.implicits._
 import doobie._
 import doobie.implicits._
-import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.error._
-import org.broadinstitute.transporter.kafka.KafkaProducer
 import org.broadinstitute.transporter.transfer.api._
+import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.EitherValues
-
-import scala.concurrent.ExecutionContext
 
 class TransferControllerSpec extends PostgresSpec with MockFactory with EitherValues {
   import org.broadinstitute.transporter.db.DoobieInstances._
 
-  private val queueId = UUID.randomUUID()
-  private val queueName = "the-queue"
-  private val queueSchema = json"""{ "type": "object" }"""
-  private val queueConcurrency = 3
+  private val requestSchema =
+    json"""{ "type": "object" }""".as[TransferSchema].right.value
 
   private val request1Id = UUID.randomUUID()
   private val request1Transfers = List.tabulate(10) { i =>
@@ -37,46 +32,31 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 
-  private val kafka = mock[KafkaProducer[Json]]
-
-  private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
-
   def withController(test: (Transactor[IO], TransferController) => IO[Any]): Unit = {
     val tx = transactor
-    test(tx, new TransferController(tx, kafka)).unsafeRunSync()
+    test(tx, new TransferController(requestSchema, tx)).unsafeRunSync()
     ()
   }
 
-  def withQueue(test: (Transactor[IO], TransferController) => IO[Any]): Unit =
-    withController { (tx, controller) =>
-      sql"""insert into queues
-          (id, name, request_topic, progress_topic, response_topic, request_schema, max_in_flight, partition_count)
-          values
-          ($queueId, $queueName, 'requests', 'progress', 'responses', $queueSchema, $queueConcurrency, 1)""".update.run
-        .transact(tx)
-        .void
-        .flatMap(_ => test(tx, controller))
-    }
-
   def withRequest(test: (Transactor[IO], TransferController) => IO[Any]): Unit =
-    withQueue { (tx, controller) =>
+    withController { (tx, controller) =>
       val setup = for {
         _ <- List(request1Id, request2Id).traverse_ { id =>
-          sql"insert into transfer_requests (id, queue_id) values ($id, $queueId)".update.run.void
+          sql"insert into transfer_requests (id) values ($id)".update.run.void
         }
         _ <- request1Transfers.traverse_ {
           case (id, body) =>
             sql"""insert into transfers
-                  (id, request_id, body, status)
+                  (id, request_id, body, status, steps_run)
                   values
-                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus})""".update.run.void
+                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
         }
         _ <- request2Transfers.traverse_ {
           case (id, body) =>
             sql"""insert into transfers
-                  (id, request_id, body, status)
+                  (id, request_id, body, status, steps_run)
                   values
-                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus})""".update.run.void
+                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
         }
       } yield ()
 
@@ -88,7 +68,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
   behavior of "TransferController"
 
-  it should "record new transfers with well-formed requests" in withQueue {
+  it should "record new transfers with well-formed requests" in withController {
     (tx, controller) =>
       val transferCount = 10
       val request = BulkRequest(List.tabulate(transferCount)(i => json"""{ "i": $i }"""))
@@ -98,9 +78,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           countRequests.query[Long].unique,
           countTransfers.query[Long].unique
         ).tupled.transact(tx)
-        ack <- controller.recordTransfer(queueName, request)
+        ack <- controller.recordTransfer(request)
         (postRequests, postTransfers) <- (
-          (countRequests ++ fr"where id = ${ack.id} and queue_id = $queueId")
+          (countRequests ++ fr"where id = ${ack.id}")
             .query[Long]
             .unique,
           (countTransfers ++ fr"where request_id = ${ack.id}").query[Long].unique
@@ -114,7 +94,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "not record new transfers with malformed requests" in withQueue {
+  it should "not record new transfers with malformed requests" in withController {
     (tx, controller) =>
       val transferCount = 10
       val request = BulkRequest(List.tabulate(transferCount)(i => json"""[$i]"""))
@@ -124,9 +104,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           countRequests.query[Long].unique,
           countTransfers.query[Long].unique
         ).tupled.transact(tx)
-        ackOrErr <- controller.recordTransfer(queueName, request).attempt
+        ackOrErr <- controller.recordTransfer(request).attempt
         (postRequests, postTransfers) <- (
-          (countRequests ++ fr"where queue_id = $queueId").query[Long].unique,
+          countRequests.query[Long].unique,
           countTransfers.query[Long].unique
         ).tupled.transact(tx)
       } yield {
@@ -138,34 +118,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "not record new transfers under nonexistent queues" in withController {
-    (tx, controller) =>
-      val transferCount = 10
-      val request = BulkRequest(List.tabulate(transferCount)(i => json"""[$i]"""))
-
-      for {
-        (initRequests, initTransfers) <- (
-          countRequests.query[Long].unique,
-          countTransfers.query[Long].unique
-        ).tupled.transact(tx)
-        ackOrErr <- controller.recordTransfer(queueName, request).attempt
-        (postRequests, postTransfers) <- (
-          (countRequests ++ fr"where queue_id = $queueId").query[Long].unique,
-          countTransfers.query[Long].unique
-        ).tupled.transact(tx)
-      } yield {
-        initRequests shouldBe 0
-        initTransfers shouldBe 0
-        ackOrErr.left.value shouldBe NoSuchQueue(queueName)
-        postRequests shouldBe 0
-        postTransfers shouldBe 0
-      }
-  }
-
   it should "get summaries for registered transfers" in withRequest { (_, controller) =>
     for {
-      summary1 <- controller.lookupRequestStatus(queueName, request1Id)
-      summary2 <- controller.lookupRequestStatus(queueName, request2Id)
+      summary1 <- controller.lookupRequestStatus(request1Id)
+      summary2 <- controller.lookupRequestStatus(request2Id)
     } yield {
       summary1 shouldBe RequestStatus(
         request1Id,
@@ -226,7 +182,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(queueName, request1Id)
+        summary <- controller.lookupRequestStatus(request1Id)
       } yield {
         summary shouldBe RequestStatus(
           request1Id,
@@ -276,7 +232,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(queueName, request1Id)
+        summary <- controller.lookupRequestStatus(request1Id)
       } yield {
         summary shouldBe RequestStatus(
           request1Id,
@@ -319,7 +275,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(queueName, request1Id)
+        summary <- controller.lookupRequestStatus(request1Id)
       } yield {
         summary shouldBe RequestStatus(
           request1Id,
@@ -362,7 +318,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(queueName, request1Id)
+        summary <- controller.lookupRequestStatus(request1Id)
       } yield {
         summary shouldBe RequestStatus(
           request1Id,
@@ -380,20 +336,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "fail to get summaries for requests under nonexistent queues" in withController {
+  it should "fail to get summaries for nonexistent requests" in withController {
     (_, controller) =>
       controller
-        .lookupRequestStatus(queueName, request1Id)
+        .lookupRequestStatus(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchQueue(queueName))
-  }
-
-  it should "fail to get summaries for nonexistent requests" in withQueue {
-    (_, controller) =>
-      controller
-        .lookupRequestStatus(queueName, request1Id)
-        .attempt
-        .map(_.left.value shouldBe NoSuchRequest(queueName, request1Id))
+        .map(_.left.value shouldBe NoSuchRequest(request1Id))
   }
 
   it should "get outputs of successful transfers for a request" in withRequest {
@@ -420,7 +368,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- transaction.transact(tx)
-        outputs <- controller.lookupRequestOutputs(queueName, request1Id)
+        outputs <- controller.lookupRequestOutputs(request1Id)
       } yield {
         outputs.id shouldBe request1Id
         outputs.info should contain theSameElementsAs toUpdate.map {
@@ -429,20 +377,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "fail to get outputs for requests under nonexistent queues" in withController {
+  it should "fail to get outputs for nonexistent requests" in withController {
     (_, controller) =>
       controller
-        .lookupRequestOutputs(queueName, request1Id)
+        .lookupRequestOutputs(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchQueue(queueName))
-  }
-
-  it should "fail to get outputs for nonexistent requests" in withQueue {
-    (_, controller) =>
-      controller
-        .lookupRequestOutputs(queueName, request1Id)
-        .attempt
-        .map(_.left.value shouldBe NoSuchRequest(queueName, request1Id))
+        .map(_.left.value shouldBe NoSuchRequest(request1Id))
   }
 
   it should "get outputs of failed transfers for a request" in withRequest {
@@ -469,7 +409,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- transaction.transact(tx)
-        outputs <- controller.lookupRequestFailures(queueName, request1Id)
+        outputs <- controller.lookupRequestFailures(request1Id)
       } yield {
         outputs.id shouldBe request1Id
         outputs.info should contain theSameElementsAs toUpdate.map {
@@ -478,20 +418,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "fail to get failures for requests under nonexistent queues" in withController {
+  it should "fail to get failures for nonexistent requests" in withController {
     (_, controller) =>
       controller
-        .lookupRequestFailures(queueName, request1Id)
+        .lookupRequestFailures(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchQueue(queueName))
-  }
-
-  it should "fail to get failures for nonexistent requests" in withQueue {
-    (_, controller) =>
-      controller
-        .lookupRequestFailures(queueName, request1Id)
-        .attempt
-        .map(_.left.value shouldBe NoSuchRequest(queueName, request1Id))
+        .map(_.left.value shouldBe NoSuchRequest(request1Id))
   }
 
   it should "reconsider failed transfers in a request" in withRequest {
@@ -504,7 +436,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         _ <- failed.traverse_ { id =>
           sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void
         }.transact(tx)
-        ack <- controller.reconsiderRequest(queueName, request1Id)
+        ack <- controller.reconsiderRequest(request1Id)
         n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
           .query[Long]
           .unique
@@ -515,20 +447,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "not reconsider failed transfers under a nonexistent queue" in withController {
+  it should "not reconsider failed transfers in a nonexistent request" in withController {
     (_, controller) =>
       controller
-        .reconsiderRequest(queueName, request1Id)
+        .lookupRequestFailures(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchQueue(queueName))
-  }
-
-  it should "not reconsider failed transfers in a nonexistent request" in withQueue {
-    (_, controller) =>
-      controller
-        .lookupRequestFailures(queueName, request1Id)
-        .attempt
-        .map(_.left.value shouldBe NoSuchRequest(queueName, request1Id))
+        .map(_.left.value shouldBe NoSuchRequest(request1Id))
   }
 
   it should "not reconsider failures in an unrelated request" in withRequest {
@@ -541,7 +465,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         _ <- failed.traverse_ { id =>
           sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void
         }.transact(tx)
-        ack <- controller.reconsiderRequest(queueName, request2Id)
+        ack <- controller.reconsiderRequest(request2Id)
         n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
           .query[Long]
           .unique
@@ -558,18 +482,18 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     val updated = submitted.plusMillis(30000)
 
     for {
-      initInfo <- controller.lookupTransferDetails(queueName, request1Id, id)
+      initInfo <- controller.lookupTransferDetails(request1Id, id)
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Submitted: TransferStatus},
                  submitted_at = ${Timestamp.from(submitted)}
                  where id = $id""".update.run.void.transact(tx)
-      submittedInfo <- controller.lookupTransferDetails(queueName, request1Id, id)
+      submittedInfo <- controller.lookupTransferDetails(request1Id, id)
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Succeeded: TransferStatus},
                  updated_at = ${Timestamp.from(updated)},
                  info = '{}'
                  where id = $id""".update.run.void.transact(tx)
-      updatedInfo <- controller.lookupTransferDetails(queueName, request1Id, id)
+      updatedInfo <- controller.lookupTransferDetails(request1Id, id)
     } yield {
       initInfo shouldBe TransferDetails(
         id,
@@ -598,323 +522,21 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     }
   }
 
-  it should "fail to get details under a nonexistent queue" in withController {
+  it should "fail to get details under a nonexistent request" in withController {
     (_, controller) =>
       controller
-        .lookupTransferDetails(queueName, request1Id, UUID.randomUUID())
+        .lookupTransferDetails(request1Id, UUID.randomUUID())
         .attempt
-        .map(_.left.value shouldBe NoSuchQueue(queueName))
-  }
-
-  it should "fail to get details under a nonexistent request" in withQueue {
-    (_, controller) =>
-      controller
-        .lookupTransferDetails(queueName, request1Id, UUID.randomUUID())
-        .attempt
-        .map(_.left.value shouldBe NoSuchRequest(queueName, request1Id))
+        .map(_.left.value shouldBe NoSuchRequest(request1Id))
   }
 
   it should "fail to get details for a nonexistent transfer" in withRequest {
     (_, controller) =>
       controller
-        .lookupTransferDetails(queueName, request1Id, request2Transfers.head._1)
+        .lookupTransferDetails(request1Id, request2Transfers.head._1)
         .attempt
         .map(
-          _.left.value shouldBe NoSuchTransfer(
-            queueName,
-            request1Id,
-            request2Transfers.head._1
-          )
+          _.left.value shouldBe NoSuchTransfer(request1Id, request2Transfers.head._1)
         )
-  }
-
-  it should "submit batches of eligible transfers to Kafka" in withRequest {
-    (tx, controller) =>
-      (kafka.submit _)
-        .expects(where { list: List[(String, List[(TransferIds, Json)])] =>
-          list.length == 1 && {
-            val (queueTopic, queueSubmitted) = list.head
-
-            queueTopic == "requests" &&
-            queueSubmitted.length == queueConcurrency &&
-            queueSubmitted.forall {
-              case (TransferIds(queue, request, transfer), body) =>
-                queue == queueId &&
-                  request == request1Id &&
-                  request1Transfers.contains(transfer -> body)
-            }
-          }
-        })
-        .returning(IO.unit)
-      (kafka.submit _).expects(Nil).returning(IO.unit)
-
-      for {
-        _ <- controller.submitEligibleTransfers
-        submitted <- sql"""select id, submitted_at
-                           from transfers
-                           where status = ${TransferStatus.Submitted: TransferStatus}"""
-          .query[(UUID, Option[OffsetDateTime])]
-          .to[List]
-          .transact(tx)
-        _ <- controller.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
-          .query[Long]
-          .unique
-          .transact(tx)
-      } yield {
-        submitted.length shouldBe queueConcurrency
-        submitted.foreach {
-          case (id, submittedAt) =>
-            request1Transfers.map(_._1) should contain(id)
-            submittedAt.isDefined shouldBe true
-        }
-        totalSubmitted shouldBe submitted.length
-      }
-  }
-
-  it should "not mark transfers as submitted if producing to Kafka fails" in withRequest {
-    (tx, controller) =>
-      val err = new RuntimeException("BOOM")
-      (kafka.submit _).expects(*).returning(IO.raiseError(err))
-
-      for {
-        attempt <- controller.submitEligibleTransfers.attempt
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
-          .query[Long]
-          .unique
-          .transact(tx)
-      } yield {
-        attempt.left.value shouldBe err
-        totalSubmitted shouldBe 0
-      }
-  }
-
-  it should "not double-submit transfers on concurrent access" in withRequest {
-    (tx, controller) =>
-      (kafka.submit _)
-        .expects(where { list: List[(String, List[(TransferIds, Json)])] =>
-          list.length == 1 && list.head._2.length == queueConcurrency
-        })
-        .returning(IO.unit)
-      (kafka.submit _).expects(Nil).twice().returning(IO.unit)
-
-      for {
-        _ <- List.fill(3)(controller.submitEligibleTransfers).parSequence_
-        submitted <- sql"""select id, submitted_at
-                           from transfers
-                           where status = ${TransferStatus.Submitted: TransferStatus}"""
-          .query[(UUID, Option[OffsetDateTime])]
-          .to[List]
-          .transact(tx)
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
-          .query[Long]
-          .unique
-          .transact(tx)
-      } yield {
-        submitted.length shouldBe queueConcurrency
-        submitted.foreach {
-          case (id, submittedAt) =>
-            request1Transfers.map(_._1) should contain(id)
-            submittedAt.isDefined shouldBe true
-        }
-        totalSubmitted shouldBe submitted.length
-      }
-  }
-
-  it should "not crash if more than max concurrent transfers end up being submitted" in withRequest {
-    (tx, controller) =>
-      val preSubmitted = request1Transfers.map(_._1).take(queueConcurrency * 2)
-
-      (kafka.submit _).expects(Nil).returning(IO.unit)
-
-      for {
-        _ <- preSubmitted.traverse_ { id =>
-          sql"""update transfers
-                set status = ${TransferStatus.Submitted: TransferStatus}
-                where id = $id""".update.run.void
-        }.transact(tx)
-        _ <- controller.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
-          .query[Long]
-          .unique
-          .transact(tx)
-      } yield {
-        totalSubmitted shouldBe preSubmitted.length
-      }
-  }
-
-  it should "count in-progress transfers when sweeping for submissions" in withRequest {
-    (tx, controller) =>
-      val inProgress = request1Transfers.map(_._1).take(queueConcurrency)
-
-      (kafka.submit _).expects(Nil).returning(IO.unit)
-
-      for {
-        _ <- inProgress.traverse_ { id =>
-          sql"""update transfers
-              set status = ${TransferStatus.InProgress: TransferStatus}
-              where id = $id""".update.run.void
-        }.transact(tx)
-        _ <- controller.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*) from transfers
-                             where status = ${TransferStatus.Submitted: TransferStatus}"""
-          .query[Long]
-          .unique
-          .transact(tx)
-      } yield {
-        totalSubmitted shouldBe 0
-      }
-  }
-
-  it should "record transfer results" in withRequest { (tx, controller) =>
-    val updates = request1Transfers.zipWithIndex.collect {
-      case ((id, _), i) if i % 3 != 0 =>
-        val result =
-          if (i % 3 == 1) TransferResult.Success else TransferResult.FatalFailure
-        (TransferIds(queueId, request1Id, id), result -> json"""{ "i+1": $i }""")
-    }
-
-    for {
-      _ <- controller.recordTransferResults(updates)
-      updated <- sql"select id, status, info from transfers where updated_at is not null"
-        .query[(UUID, TransferStatus, Json)]
-        .to[List]
-        .transact(tx)
-    } yield {
-      updated should contain theSameElementsAs updates.map {
-        case (ids, (res, info)) =>
-          (
-            ids.transfer,
-            res match {
-              case TransferResult.Success      => TransferStatus.Succeeded
-              case TransferResult.FatalFailure => TransferStatus.Failed
-            },
-            info
-          )
-      }
-    }
-  }
-
-  it should "not update results if IDs are mismatched" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          val result =
-            if (i % 3 == 1) TransferResult.Success else TransferResult.FatalFailure
-          (TransferIds(queueId, request2Id, id), result -> json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- controller.recordTransferResults(updates)
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated shouldBe empty
-      }
-  }
-
-  it should "mark submitted transfers as in progress" in withRequest { (tx, controller) =>
-    val updates = request1Transfers.zipWithIndex.collect {
-      case ((id, _), i) if i % 3 != 0 =>
-        (TransferIds(queueId, request1Id, id), json"""{ "i+1": $i }""")
-    }
-
-    for {
-      _ <- updates.traverse_ {
-        case (ids, _) =>
-          sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
-            .transact(tx)
-      }
-      _ <- controller.markTransfersInProgress(updates)
-      updated <- sql"select id, status, info from transfers where updated_at is not null"
-        .query[(UUID, TransferStatus, Json)]
-        .to[List]
-        .transact(tx)
-    } yield {
-      updated should contain theSameElementsAs updates.map {
-        case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
-      }
-    }
-  }
-
-  it should "keep the 'updated_at' and 'info' fields of in-progress transfers up-to-date" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(queueId, request1Id, id), json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- updates.traverse_ {
-          case (ids, _) =>
-            sql"""update transfers set
-                  status = 'inprogress',
-                  updated_at = TO_TIMESTAMP(0),
-                  info = '{}'
-                  where id = ${ids.transfer}""".update.run.void
-              .transact(tx)
-        }
-        _ <- controller.markTransfersInProgress(updates)
-        updated <- sql"select id, status, info from transfers where updated_at > TO_TIMESTAMP(0)"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated should contain theSameElementsAs updates.map {
-          case (ids, info) => (ids.transfer, TransferStatus.InProgress, info)
-        }
-      }
-  }
-
-  it should "not mark transfers in a terminal state to in progress" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(queueId, request1Id, id), json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- updates.traverse_ {
-          case (ids, _) =>
-            sql"update transfers set status = 'succeeded' where id = ${ids.transfer}".update.run.void
-              .transact(tx)
-        }
-        _ <- controller.markTransfersInProgress(updates)
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated shouldBe empty
-      }
-  }
-
-  it should "not mark transfers as in progress if IDs are mismatched" in withRequest {
-    (tx, controller) =>
-      val updates = request1Transfers.zipWithIndex.collect {
-        case ((id, _), i) if i % 3 != 0 =>
-          (TransferIds(queueId, request2Id, id), json"""{ "i+1": $i }""")
-      }
-
-      for {
-        _ <- updates.traverse_ {
-          case (ids, _) =>
-            sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
-              .transact(tx)
-        }
-        _ <- controller.markTransfersInProgress(updates)
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
-          .query[(UUID, TransferStatus, Json)]
-          .to[List]
-          .transact(tx)
-      } yield {
-        updated shouldBe empty
-      }
   }
 }

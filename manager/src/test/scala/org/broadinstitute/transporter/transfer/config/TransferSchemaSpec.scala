@@ -1,26 +1,26 @@
-package org.broadinstitute.transporter.queue
+package org.broadinstitute.transporter.transfer.config
 
 import io.circe.literal._
 import io.circe.syntax._
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
-class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
+class TransferSchemaSpec extends FlatSpec with Matchers with EitherValues {
   behavior of "QueueSchema"
 
   private val draft4Schema = json"""{
-    "$$schema": ${QueueSchema.schemaUrl(4)},
+    "$$schema": ${TransferSchema.schemaUrl(4)},
     "id": "#draft4-example",
     "type": "object"
   }"""
 
   private val draft6Schema = json"""{
-    "$$schema": ${QueueSchema.schemaUrl(6)},
+    "$$schema": ${TransferSchema.schemaUrl(6)},
     "$$id": "#draft6-example",
     "type": "object"
   }"""
 
   private val draft7Schema = json"""{
-    "$$schema": ${QueueSchema.schemaUrl(7)},
+    "$$schema": ${TransferSchema.schemaUrl(7)},
     "$$id": "#draft7-example",
     "type": ["object", "boolean"]
   }"""
@@ -58,31 +58,31 @@ class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
   }"""
 
   it should "parse draft-4 JSON schemas" in {
-    val schema = draft4Schema.as[QueueSchema].right.value
+    val schema = draft4Schema.as[TransferSchema].right.value
     schema.validate(json"{}").isValid shouldBe true
     schema.validate(json"[]").isValid shouldBe false
   }
 
   it should "parse draft-6 JSON schemas" in {
-    val schema = draft6Schema.as[QueueSchema].right.value
+    val schema = draft6Schema.as[TransferSchema].right.value
     schema.validate(json"{}").isValid shouldBe true
     schema.validate(json"[]").isValid shouldBe false
   }
 
   it should "parse draft-7 JSON schemas" in {
-    val schema = draft7Schema.as[QueueSchema].right.value
+    val schema = draft7Schema.as[TransferSchema].right.value
     schema.validate(json"{}").isValid shouldBe true
     schema.validate(json"[]").isValid shouldBe false
   }
 
   it should "parse real JSON schemas" in {
     List(cloudCopySchema, echoSchema).foreach { schema =>
-      schema.as[QueueSchema].isRight shouldBe true
+      schema.as[TransferSchema].isRight shouldBe true
     }
   }
 
   it should "parse JSON schemas into validators" in {
-    val schema = cloudCopySchema.as[QueueSchema].right.value
+    val schema = cloudCopySchema.as[TransferSchema].right.value
 
     val goodRequest1 =
       json"""{
@@ -127,30 +127,30 @@ class QueueSchemaSpec extends FlatSpec with Matchers with EitherValues {
   }
 
   it should "not lose information when converting JSON types" in {
-    cloudCopySchema.as[QueueSchema].right.value.asJson shouldBe cloudCopySchema
+    cloudCopySchema.as[TransferSchema].right.value.asJson shouldBe cloudCopySchema
   }
 
   it should "validate null" in {
-    val schema = json"""{ "type": "null" }""".as[QueueSchema].right.value
+    val schema = json"""{ "type": "null" }""".as[TransferSchema].right.value
     schema.validate(json"null").isValid shouldBe true
     schema.validate(json"{}").isValid shouldBe false
   }
 
   it should "validate numbers" in {
-    val schema = json"""{ "type": "number" }""".as[QueueSchema].right.value
+    val schema = json"""{ "type": "number" }""".as[TransferSchema].right.value
     schema.validate(json"1.234567890").isValid shouldBe true
     schema.validate(json"null").isValid shouldBe false
   }
 
   it should "validate strings" in {
-    val schema = json"""{ "type": "string" }""".as[QueueSchema].right.value
+    val schema = json"""{ "type": "string" }""".as[TransferSchema].right.value
     schema.validate(json""""foo"""").isValid shouldBe true
     schema.validate(json"[]").isValid shouldBe false
   }
 
   it should "validate arrays" in {
     val schema = json"""{ "type": "array", "items": { "type": "number" } }"""
-      .as[QueueSchema]
+      .as[TransferSchema]
       .right
       .value
     schema.validate(json"[1, 2, 3, 4]").isValid shouldBe true

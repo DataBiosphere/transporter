@@ -15,35 +15,29 @@ import net.manub.embeddedkafka.EmbeddedKafkaConfig
 import net.manub.embeddedkafka.streams.EmbeddedKafkaStreamsAllInOne
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.broadinstitute.transporter.kafka.TransferStreamBuilder.UnhandledErrorInfo
-import org.broadinstitute.transporter.queue.QueueSchema
-import org.broadinstitute.transporter.queue.api.Queue
+import org.broadinstitute.transporter.kafka.config.TopicConfig
 import org.broadinstitute.transporter.transfer.{
   TransferIds,
   TransferMessage,
   TransferResult,
   TransferRunner
 }
-import org.scalatest.{EitherValues, FlatSpec, Matchers}
+import org.scalatest.{FlatSpec, Matchers}
 
 class TransferStreamBuilderSpec
     extends FlatSpec
     with Matchers
-    with EmbeddedKafkaStreamsAllInOne
-    with EitherValues {
+    with EmbeddedKafkaStreamsAllInOne {
 
   import TransferStreamBuilderSpec._
 
-  private val queue = Queue(
-    "test-queue",
+  private val topics = TopicConfig(
     "request-topic",
     "progress-topic",
-    "response-topic",
-    LoopSchema.as[QueueSchema].right.value,
-    2,
-    1
+    "result-topic"
   )
 
-  private val builder = new TransferStreamBuilder(queue)
+  private val builder = new TransferStreamBuilder(topics)
 
   private def embeddedConfig = {
     // Find unused ports to avoid port clashes between tests.
@@ -80,16 +74,17 @@ class TransferStreamBuilderSpec
     implicit val baseConfig: EmbeddedKafkaConfig = embeddedConfig
 
     val topology = builder.build(new LoopRunner(failInit, failStep)).unsafeRunSync()
-    val config = KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"))
+    val config =
+      KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"), topics)
 
     runStreams(
-      List(queue.requestTopic, queue.progressTopic, queue.responseTopic),
+      List(topics.requestTopic, topics.progressTopic, topics.resultTopic),
       topology,
       config.asMap
     ) {
 
       publishToKafka(
-        queue.requestTopic,
+        topics.requestTopic,
         requests.map((null: Array[Byte]) -> _.asJson.noSpaces)
       )
 
@@ -108,7 +103,7 @@ class TransferStreamBuilderSpec
       val consumer = newConsumer[Array[Byte], String]
 
       val results = consumer
-        .consumeLazily[TransferMessage[(TransferResult, Json)]](queue.responseTopic)
+        .consumeLazily[TransferMessage[(TransferResult, Json)]](topics.resultTopic)
         .take(requests.length)
         .toList
 
@@ -118,7 +113,7 @@ class TransferStreamBuilderSpec
     }
   }
 
-  private val ids = TransferIds(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
+  private val ids = TransferIds(UUID.randomUUID(), UUID.randomUUID())
 
   behavior of "TransferStream"
 

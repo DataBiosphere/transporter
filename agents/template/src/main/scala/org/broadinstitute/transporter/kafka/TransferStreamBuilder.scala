@@ -10,23 +10,23 @@ import io.circe.syntax._
 import org.apache.kafka.common.errors.SerializationException
 import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.Topology
-import org.apache.kafka.streams.scala.{Serdes => KSerdes, StreamsBuilder}
-import org.broadinstitute.transporter.queue.api.Queue
+import org.apache.kafka.streams.scala.{StreamsBuilder, Serdes => KSerdes}
+import org.broadinstitute.transporter.kafka.config.TopicConfig
 import org.broadinstitute.transporter.transfer.{
   TransferMessage,
   TransferResult,
   TransferRunner
 }
 
-class TransferStreamBuilder(queue: Queue) {
+class TransferStreamBuilder(topics: TopicConfig) {
   import org.apache.kafka.streams.scala.ImplicitConversions._
   import KSerdes._
   import TransferStreamBuilder._
 
   /**
     * Construct a stream topology which, when started, will pull requests
-    * from a Transporter queue, execute the requests using a runner,
-    * then push the results back to the Transporter manager.
+    * from a Kafka topic, execute the requests using a runner, then push the
+    * results back to the Transporter manager.
     */
   def build[In: Decoder, Progress: Encoder: Decoder, Out: Encoder](
     runner: TransferRunner[In, Progress, Out]
@@ -46,12 +46,12 @@ class TransferStreamBuilder(queue: Queue) {
     builder: StreamsBuilder,
     runner: TransferRunner[In, Progress, _]
   ): IO[StreamsBuilder] = {
-    val logger = org.log4s.getLogger(s"${queue.name}-transfer-init-logger")
+    val logger = org.log4s.getLogger("transfer-init-logger")
 
     for {
       Array(failures, successes) <- IO.delay {
         builder
-          .stream[Array[Byte], TransferMessage[Json]](queue.requestTopic)
+          .stream[Array[Byte], TransferMessage[Json]](topics.requestTopic)
           .mapValues { transfer =>
             val ids = transfer.ids
             val payload = transfer.message
@@ -71,7 +71,7 @@ class TransferStreamBuilder(queue: Queue) {
               )
               zeroProgress <- Either.catchNonFatal(runner.initialize(input))
             } yield {
-              zeroProgress
+              (0, zeroProgress)
             }
 
             initializedOrError.bimap(
@@ -95,8 +95,8 @@ class TransferStreamBuilder(queue: Queue) {
           }
           .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
       }
-      _ <- IO.delay(failures.mapValues(_.left.get.asJson).to(queue.responseTopic))
-      _ <- IO.delay(successes.mapValues(_.right.get.asJson).to(queue.progressTopic))
+      _ <- IO.delay(failures.mapValues(_.left.get.asJson).to(topics.resultTopic))
+      _ <- IO.delay(successes.mapValues(_.right.get.asJson).to(topics.progressTopic))
     } yield {
       builder
     }
@@ -106,12 +106,12 @@ class TransferStreamBuilder(queue: Queue) {
     builder: StreamsBuilder,
     runner: TransferRunner[_, Progress, Out]
   ): IO[StreamsBuilder] = {
-    val logger = org.log4s.getLogger(s"${queue.name}-transfer-step-logger")
+    val logger = org.log4s.getLogger("transfer-step-logger")
 
     for {
       Array(progresses, summaries) <- IO.delay {
         builder
-          .stream[Array[Byte], TransferMessage[Progress]](queue.progressTopic)
+          .stream[Array[Byte], TransferMessage[(Int, Progress)]](topics.progressTopic)
           .mapValues { progress =>
             val ids = progress.ids
 
@@ -119,8 +119,10 @@ class TransferStreamBuilder(queue: Queue) {
               s"Received incremental progress for transfer ${ids.transfer} from request ${ids.request}"
             )
 
+            val (stepsSoFar, message) = progress.message
+
             Either
-              .catchNonFatal(runner.step(progress.message))
+              .catchNonFatal(runner.step(message))
               .fold(
                 err => {
                   val message =
@@ -140,7 +142,7 @@ class TransferStreamBuilder(queue: Queue) {
                     s"Successfully ran transfer step for ${ids.transfer} from request ${ids.request}"
                   )
                   nextStepOrOutput.bimap(
-                    nextStep => TransferMessage(ids, nextStep.asJson),
+                    nextStep => TransferMessage(ids, (stepsSoFar + 1) -> nextStep.asJson),
                     output =>
                       TransferMessage(
                         ids,
@@ -152,18 +154,14 @@ class TransferStreamBuilder(queue: Queue) {
           }
           .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
       }
-      _ <- IO.delay(progresses.mapValues(_.left.get.asJson).to(queue.progressTopic))
-      _ <- IO.delay(summaries.mapValues(_.right.get.asJson).to(queue.responseTopic))
+      _ <- IO.delay(progresses.mapValues(_.left.get.asJson).to(topics.progressTopic))
+      _ <- IO.delay(summaries.mapValues(_.right.get.asJson).to(topics.resultTopic))
     } yield {
       builder
     }
   }
 }
 
-/**
-  * Kafka stream defining how the "request" and "response" topics
-  * of a Transporter queue should be plugged together.
-  */
 object TransferStreamBuilder {
 
   private[this] val parser = new JawnParser()

@@ -12,7 +12,7 @@ Since this agent isn't used in "real" projects, its code health is likely to lag
 Hopefully this will improve once we add integration tests which use this agent.
 
 ## Expected Schema
-Use this JSON schema to initialize Transporter queues for this agent:
+Use this JSON schema to configure a Manager paired with this agent:
 ```json
 {
   "$schema": "http://json-schema.org/draft-04/schema",

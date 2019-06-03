@@ -11,7 +11,7 @@ import fs2.kafka.{
 }
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.kafka.config.ConnectionConfig
-import org.broadinstitute.transporter.transfer.{TransferIds, TransferMessage}
+import org.broadinstitute.transporter.transfer.TransferMessage
 
 /**
   * Client responsible for pushing messages into Kafka topics.
@@ -21,12 +21,12 @@ import org.broadinstitute.transporter.transfer.{TransferIds, TransferMessage}
 trait KafkaProducer[M] {
 
   /**
-    * Submit batches of messages to Kafka topics.
+    * Submit a batch of messages to a Kafka topic.
     *
     * The returned `IO` will only complete when the produced
     * messages have been acknowledged by the Kafka cluster.
     */
-  def submit(messagesByTopic: List[(String, List[(TransferIds, M)])]): IO[Unit]
+  def submit(topic: String, messages: List[TransferMessage[M]]): IO[Unit]
 }
 
 object KafkaProducer {
@@ -78,16 +78,8 @@ object KafkaProducer {
 
     private val logger = Slf4jLogger.getLogger[IO]
 
-    override def submit(
-      messagesByTopic: List[(String, List[(TransferIds, M)])]
-    ): IO[Unit] = {
-      val records = messagesByTopic.flatMap {
-        case (topic, messages) =>
-          messages.map {
-            case (ids, message) =>
-              ProducerRecord(topic, (), TransferMessage(ids, message))
-          }
-      }
+    override def submit(topic: String, messages: List[TransferMessage[M]]): IO[Unit] = {
+      val records = messages.map(ProducerRecord(topic, (), _))
 
       for {
         _ <- logger.info(s"Submitting ${records.length} records to Kafka")
