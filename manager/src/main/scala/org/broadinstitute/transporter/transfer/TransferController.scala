@@ -72,7 +72,7 @@ class TransferController(
         .const(s"insert into $RequestsTable (id) values") ++ fr"(${UUID.randomUUID()})").update
         .withUniqueGeneratedKeys[UUID]("id")
       transferInfo = request.transfers.map { body =>
-        (UUID.randomUUID(), requestId, TransferStatus.Pending: TransferStatus, body, 0)
+        (UUID.randomUUID(), requestId, TransferStatus.Pending: TransferStatus, body, -1)
       }
       transferCount <- Update[(UUID, UUID, TransferStatus, Json, Int)](
         s"insert into $TransfersTable (id, request_id, status, body, steps_run) values (?, ?, ?, ?, ?)"

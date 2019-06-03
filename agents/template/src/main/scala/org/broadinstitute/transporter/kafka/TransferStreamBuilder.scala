@@ -71,7 +71,7 @@ class TransferStreamBuilder(topics: TopicConfig) {
               )
               zeroProgress <- Either.catchNonFatal(runner.initialize(input))
             } yield {
-              zeroProgress
+              (0, zeroProgress)
             }
 
             initializedOrError.bimap(
@@ -111,7 +111,7 @@ class TransferStreamBuilder(topics: TopicConfig) {
     for {
       Array(progresses, summaries) <- IO.delay {
         builder
-          .stream[Array[Byte], TransferMessage[Progress]](topics.progressTopic)
+          .stream[Array[Byte], TransferMessage[(Int, Progress)]](topics.progressTopic)
           .mapValues { progress =>
             val ids = progress.ids
 
@@ -119,8 +119,10 @@ class TransferStreamBuilder(topics: TopicConfig) {
               s"Received incremental progress for transfer ${ids.transfer} from request ${ids.request}"
             )
 
+            val (stepsSoFar, message) = progress.message
+
             Either
-              .catchNonFatal(runner.step(progress.message))
+              .catchNonFatal(runner.step(message))
               .fold(
                 err => {
                   val message =
@@ -140,7 +142,7 @@ class TransferStreamBuilder(topics: TopicConfig) {
                     s"Successfully ran transfer step for ${ids.transfer} from request ${ids.request}"
                   )
                   nextStepOrOutput.bimap(
-                    nextStep => TransferMessage(ids, nextStep.asJson),
+                    nextStep => TransferMessage(ids, (stepsSoFar + 1) -> nextStep.asJson),
                     output =>
                       TransferMessage(
                         ids,
