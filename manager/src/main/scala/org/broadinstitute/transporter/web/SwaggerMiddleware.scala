@@ -36,10 +36,26 @@ import scala.reflect.runtime.universe.typeOf
   */
 object SwaggerMiddleware {
 
-  /** Top-level route which should serve generated API docs. */
+  /** Top-level route which serves generated API docs. */
   private val apiDocsPath = "api-docs.json"
 
-  /** Top-level route which should serve the Swagger UI. */
+  /**
+    * Top-level route which serves the Swagger UI.
+    *
+    * Our swagger routes change every time we bump the UI's version, so we
+    * define stable aliases to expose in external systems / documentation.
+    */
+  private val stableUIPath = "swagger-ui"
+
+  /**
+    * Callback page for Google to redirect to on successful OAuth logins.
+    *
+    * Our swagger routes change every time we bump the UI's version, so we
+    * define stable aliases to expose in external systems / documentation.
+    */
+  private val stableOAuthRedirectPath = "oauth2-redirect"
+
+  /** Route which serves the Swagger UI. */
   private val apiUiPath =
     /*
      * Usually hard-coding a reference to `BuildInfo` makes things
@@ -49,7 +65,7 @@ object SwaggerMiddleware {
      */
     s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/index.html"
 
-  /** Callback page for Google to redirect to on successful OAuth logins. */
+  /** Route which serves the OAuth redirect logic for the Swagger UI. */
   private val oauthRedirectPath =
     s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/oauth2-redirect.html"
 
@@ -138,16 +154,15 @@ object SwaggerMiddleware {
              * Also replace the OAuth redirect URL here since it goes in the same method
              * call on the front-end, even if OAuth isn't going to be enabled.
              *
-             * NOTE: We redirect to a stable alias of '/oauth2-redirect' instead of the
-             * versioned HTML page in the resources jar because Google requires that
-             * allowable redirect URLs be white-listed in the cloud console, and this is
-             * easier to maintain than it would be to add a new white-listed URL every
-             * time we bump the Swagger UI's version.
+             * NOTE: We redirect to a stable alias instead of the versioned HTML page in the
+             * resources jar because Google requires that allowable redirect URLs be white-listed
+             * in the cloud console, and this is easier to maintain than it would be to add a new
+             * white-listed URL every time we bump the Swagger UI's version.
              */
             """url: "https://petstore.swagger.io/v2/swagger.json",""",
             s"""url: "/$apiDocsPath",
                |validatorUrl: null,
-               |oauth2RedirectUrl: window.location.origin + "/oauth2-redirect",""".stripMargin
+               |oauth2RedirectUrl: window.location.origin + "/$stableOAuthRedirectPath",""".stripMargin
           )
 
           /*
@@ -179,10 +194,10 @@ object SwaggerMiddleware {
     // Convenience routes for redirecting users to versioned Swagger routes.
     val swaggerUiRoutes = HttpRoutes.of[IO] {
       case GET -> Root =>
-        TemporaryRedirect(Location(uri"/api-docs"))
-      case GET -> Root / "api-docs" =>
+        TemporaryRedirect(Location(Uri.unsafeFromString(s"/$stableUIPath")))
+      case GET -> Root / segment if segment == stableUIPath =>
         TemporaryRedirect(Location(Uri.unsafeFromString(apiUiPath)))
-      case GET -> Root / "oauth2-redirect" =>
+      case GET -> Root / segment if segment == stableOAuthRedirectPath =>
         TemporaryRedirect(Location(Uri.unsafeFromString(oauthRedirectPath)))
     }
 

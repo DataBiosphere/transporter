@@ -20,7 +20,6 @@ import org.broadinstitute.transporter.web.config.OAuthConfig
 import org.http4s.circe.{CirceEntityDecoder, CirceInstances}
 import org.http4s.{EntityDecoder, EntityEncoder, Method}
 import org.http4s.rho.RhoRoutes
-import org.http4s.rho.swagger._
 
 /** Container for Transporter's API (eventually auth-protected) routes. */
 class ApiRoutes(
@@ -44,7 +43,7 @@ class ApiRoutes(
   private def api(m: Method) = {
     val base = m / "api" / "transporter" / "v1"
     if (withAuth) {
-      Map(OAuthConfig.AuthName -> OAuthConfig.AuthScopes) ^^ base
+      base.withSecurityScopes(Map(OAuthConfig.AuthName -> OAuthConfig.AuthScopes))
     } else {
       base
     }
