@@ -16,13 +16,17 @@ import org.broadinstitute.transporter.queue.api.{Queue, QueueParameters, QueueRe
 import org.broadinstitute.transporter.queue.QueueController
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.TransferController
+import org.broadinstitute.transporter.web.config.OAuthConfig
 import org.http4s.circe.{CirceEntityDecoder, CirceInstances}
 import org.http4s.{EntityDecoder, EntityEncoder, Method}
 import org.http4s.rho.RhoRoutes
 
 /** Container for Transporter's API (eventually auth-protected) routes. */
-class ApiRoutes(queueController: QueueController, transferController: TransferController)
-    extends RhoRoutes[IO]
+class ApiRoutes(
+  queueController: QueueController,
+  transferController: TransferController,
+  withAuth: Boolean
+) extends RhoRoutes[IO]
     with CirceEntityDecoder
     with CirceInstances {
 
@@ -36,7 +40,14 @@ class ApiRoutes(queueController: QueueController, transferController: TransferCo
   private implicit val statusEncoder: EntityEncoder[IO, RequestStatus] = jsonEncoderOf
 
   /** Build an API route prefix beginning with the given HTTP method. */
-  private def api(m: Method) = m / "api" / "transporter" / "v1"
+  private def api(m: Method) = {
+    val base = m / "api" / "transporter" / "v1"
+    if (withAuth) {
+      base.withSecurityScopes(Map(OAuthConfig.AuthName -> OAuthConfig.AuthScopes))
+    } else {
+      base
+    }
+  }
 
   /** Build an appropriate response for an error from the main app code. */
   private def buildResponse[Out](exec: IO[Out], iseMessage: String)(
