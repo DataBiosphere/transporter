@@ -75,9 +75,9 @@ val enumeratumVersion = "1.5.13"
 
 // Web.
 val http4sVersion = "0.20.1"
-val rhoVersion = "0.19.0-M8"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.22.2"
+val tapirVersion = "0.8.2"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
@@ -220,10 +220,14 @@ lazy val `transporter-manager` = project
   .settings(
     libraryDependencies ++= Seq(
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
+      "com.softwaremill.tapir" %% "tapir-core" % tapirVersion,
+      "com.softwaremill.tapir" %% "tapir-json-circe" % tapirVersion,
+      "com.softwaremill.tapir" %% "tapir-http4s-server" % tapirVersion,
+      "com.softwaremill.tapir" %% "tapir-openapi-docs" % tapirVersion,
+      "com.softwaremill.tapir" %% "tapir-openapi-circe-yaml" % tapirVersion,
       "org.http4s" %% "http4s-blaze-server" % http4sVersion,
       "org.http4s" %% "http4s-circe" % http4sVersion,
       "org.http4s" %% "http4s-dsl" % http4sVersion,
-      "org.http4s" %% "rho-swagger" % rhoVersion,
       "org.tpolecat" %% "doobie-core" % doobieVersion,
       "org.tpolecat" %% "doobie-hikari" % doobieVersion,
       "org.tpolecat" %% "doobie-postgres" % doobieVersion,

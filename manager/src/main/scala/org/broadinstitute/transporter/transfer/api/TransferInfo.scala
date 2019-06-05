@@ -2,8 +2,8 @@ package org.broadinstitute.transporter.transfer.api
 
 import java.util.UUID
 
-import io.circe.{Encoder, Json}
-import io.circe.derivation.deriveEncoder
+import io.circe.{Decoder, Encoder, Json}
+import io.circe.derivation.{deriveDecoder, deriveEncoder}
 
 /**
   * Info about a transfer job collected by the manager.
@@ -14,5 +14,6 @@ import io.circe.derivation.deriveEncoder
 case class TransferInfo(id: UUID, info: Json)
 
 object TransferInfo {
+  implicit val decoder: Decoder[TransferInfo] = deriveDecoder
   implicit val encoder: Encoder[TransferInfo] = deriveEncoder
 }

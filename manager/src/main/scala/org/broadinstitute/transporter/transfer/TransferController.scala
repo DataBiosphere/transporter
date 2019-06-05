@@ -15,7 +15,7 @@ import doobie.util.update.Update
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.{Constants, DbLogHandler, DoobieInstances}
-import org.broadinstitute.transporter.error.{
+import org.broadinstitute.transporter.error.ApiError.{
   InvalidRequest,
   NoSuchRequest,
   NoSuchTransfer
@@ -91,7 +91,7 @@ class TransferController(
           logger
             .error(s"Requests failed validation:")
             .flatMap(_ => errs.traverse_(e => logger.error(e.getMessage)))
-            .flatMap(_ => IO.raiseError(InvalidRequest(errs)))
+            .flatMap(_ => IO.raiseError(InvalidRequest(errs.map(_.getMessage))))
       }
     } yield ()
 

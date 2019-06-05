@@ -9,11 +9,9 @@ import org.broadinstitute.transporter.transfer.{
   TransferListener,
   TransferSubmitter
 }
-import org.broadinstitute.transporter.web.{ApiRoutes, InfoRoutes, SwaggerMiddleware}
-import org.http4s.implicits._
-import org.http4s.rho.swagger.models.Info
+import org.broadinstitute.transporter.web.WebApi
 import org.http4s.server.blaze.BlazeServerBuilder
-import org.http4s.server.middleware.Logger
+
 import pureconfig.module.catseffect._
 
 import scala.concurrent.ExecutionContext
@@ -31,13 +29,6 @@ object TransporterManager extends IOApp.WithContext {
   override val executionContextResource: Resource[SyncIO, ExecutionContext] =
     ExecutionContexts.fixedThreadPool[SyncIO](Runtime.getRuntime.availableProcessors)
 
-  /** Top-level info to report about the app in its auto-generated documentation. */
-  private val appInfo = Info(
-    title = "Transporter API",
-    version = BuildInfo.version,
-    description = Some("Bulk file-transfer system for data ingest / delivery")
-  )
-
   /** [[IOApp]] equivalent of `main`. */
   override def run(args: List[String]): IO[ExitCode] =
     loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter").flatMap { config =>
@@ -54,21 +45,16 @@ object TransporterManager extends IOApp.WithContext {
         )
         listener <- TransferListener.resource(transactor, config.kafka)
       } yield {
-        val appRoutes = SwaggerMiddleware(
-          headerInfo = appInfo,
-          unauthedRoutes = new InfoRoutes(new InfoController(appInfo.version, transactor)),
-          apiRoutes = new ApiRoutes(
-            new TransferController(config.transfer.schema, transactor),
-            config.web.googleOauth.isDefined
-          ),
+        val appRoutes = new WebApi(
+          new InfoController(BuildInfo.version, transactor),
+          new TransferController(config.transfer.schema, transactor),
           googleAuthConfig = config.web.googleOauth,
           blockingEc = blockingEc
-        ).orNotFound
-        val http = Logger.httpApp(logHeaders = true, logBody = true)(appRoutes)
+        )
 
         val server = BlazeServerBuilder[IO]
           .bindHttp(port = config.web.port, host = config.web.host)
-          .withHttpApp(http)
+          .withHttpApp(appRoutes.app)
 
         server.serve
           .concurrently(submitter.sweepSubmissions)

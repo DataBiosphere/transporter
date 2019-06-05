@@ -3,7 +3,7 @@ package org.broadinstitute.transporter.transfer
 import doobie.postgres.{Instances => PostgresInstances}
 import doobie.util.Meta
 import enumeratum.{CirceEnum, Enum, EnumEntry}
-import io.circe.KeyEncoder
+import io.circe.{KeyDecoder, KeyEncoder}
 
 import scala.collection.immutable.IndexedSeq
 
@@ -29,6 +29,8 @@ object TransferStatus
 
   implicit val statusEncoder: KeyEncoder[TransferStatus] =
     KeyEncoder.encodeKeyString.contramap(_.entryName)
+  implicit val statusDecoder: KeyDecoder[TransferStatus] =
+    namesToValuesMap.get
 
   /** Initial status assigned to all transfers when they are persisted by the manager. */
   case object Pending extends TransferStatus

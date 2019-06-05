@@ -3,8 +3,8 @@ package org.broadinstitute.transporter.transfer.api
 import java.time.OffsetDateTime
 import java.util.UUID
 
-import io.circe.Encoder
-import io.circe.derivation.deriveEncoder
+import io.circe.{Decoder, Encoder}
+import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import org.broadinstitute.transporter.transfer.TransferStatus
 
 /**
@@ -30,5 +30,6 @@ case class RequestStatus(
 )
 
 object RequestStatus {
+  implicit val decoder: Decoder[RequestStatus] = deriveDecoder
   implicit val encoder: Encoder[RequestStatus] = deriveEncoder
 }

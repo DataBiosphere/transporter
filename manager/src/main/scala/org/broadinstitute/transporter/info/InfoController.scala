@@ -33,7 +33,7 @@ class InfoController(
     dbStatus.map(db => ManagerStatus(db.ok, Map("db" -> db)))
 
   /** Report the running version of Transporter. */
-  def version: IO[ManagerVersion] = IO.pure(ManagerVersion(appVersion))
+  def version: ManagerVersion = ManagerVersion(appVersion)
 
   /** Get the current status of Transporter's connection to its DB. */
   private def dbStatus: IO[SystemStatus] = {

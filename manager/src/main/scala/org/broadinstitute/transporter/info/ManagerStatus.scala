@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.info
 
-import io.circe.Encoder
+import io.circe.{Decoder, Encoder}
+import io.circe.derivation.{deriveDecoder, deriveEncoder}
 
 /**
   * Reported status of the entire Transporter system.
@@ -14,5 +15,6 @@ import io.circe.Encoder
 case class ManagerStatus(ok: Boolean, systems: Map[String, SystemStatus])
 
 object ManagerStatus {
-  implicit val encoder: Encoder[ManagerStatus] = io.circe.derivation.deriveEncoder
+  implicit val decoder: Decoder[ManagerStatus] = deriveDecoder
+  implicit val encoder: Encoder[ManagerStatus] = deriveEncoder
 }

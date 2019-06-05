@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.transfer.api
 
-import io.circe.{Decoder, Json}
+import io.circe.{Decoder, Encoder, Json}
+import io.circe.derivation.{deriveDecoder, deriveEncoder}
 
 /**
   * A request to launch some number of data transfers.
@@ -12,5 +13,6 @@ import io.circe.{Decoder, Json}
 case class BulkRequest(transfers: List[Json])
 
 object BulkRequest {
-  implicit val decoder: Decoder[BulkRequest] = io.circe.derivation.deriveDecoder
+  implicit val decoder: Decoder[BulkRequest] = deriveDecoder
+  implicit val encoder: Encoder[BulkRequest] = deriveEncoder
 }
