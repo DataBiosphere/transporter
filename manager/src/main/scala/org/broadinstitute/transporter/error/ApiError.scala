@@ -23,21 +23,12 @@ object ApiError {
     * Exception used to mark when a user attempts to interact
     * with a nonexistent request.
     */
-  case class NoSuchRequest(id: UUID) extends ApiError
+  case class NotFound(requestId: UUID, transferId: Option[UUID] = None) extends ApiError
 
-  implicit val nsrDecoder: Decoder[NoSuchRequest] = deriveDecoder
-  implicit val nsrEncoder: Encoder[NoSuchRequest] = deriveEncoder
+  implicit val nsrDecoder: Decoder[NotFound] = deriveDecoder
+  implicit val nsrEncoder: Encoder[NotFound] = deriveEncoder
 
-  /**
-    * Exception used to mark when a user attempt to interact
-    * with a nonexistent transfer.
-    */
-  case class NoSuchTransfer(requestId: UUID, id: UUID) extends ApiError
-
-  implicit val nstDecoder: Decoder[NoSuchTransfer] = deriveDecoder
-  implicit val nstEncoder: Encoder[NoSuchTransfer] = deriveEncoder
-
-  /** TODO */
+  /** Catch-all error model used to wrap unhandled exceptions from business logic. */
   case class UnhandledError(message: String) extends ApiError
 
   implicit val ueDecoder: Decoder[UnhandledError] = deriveDecoder

@@ -15,11 +15,7 @@ import doobie.util.update.Update
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.{Constants, DbLogHandler, DoobieInstances}
-import org.broadinstitute.transporter.error.ApiError.{
-  InvalidRequest,
-  NoSuchRequest,
-  NoSuchTransfer
-}
+import org.broadinstitute.transporter.error.ApiError.{InvalidRequest, NotFound}
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.config.TransferSchema
 
@@ -121,7 +117,7 @@ class TransferController(
         .query[Long]
         .option
       _ <- IO
-        .raiseError(NoSuchRequest(requestId))
+        .raiseError(NotFound(requestId))
         .whenA(requestRow.isEmpty)
         .to[ConnectionIO]
       out <- f(requestId)
@@ -238,9 +234,7 @@ class TransferController(
           .query[TransferDetails]
           .option
       }
-      details <- maybeDetails.liftTo[IO](
-        NoSuchTransfer(requestId, transferId)
-      )
+      details <- maybeDetails.liftTo[IO](NotFound(requestId, Some(transferId)))
     } yield {
       details
     }

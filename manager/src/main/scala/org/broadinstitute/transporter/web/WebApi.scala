@@ -2,13 +2,13 @@ package org.broadinstitute.transporter.web
 
 import java.util.UUID
 
-import cats.data.Kleisli
+import cats.data.{Kleisli, NonEmptyList}
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
+import enumeratum.{Enum, EnumEntry}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.BuildInfo
 import org.broadinstitute.transporter.error.ApiError
-import org.broadinstitute.transporter.error.ApiError.UnhandledError
 import org.broadinstitute.transporter.info.{InfoController, ManagerStatus, ManagerVersion}
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.TransferController
@@ -97,23 +97,22 @@ class WebApi(
         IO.pure(Either.right[Unit, ManagerVersion](infoController.version))
       }
 
-  private val baseRoute: Endpoint[Unit, ApiError, Unit, Nothing] =
+  private val baseRoute: Endpoint[Unit, Unit, Unit, Nothing] =
     endpoint
       .in("api" / "transporter" / "v1")
       .tag("Transfers")
-      .errorOut(
-        oneOf(
-          statusMapping(StatusCodes.BadRequest, jsonBody[ApiError.InvalidRequest]),
-          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NoSuchRequest]),
-          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NoSuchTransfer]),
-          statusMapping(
-            StatusCodes.InternalServerError,
-            jsonBody[ApiError.UnhandledError]
-          )
+
+  private val transferBase = baseRoute
+    .in("transfers" / path[UUID]("request-id"))
+    .errorOut(
+      oneOf(
+        statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+        statusMapping(
+          StatusCodes.InternalServerError,
+          jsonBody[ApiError.UnhandledError]
         )
       )
-
-  private val transferBase = baseRoute.in("transfers" / path[UUID]("request-id"))
+    )
 
   private val batchSubmitRoute: Route[BulkRequest, ApiError, RequestAck] =
     baseRoute
@@ -121,6 +120,15 @@ class WebApi(
       .post
       .in(jsonBody[BulkRequest])
       .out(jsonBody[RequestAck])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.BadRequest, jsonBody[ApiError.InvalidRequest]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Submit a new batch of transfer requests")
       .serverLogic { request =>
         buildResponse(
@@ -341,6 +349,10 @@ class WebApi(
     * Adds audit logging to all requests / responses.
     */
   def app: HttpApp[IO] = {
+    implicit val serverOptions: Http4sServerOptions[IO] = Http4sServerOptions
+      .default[IO]
+      .copy(blockingExecutionContext = blockingEc)
+
     val definedRoutes = documentedRoutes.toRoutes
       .combineK(swaggerUiIndexRoutes)
       .combineK(swaggerUiAssetRoutes)
@@ -349,7 +361,8 @@ class WebApi(
     val sealedRoutes: HttpApp[IO] = Kleisli { request =>
       definedRoutes.run(request).getOrElse {
         import CirceEntityEncoder._
-        Response[IO](status = Status.NotFound).withEntity(UnhandledError("Not Found"))
+        Response[IO](status = Status.NotFound)
+          .withEntity(ApiError.UnhandledError("Not Found"))
       }
     }
 
@@ -360,6 +373,32 @@ class WebApi(
 object WebApi {
 
   type Route[I, E, O] = ServerEndpoint[I, E, O, Nothing, IO]
+
+  /*
+   * Tapir can auto-derive schemas for most types, but it needs
+   * some help for classes that we'd rather have map to standard
+   * JSON types instead of their internal Scala representation.
+   */
+
+  implicit def nonEmptyListSchema[A](
+    implicit s: SchemaFor[A]
+  ): SchemaFor[NonEmptyList[A]] =
+    SchemaFor(Schema.SArray(s.schema))
+
+  implicit def enumSchema[E <: EnumEntry: Enum]: SchemaFor[E] =
+    SchemaFor(Schema.SString)
+
+  implicit def enumMapSchema[E <: EnumEntry, V](
+    implicit e: Enum[E],
+    s: SchemaFor[V]
+  ): SchemaFor[Map[E, V]] =
+    SchemaFor(
+      Schema.SProduct(
+        Schema.SObjectInfo(s"${e.toString}Map"),
+        e.values.map(_.entryName -> s.schema),
+        Nil
+      )
+    )
 
   /** Top-level route which serves generated API docs. */
   val ApiDocsPath = "api-docs.yaml"

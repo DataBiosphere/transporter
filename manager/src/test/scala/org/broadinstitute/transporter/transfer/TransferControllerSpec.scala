@@ -341,7 +341,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller
         .lookupRequestStatus(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchRequest(request1Id))
+        .map(_.left.value shouldBe NotFound(request1Id))
   }
 
   it should "get outputs of successful transfers for a request" in withRequest {
@@ -382,7 +382,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller
         .lookupRequestOutputs(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchRequest(request1Id))
+        .map(_.left.value shouldBe NotFound(request1Id))
   }
 
   it should "get outputs of failed transfers for a request" in withRequest {
@@ -423,7 +423,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller
         .lookupRequestFailures(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchRequest(request1Id))
+        .map(_.left.value shouldBe NotFound(request1Id))
   }
 
   it should "reconsider failed transfers in a request" in withRequest {
@@ -452,7 +452,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller
         .lookupRequestFailures(request1Id)
         .attempt
-        .map(_.left.value shouldBe NoSuchRequest(request1Id))
+        .map(_.left.value shouldBe NotFound(request1Id))
   }
 
   it should "not reconsider failures in an unrelated request" in withRequest {
@@ -527,7 +527,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller
         .lookupTransferDetails(request1Id, UUID.randomUUID())
         .attempt
-        .map(_.left.value shouldBe NoSuchRequest(request1Id))
+        .map(_.left.value shouldBe NotFound(request1Id))
   }
 
   it should "fail to get details for a nonexistent transfer" in withRequest {
@@ -536,7 +536,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .lookupTransferDetails(request1Id, request2Transfers.head._1)
         .attempt
         .map(
-          _.left.value shouldBe NoSuchTransfer(request1Id, request2Transfers.head._1)
+          _.left.value shouldBe NotFound(request1Id, Some(request2Transfers.head._1))
         )
   }
 }
