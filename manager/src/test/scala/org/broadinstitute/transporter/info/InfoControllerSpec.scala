@@ -35,7 +35,6 @@ class InfoControllerSpec extends PostgresSpec with MockFactory {
   }
 
   it should "pass through the app version" in {
-    new InfoController(version, transactor).version
-      .unsafeRunSync() shouldBe ManagerVersion(version)
+    new InfoController(version, transactor).version shouldBe ManagerVersion(version)
   }
 }

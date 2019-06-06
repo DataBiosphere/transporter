@@ -10,7 +10,7 @@ import doobie._
 import doobie.implicits._
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
-import org.broadinstitute.transporter.error._
+import org.broadinstitute.transporter.error.ApiError._
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.scalamock.scalatest.MockFactory
