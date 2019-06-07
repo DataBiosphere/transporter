@@ -5,7 +5,7 @@ import java.time.{Instant, ZoneOffset}
 import java.time.format.DateTimeFormatter
 
 import cats.effect.IO
-import org.apache.commons.codec.digest.{DigestUtils, HmacUtils}
+import org.apache.commons.codec.digest.{DigestUtils, HmacAlgorithms, HmacUtils}
 import org.broadinstitute.transporter.config.AwsConfig
 import org.http4s.{Header, Headers, Method, Request, Uri}
 
@@ -183,9 +183,9 @@ object S3AuthProvider {
   ): String = {
     val key = scopeComponents.foldLeft(s"AWS4$secretKey".getBytes) {
       (lastKey, nextComponent) =>
-        HmacUtils.hmacSha256(lastKey, nextComponent.getBytes)
+        new HmacUtils(HmacAlgorithms.HMAC_SHA_256, lastKey).hmac(nextComponent)
     }
-    HmacUtils.hmacSha256Hex(key, stringToSign.getBytes)
+    new HmacUtils(HmacAlgorithms.HMAC_SHA_256, key).hmacHex(stringToSign)
   }
 
   /**
