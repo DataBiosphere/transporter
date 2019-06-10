@@ -64,7 +64,7 @@ class AwsToGcpRunner(
         bucket = request.gcsBucket,
         path = request.gcsPath
       )
-      md5sMatch = request.expectedMd5.isDefined && existingMd5 == request.expectedMd5
+      md5sMatch = existingMd5.isDefined && existingMd5 == request.expectedMd5
 
       /*
        * If there's already a GCS object and we're forcing the transfer,
@@ -403,8 +403,6 @@ class AwsToGcpRunner(
 
 object AwsToGcpRunner {
 
-  private val bytesPerMib = math.pow(2, 20).toInt
-
   /** Build the REST API endpoint for a bucket/path in S3. */
   private def s3Uri(bucket: String, region: String, path: String): Uri =
     Uri.unsafeFromString(s"https://$bucket.s3-$region.amazonaws.com/$path")
@@ -418,6 +416,8 @@ object AwsToGcpRunner {
     Uri
       .unsafeFromString(s"https://www.googleapis.com/upload/storage/v1/b/$bucket/o")
       .withQueryParam("uploadType", "resumable")
+
+  private val bytesPerMib = 1048576
 
   /**
     * Number of bytes to pull from S3 / push to GCS at a time.
