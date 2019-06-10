@@ -4,6 +4,7 @@ import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import fs2.{Chunk, Stream}
 import io.circe.JsonObject
+import io.circe.jawn.JawnParser
 import io.circe.syntax._
 import org.apache.commons.codec.binary.{Base64, Hex}
 import org.broadinstitute.transporter.config.RunnerConfig
@@ -35,32 +36,85 @@ class AwsToGcpRunner(
 ) extends TransferRunner[AwsToGcpRequest, AwsToGcpProgress, AwsToGcpOutput] {
   import AwsToGcpRunner._
 
-  override def initialize(request: AwsToGcpRequest): AwsToGcpProgress = {
+  override def initialize(
+    request: AwsToGcpRequest
+  ): Either[AwsToGcpProgress, AwsToGcpOutput] = {
+
+    val forceTransfer = request.force.getOrElse(false)
 
     val initFlow = for {
+
+      // First, check if the source S3 object exists and is readable.
       s3Metadata <- getS3Metadata(
         bucket = request.s3Bucket,
         region = request.s3Region,
         path = request.s3Path,
         expectedSize = request.expectedSize
       )
-      uploadToken <- initGcsResumableUpload(
+
+      /*
+       * Second, check if there's already an object at the GCS target.
+       *
+       * If there is an existing object, and it has a registered md5 hash,
+       * check if the md5 matches our expected final state. We use the
+       * comparison to provide better UX for repeated transfers of the
+       * same file.
+       */
+      (gcsExists, existingMd5) <- checkExistingObject(
         bucket = request.gcsBucket,
-        path = request.gcsPath,
-        s3Metadata = s3Metadata,
-        expectedMd5 = request.expectedMd5
+        path = request.gcsPath
       )
+      md5sMatch = request.expectedMd5.isDefined && existingMd5 == request.expectedMd5
+
+      /*
+       * If there's already a GCS object and we're forcing the transfer,
+       * delete the existing object.
+       *
+       * We do this up-front to force a fast failure in the case when the
+       * agent is authorized to write objects, but not delete them, in the
+       * target bucket. Without this fail-fast, the agent will happily
+       * transfer bytes until the very last step of the resumable upload,
+       * at which point Google will send a 403 when it tries to remove the
+       * existing object.
+       */
+      _ <- deleteGcsObject(bucket = request.gcsBucket, path = request.gcsPath)
+        .whenA(gcsExists && !md5sMatch && forceTransfer)
+
+      out <- if (md5sMatch) {
+        // If there's already a GCS object with the md5 we want, we can short-circuit.
+        IO.pure(Right(AwsToGcpOutput(request.gcsBucket, request.gcsPath)))
+      } else if (gcsExists && !forceTransfer) {
+        /*
+         * If there's already a GCS object, but it doesn't have the md5 we expect,
+         * we bail out with an error unless the "force" flag has been set.
+         */
+        IO.raiseError(
+          GcsTargetTaken(s"gs://${request.gcsBucket}/${request.gcsPath}", existingMd5)
+        )
+      } else {
+        // Finally, if we haven't found a reason to bail out early, we begin a GCS upload.
+        initGcsResumableUpload(
+          bucket = request.gcsBucket,
+          path = request.gcsPath,
+          s3Metadata = s3Metadata,
+          expectedMd5 = request.expectedMd5
+        ).map { uploadToken =>
+          Left {
+            AwsToGcpProgress(
+              s3Bucket = request.s3Bucket,
+              s3Region = request.s3Region,
+              s3Path = request.s3Path,
+              gcsBucket = request.gcsBucket,
+              gcsPath = request.gcsPath,
+              gcsToken = uploadToken,
+              bytesUploaded = 0L,
+              totalBytes = s3Metadata.contentLength
+            )
+          }
+        }
+      }
     } yield {
-      AwsToGcpProgress(
-        s3Bucket = request.s3Bucket,
-        s3Region = request.s3Region,
-        s3Path = request.s3Path,
-        gcsBucket = request.gcsBucket,
-        gcsPath = request.gcsPath,
-        gcsToken = uploadToken,
-        bytesUploaded = 0L,
-        totalBytes = s3Metadata.contentLength
-      )
+      out
     }
 
     initFlow.unsafeRunSync()
@@ -122,6 +176,62 @@ class AwsToGcpRunner(
       }
     } yield {
       metadata
+    }
+  }
+
+  private val parser = new JawnParser()
+
+  /**
+    * Query the URI of an object in GCS to:
+    *   1. Check its existence, and
+    *   2. Collect its reported md5, if any
+    */
+  private def checkExistingObject(
+    bucket: String,
+    path: String
+  ): IO[(Boolean, Option[String])] = {
+    val gcsUri = baseGcsUri(bucket, path)
+
+    for {
+      gcsReq <- IO.delay(Request[IO](method = Method.GET, uri = gcsUri))
+      existingInfo <- httpClient.fetch(googleAuth.addAuth(gcsReq)) { response =>
+        if (response.status == Status.NotFound) {
+          IO.pure((false, None))
+        } else if (response.status.isSuccess) {
+          for {
+            byteChunk <- response.body.compile.toChunk
+            objectMetadata <- parser
+              .parseByteBuffer(byteChunk.toByteBuffer)
+              .flatMap(_.as[JsonObject])
+              .liftTo[IO]
+          } yield {
+            (true, objectMetadata("md5Hash").flatMap(_.asString))
+          }
+        } else {
+          IO.raiseError(
+            new RuntimeException(
+              s"Request for metadata from $gcsUri returned status ${response.status}"
+            )
+          )
+        }
+      }
+    } yield {
+      existingInfo
+    }
+  }
+
+  /** Send a request to delete an object in GCS. */
+  private def deleteGcsObject(bucket: String, path: String): IO[Unit] = {
+    val gcsUri = baseGcsUri(bucket, path)
+
+    for {
+      gcsReq <- IO.delay(Request[IO](method = Method.DELETE, uri = gcsUri))
+      deleteSuccessful <- httpClient.successful(googleAuth.addAuth(gcsReq))
+      _ <- IO
+        .raiseError(new RuntimeException(s"Failed to delete ${gcsUri.renderString}"))
+        .whenA(!deleteSuccessful)
+    } yield {
+      ()
     }
   }
 
@@ -289,21 +399,25 @@ class AwsToGcpRunner(
     } yield {
       nextOrDone
     }
+}
+
+object AwsToGcpRunner {
+
+  private val bytesPerMib = math.pow(2, 20).toInt
 
   /** Build the REST API endpoint for a bucket/path in S3. */
   private def s3Uri(bucket: String, region: String, path: String): Uri =
     Uri.unsafeFromString(s"https://$bucket.s3-$region.amazonaws.com/$path")
+
+  /** Build the REST API endpoint for a bucket/path in GCS. */
+  private def baseGcsUri(bucket: String, path: String): Uri =
+    Uri.unsafeFromString(s"https://www.googleapis.com/storage/v1/b/$bucket/o/$path")
 
   /** Build the REST API endpoint for a resumable upload to a GCS bucket. */
   private def baseGcsUploadUri(bucket: String): Uri =
     Uri
       .unsafeFromString(s"https://www.googleapis.com/upload/storage/v1/b/$bucket/o")
       .withQueryParam("uploadType", "resumable")
-}
-
-object AwsToGcpRunner {
-
-  private val bytesPerMib = math.pow(2, 20).toInt
 
   /**
     * Number of bytes to pull from S3 / push to GCS at a time.
@@ -349,9 +463,7 @@ object AwsToGcpRunner {
     * it's a sign that something went wrong in the request/response cycle.
     */
   case class NoFileSize(uri: String)
-      extends IllegalStateException(
-        s"Object $uri doesn't have a recorded size"
-      )
+      extends IllegalStateException(s"Object $uri doesn't have a recorded size")
 
   /**
     * Error raised when the size of the source S3 object doesn't match a request's expectations.
@@ -362,6 +474,12 @@ object AwsToGcpRunner {
       extends IllegalStateException(
         s"Object $uri has size $actual, but expected $expected"
       )
+
+  /** Error raised when a transfer would overwrite an existing object in GCS. */
+  case class GcsTargetTaken(uri: String, md5: Option[String])
+      extends IllegalStateException(s"$uri already exists in GCS${md5.fold("") { m =>
+        s" with unexpected md5 '$m'"
+      }}")
 
   /**
     * Error raised when initializing a GCS upload doesn't return an upload token.

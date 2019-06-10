@@ -273,6 +273,7 @@ lazy val `transporter-agent-template` = project
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
+      "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       // NOTE: jakarta.ws.rs-api is the same project as javax.ws.rs-api, they just changed their
       // organization ID. Something in how the change happend runs across a bug in sbt / coursier,

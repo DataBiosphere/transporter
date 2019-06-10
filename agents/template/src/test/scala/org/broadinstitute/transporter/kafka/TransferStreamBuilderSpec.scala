@@ -22,12 +22,14 @@ import org.broadinstitute.transporter.transfer.{
   TransferResult,
   TransferRunner
 }
+import org.scalamock.scalatest.MockFactory
 import org.scalatest.{FlatSpec, Matchers}
 
 class TransferStreamBuilderSpec
     extends FlatSpec
     with Matchers
-    with EmbeddedKafkaStreamsAllInOne {
+    with EmbeddedKafkaStreamsAllInOne
+    with MockFactory {
 
   import TransferStreamBuilderSpec._
 
@@ -36,8 +38,6 @@ class TransferStreamBuilderSpec
     "progress-topic",
     "result-topic"
   )
-
-  private val builder = new TransferStreamBuilder(topics)
 
   private def embeddedConfig = {
     // Find unused ports to avoid port clashes between tests.
@@ -68,12 +68,12 @@ class TransferStreamBuilderSpec
     */
   private def roundTripTransfers(
     requests: List[Json],
-    failInit: Boolean = false,
-    failStep: Boolean = false
+    runner: LoopRunner
   ): List[TransferMessage[(TransferResult, Json)]] = {
     implicit val baseConfig: EmbeddedKafkaConfig = embeddedConfig
 
-    val topology = builder.build(new LoopRunner(failInit, failStep)).unsafeRunSync()
+    val builder = new TransferStreamBuilder(topics, runner)
+    val topology = builder.build.unsafeRunSync()
     val config =
       KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"), topics)
 
@@ -119,12 +119,19 @@ class TransferStreamBuilderSpec
 
   it should "receive requests, execute transfers, and push responses" in {
     val request = TransferMessage(ids, LoopRequest(3))
-    val expectedResponse = TransferMessage(
-      ids,
-      (TransferResult.Success, LoopProgress(loopsSoFar = 3, loopsToGo = 0).asJson)
-    )
+    val expectedResponse =
+      TransferMessage(ids, (TransferResult.Success, LoopOutput(3).asJson))
 
-    val results = roundTripTransfers(List(request.asJson))
+    val runner = mock[LoopRunner]
+    (runner.initialize _).expects(request.message).returning(Left(LoopProgress(0, 3)))
+    (0 until 3).foreach { i =>
+      (runner.step _)
+        .expects(LoopProgress(i, 3 - i))
+        .returning(Left(LoopProgress(i + 1, 3 - i - 1)))
+    }
+    (runner.step _).expects(LoopProgress(3, 0)).returning(Right(LoopOutput(3)))
+
+    val results = roundTripTransfers(List(request.asJson), runner)
     results shouldBe List(expectedResponse)
   }
 
@@ -140,15 +147,37 @@ class TransferStreamBuilderSpec
 
     val messages = List(longRunning, quick)
 
+    val runner = mock[LoopRunner]
+
+    inSequence {
+      (runner.initialize _)
+        .expects(longRunning.message)
+        .returning(Left(LoopProgress(0, longRunningCount)))
+      (runner.initialize _)
+        .expects(quick.message)
+        .returning(Left(LoopProgress(0, quickCount)))
+    }
+
+    List(0 until longRunningCount, 0 until quickCount).foreach { range =>
+      range.foreach { i =>
+        (runner.step _)
+          .expects(LoopProgress(i, range.end - i))
+          .returning(Left(LoopProgress(i + 1, range.end - i - 1)))
+      }
+    }
+
+    (runner.step _).expects(LoopProgress(1, 0)).returning(Right(LoopOutput(1)))
+    (runner.step _).expects(LoopProgress(5, 0)).returning(Right(LoopOutput(5)))
+
     // The quick result should arrive before the long-running one.
-    roundTripTransfers(messages.map(_.asJson)) shouldBe List(
+    roundTripTransfers(messages.map(_.asJson), runner) shouldBe List(
       TransferMessage(
         quick.ids,
-        (TransferResult.Success, LoopProgress(quickCount, 0).asJson)
+        (TransferResult.Success, LoopOutput(quickCount).asJson)
       ),
       TransferMessage(
         longRunning.ids,
-        (TransferResult.Success, LoopProgress(longRunningCount, 0).asJson)
+        (TransferResult.Success, LoopOutput(longRunningCount).asJson)
       )
     )
   }
@@ -159,7 +188,9 @@ class TransferStreamBuilderSpec
       TransferMessage(ids, LoopRequest(0)).asJson
     )
 
-    roundTripTransfers(messages) shouldBe empty
+    val runner = mock[LoopRunner]
+
+    roundTripTransfers(messages, runner) shouldBe empty
   }
 
   it should "push error results if transfers with a bad schema ends up on the request topic" in {
@@ -172,8 +203,12 @@ class TransferStreamBuilderSpec
       LoopRequest(0).asJson
     )
 
+    val runner = mock[LoopRunner]
+    (runner.initialize _).expects(LoopRequest(0)).returning(Left(LoopProgress(0, 0)))
+    (runner.step _).expects(LoopProgress(0, 0)).returning(Right(LoopOutput(0)))
+
     val List(result1, result2) =
-      roundTripTransfers(List(badSchema, goodSchema).map(_.asJson))
+      roundTripTransfers(List(badSchema, goodSchema).map(_.asJson), runner)
 
     result1.ids shouldBe badSchema.ids
     val (res1, info1) = result1.message
@@ -182,15 +217,21 @@ class TransferStreamBuilderSpec
 
     result2 shouldBe TransferMessage(
       goodSchema.ids,
-      (TransferResult.Success: TransferResult, LoopProgress(0, 0).asJson)
+      (TransferResult.Success, LoopOutput(0).asJson)
     )
   }
 
   it should "push error results if initializing a transfer fails" in {
     val messages = List.tabulate(2) { i =>
-      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i)).asJson
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i))
     }
-    val List(result1, result2) = roundTripTransfers(messages, failInit = true)
+
+    val runner = mock[LoopRunner]
+    messages.foreach { msg =>
+      (runner.initialize _).expects(msg.message).throwing(new Exception("OH NO"))
+    }
+
+    val List(result1, result2) = roundTripTransfers(messages.map(_.asJson), runner)
 
     result1.message._1 shouldBe TransferResult.FatalFailure
     result2.message._1 shouldBe TransferResult.FatalFailure
@@ -202,9 +243,17 @@ class TransferStreamBuilderSpec
 
   it should "push error results if processing a transfer fails" in {
     val messages = List.tabulate(2) { i =>
-      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i)).asJson
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i))
     }
-    val List(result1, result2) = roundTripTransfers(messages, failStep = true)
+
+    val runner = mock[LoopRunner]
+    messages.foreach { msg =>
+      val zero = LoopProgress(0, msg.message.loopCount)
+      (runner.initialize _).expects(msg.message).returning(Left(zero))
+      (runner.step _).expects(zero).throwing(new Exception("OH NO"))
+    }
+
+    val List(result1, result2) = roundTripTransfers(messages.map(_.asJson), runner)
 
     result1.message._1 shouldBe TransferResult.FatalFailure
     result2.message._1 shouldBe TransferResult.FatalFailure
@@ -212,6 +261,19 @@ class TransferStreamBuilderSpec
     List(result1.message._2, result2.message._2).foreach { jsonInfo =>
       jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
     }
+  }
+
+  it should "support early exits from runner initialization" in {
+    val message = TransferMessage(ids, LoopRequest(0))
+
+    val runner = mock[LoopRunner]
+    (runner.initialize _).expects(message.message).returning(Right(LoopOutput(0)))
+
+    val out = roundTripTransfers(List(message.asJson), runner)
+    out should contain only TransferMessage(
+      ids,
+      (TransferResult.Success, LoopOutput(0).asJson)
+    )
   }
 }
 
@@ -221,6 +283,9 @@ object TransferStreamBuilderSpec {
 
   case class LoopRequest(loopCount: Int)
   case class LoopProgress(loopsSoFar: Int, loopsToGo: Int)
+  case class LoopOutput(loopCount: Int)
+
+  abstract class LoopRunner extends TransferRunner[LoopRequest, LoopProgress, LoopOutput]
 
   implicit val reqDecoder: Decoder[LoopRequest] = deriveDecoder
   implicit val reqEncoder: Encoder[LoopRequest] = deriveEncoder
@@ -228,36 +293,8 @@ object TransferStreamBuilderSpec {
   implicit val progressDecoder: Decoder[LoopProgress] = deriveDecoder
   implicit val progressEncoder: Encoder[LoopProgress] = deriveEncoder
 
-  class LoopRunner(failInit: Boolean, failStep: Boolean)
-      extends TransferRunner[LoopRequest, LoopProgress, LoopProgress] {
-
-    override def initialize(request: LoopRequest): LoopProgress =
-      if (failInit) {
-        throw UnhandledError
-      } else {
-        LoopProgress(0, request.loopCount)
-      }
-
-    override def step(progress: LoopProgress): Either[LoopProgress, LoopProgress] =
-      if (failStep) {
-        throw UnhandledError
-      } else {
-        Either.cond(
-          progress.loopsToGo == 0,
-          progress,
-          progress.copy(
-            loopsSoFar = progress.loopsSoFar + 1,
-            loopsToGo = progress.loopsToGo - 1
-          )
-        )
-      }
-  }
-
-  val LoopSchema = json"""{
-    "type": "object",
-    "properties": { "loopCount": { "type": "integer" } },
-    "additionalProperties": false
-  }"""
+  implicit val outDecoder: Decoder[LoopOutput] = deriveDecoder
+  implicit val outEncoder: Encoder[LoopOutput] = deriveEncoder
 
   implicit val resDecoder: Decoder[UnhandledErrorInfo] = deriveDecoder
 }

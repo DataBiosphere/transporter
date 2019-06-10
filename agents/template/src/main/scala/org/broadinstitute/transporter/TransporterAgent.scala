@@ -62,7 +62,7 @@ abstract class TransporterAgent[
     kafkaConfig: KStreamsConfig
   ): IO[ExitCode] =
     for {
-      topology <- new TransferStreamBuilder(kafkaConfig.topics).build(runner)
+      topology <- new TransferStreamBuilder(kafkaConfig.topics, runner).build
       stream <- IO.delay(new KafkaStreams(topology, kafkaConfig.asProperties))
       _ <- IO.delay(stream.start())
       _ <- IO.cancelable[Unit](_ => IO.delay(stream.close()))
