@@ -7,7 +7,7 @@ package org.broadinstitute.transporter.transfer
   */
 object EchoRunner extends TransferRunner[EchoInput, EchoInput, String] {
 
-  override def initialize(request: EchoInput): EchoInput = request
+  override def initialize(request: EchoInput): Either[EchoInput, String] = Left(request)
 
   override def step(progress: EchoInput): Either[EchoInput, String] = {
     if (progress.fail) {

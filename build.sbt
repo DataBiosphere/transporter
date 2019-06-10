@@ -65,10 +65,10 @@ val kafkaVersion = "2.2.0"
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
-val log4sVersion = "1.8.0"
+val log4sVersion = "1.8.1"
 
 // Transfer.
-val googleAuthVersion = "0.15.0"
+val googleAuthVersion = "0.16.1"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
@@ -77,7 +77,7 @@ val enumeratumVersion = "1.5.13"
 val http4sVersion = "0.20.1"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.22.2"
-val tapirVersion = "0.8.2"
+val tapirVersion = "0.8.3"
 
 // Testing.
 val liquibaseVersion = "3.6.3"
@@ -273,6 +273,7 @@ lazy val `transporter-agent-template` = project
     ),
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-literal" % circeVersion,
+      "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion,
       // NOTE: jakarta.ws.rs-api is the same project as javax.ws.rs-api, they just changed their
       // organization ID. Something in how the change happend runs across a bug in sbt / coursier,

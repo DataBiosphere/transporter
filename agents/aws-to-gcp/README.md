@@ -25,7 +25,8 @@ Use this JSON schema to configure a Manager paired with this agent:
     "gcsBucket": { "type": "string" },
     "gcsPath": { "type": "string" },
     "expectedSize": { "type": "integer" },
-    "expectedMd5": { "type": "string", "pattern": "[0-9a-f]+" }
+    "expectedMd5": { "type": "string", "pattern": "[0-9a-f]+" },
+    "force": { "type":  "boolean" }
   },
   "required": ["s3Bucket", "s3Region", "s3Path", "gcsBucket", "gcsPath"],
   "additionalProperties": false

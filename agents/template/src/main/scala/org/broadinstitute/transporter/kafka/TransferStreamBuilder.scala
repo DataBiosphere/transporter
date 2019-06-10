@@ -18,38 +18,44 @@ import org.broadinstitute.transporter.transfer.{
   TransferRunner
 }
 
-class TransferStreamBuilder(topics: TopicConfig) {
+class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encoder](
+  topics: TopicConfig,
+  runner: TransferRunner[In, Progress, Out]
+) {
   import org.apache.kafka.streams.scala.ImplicitConversions._
   import KSerdes._
   import TransferStreamBuilder._
 
   /**
-    * Construct a stream topology which, when started, will pull requests
-    * from a Kafka topic, execute the requests using a runner, then push the
-    * results back to the Transporter manager.
+    * Construct a stream topology which, when started, will listen for & perform
+    * transfer requests sent by the Transporter Manager.
     */
-  def build[In: Decoder, Progress: Encoder: Decoder, Out: Encoder](
-    runner: TransferRunner[In, Progress, Out]
-  ): IO[Topology] = {
+  def build: IO[Topology] = {
     val builder = new StreamsBuilder()
 
     for {
-      withInitStream <- buildInitStream(builder, runner)
-      withStepStream <- buildStepStream(withInitStream, runner)
+      withInitStream <- buildInitStream(builder)
+      withStepStream <- buildStepStream(withInitStream)
       topology <- IO.delay(withStepStream.build())
     } yield {
       topology
     }
   }
 
-  private def buildInitStream[In: Decoder, Progress: Encoder](
-    builder: StreamsBuilder,
-    runner: TransferRunner[In, Progress, _]
-  ): IO[StreamsBuilder] = {
+  /**
+    * Add a stream topology to the given builder which, when started, will
+    * pull requests from the configured "requests" topic, initializing each.
+    *
+    * The results of successful initialization will be pushed onto the configured
+    * "progress" topic. If initialization raises an exception or signals that no
+    * transfer is needed, a payload will be pushed onto the configured "results"
+    * topic instead.
+    */
+  private def buildInitStream(builder: StreamsBuilder): IO[StreamsBuilder] = {
     val logger = org.log4s.getLogger("transfer-init-logger")
 
     for {
-      Array(failures, successes) <- IO.delay {
+      Array(zeros, earlyExits) <- IO.delay {
         builder
           .stream[Array[Byte], TransferMessage[Json]](topics.requestTopic)
           .mapValues { transfer =>
@@ -69,49 +75,69 @@ class TransferStreamBuilder(topics: TopicConfig) {
               _ = logger.info(
                 s"Initializing transfer ${ids.transfer} from request ${ids.request}"
               )
-              zeroProgress <- Either.catchNonFatal(runner.initialize(input))
+              initialized <- Either.catchNonFatal(runner.initialize(input))
             } yield {
-              (0, zeroProgress)
+              initialized
             }
 
-            initializedOrError.bimap(
+            initializedOrError.fold(
               err => {
                 val message =
                   s"Failed to initialize transfer ${ids.transfer} from request ${ids.request}"
                 logger.error(err)(message)
-                TransferMessage(
-                  ids,
-                  (
-                    TransferResult.FatalFailure: TransferResult,
-                    UnhandledErrorInfo(message, err.getMessage)
-                  ).asJson
-                )
+                Right {
+                  TransferMessage(
+                    ids,
+                    (
+                      TransferResult.FatalFailure: TransferResult,
+                      UnhandledErrorInfo(message, err.getMessage)
+                    ).asJson
+                  )
+                }
               },
-              zero => {
-                logger.info(s"Enqueueing zero progress for transfer ${ids.transfer}")
-                TransferMessage(ids, zero.asJson)
+              initialized => {
+                initialized.bimap(
+                  zero => {
+                    logger.info(s"Enqueueing zero progress for transfer ${ids.transfer}")
+                    TransferMessage(ids, (0, zero.asJson))
+                  },
+                  earlyExit => {
+                    logger.info(s"Returning early for transfer ${ids.transfer}")
+                    TransferMessage(
+                      ids,
+                      (TransferResult.Success: TransferResult, earlyExit).asJson
+                    )
+                  }
+                )
+
               }
             )
           }
           .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
       }
-      _ <- IO.delay(failures.mapValues(_.left.get.asJson).to(topics.resultTopic))
-      _ <- IO.delay(successes.mapValues(_.right.get.asJson).to(topics.progressTopic))
+      _ <- IO.delay(zeros.mapValues(_.left.get.asJson).to(topics.progressTopic))
+      _ <- IO.delay(earlyExits.mapValues(_.right.get.asJson).to(topics.resultTopic))
     } yield {
       builder
     }
   }
 
-  private def buildStepStream[Progress: Encoder: Decoder, Out: Encoder](
-    builder: StreamsBuilder,
-    runner: TransferRunner[_, Progress, Out]
-  ): IO[StreamsBuilder] = {
+  /**
+    * Add a stream topology to the given builder which, when started, will
+    * pull requests from the configured "progress" topic, transferring a chunk
+    * of data for each.
+    *
+    * The results of each step will be pushed onto either the "progress" topic or
+    * the "result" topic, depending on how the agent reports the output. Exceptions
+    * will also be caught and pushed onto the "result" topic.
+    */
+  private def buildStepStream(builder: StreamsBuilder): IO[StreamsBuilder] = {
     val logger = org.log4s.getLogger("transfer-step-logger")
 
     for {
       Array(progresses, summaries) <- IO.delay {
         builder
-          .stream[Array[Byte], TransferMessage[(Int, Progress)]](topics.progressTopic)
+          .stream[Array[Byte], TransferMessage[(Int, Json)]](topics.progressTopic)
           .mapValues { progress =>
             val ids = progress.ids
 
@@ -121,8 +147,9 @@ class TransferStreamBuilder(topics: TopicConfig) {
 
             val (stepsSoFar, message) = progress.message
 
-            Either
-              .catchNonFatal(runner.step(message))
+            message
+              .as[Progress]
+              .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
               .fold(
                 err => {
                   val message =
@@ -166,6 +193,12 @@ object TransferStreamBuilder {
 
   private[this] val parser = new JawnParser()
 
+  /**
+    * Kafka serde for any type that can be converted to/from JSON.
+    *
+    * Not the most efficient way to transmit data, but lets us lean on
+    * the encoding / decoding logic we're already writing.
+    */
   implicit def jsonSerde[A >: Null: Encoder: Decoder]: Serde[A] = KSerdes.fromFn[A](
     (message: A) => message.asJson.noSpaces.getBytes,
     (bytes: Array[Byte]) =>
