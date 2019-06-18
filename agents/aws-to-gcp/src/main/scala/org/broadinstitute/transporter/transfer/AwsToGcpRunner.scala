@@ -404,8 +404,10 @@ class AwsToGcpRunner(
 object AwsToGcpRunner {
 
   /** Build the REST API endpoint for a bucket/path in S3. */
-  private def s3Uri(bucket: String, region: String, path: String): Uri =
-    Uri.unsafeFromString(s"https://$bucket.s3-$region.amazonaws.com/$path")
+  private def s3Uri(bucket: String, region: String, path: String): Uri = {
+    val subdomain = if (region == DefaultAwsRegion) "s3" else s"s3-$region"
+    Uri.unsafeFromString(s"https://$bucket.$subdomain.amazonaws.com/$path")
+  }
 
   /** Build the REST API endpoint for a bucket/path in GCS. */
   private def baseGcsUri(bucket: String, path: String): Uri =
@@ -416,6 +418,14 @@ object AwsToGcpRunner {
     Uri
       .unsafeFromString(s"https://www.googleapis.com/upload/storage/v1/b/$bucket/o")
       .withQueryParam("uploadType", "resumable")
+
+  /**
+    * Default region in AWS.
+    *
+    * HTTP requests to buckets in this region must use 's3' as their subdomain,
+    * as opposed to the 's3-region' pattern used by everything else.
+    */
+  private val DefaultAwsRegion = "us-east-1"
 
   private val bytesPerMib = 1048576
 
