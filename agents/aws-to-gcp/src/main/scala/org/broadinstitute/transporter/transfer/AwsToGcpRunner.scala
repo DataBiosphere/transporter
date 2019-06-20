@@ -403,10 +403,42 @@ class AwsToGcpRunner(
 
 object AwsToGcpRunner {
 
+  /**
+    * Default region in AWS.
+    *
+    * HTTP requests to buckets in this region must use 's3' as their subdomain,
+    * as opposed to the 's3-region' pattern used by everything else.
+    */
+  private[transfer] val DefaultAwsRegion = "us-east-1"
+
+  /** Special characters reserved by AWS which do not require encoding in HTTP request URIs. */
+  private val awsReservedChars = Set('_', '-', '~', '.')
+
   /** Build the REST API endpoint for a bucket/path in S3. */
-  private def s3Uri(bucket: String, region: String, path: String): Uri = {
+  private[transfer] def s3Uri(bucket: String, region: String, path: String): Uri = {
     val subdomain = if (region == DefaultAwsRegion) "s3" else s"s3-$region"
-    Uri.unsafeFromString(s"https://$bucket.$subdomain.amazonaws.com/$path")
+    val encoded = path
+      .split('/')
+      .map { segment =>
+        /*
+         * NOTE: This uses the encoding scheme recommended by the AWS docs. See:
+         * https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html#create-signature-presign-entire-payload
+         */
+        val resultBuilder = new StringBuilder
+        segment.foreach { ch =>
+          if ((ch >= 'A' && ch <= 'Z') ||
+              (ch >= 'a' && ch <= 'z') ||
+              (ch >= '0' && ch <= '9') ||
+              awsReservedChars.contains(ch)) {
+            resultBuilder.append(ch)
+          } else {
+            resultBuilder.append(s"%${Hex.encodeHexString(Array(ch.toByte), false)}")
+          }
+        }
+        resultBuilder.toString()
+      }
+      .mkString("/")
+    Uri.unsafeFromString(s"https://$bucket.$subdomain.amazonaws.com/$encoded")
   }
 
   /** Build the REST API endpoint for a bucket/path in GCS. */
@@ -418,14 +450,6 @@ object AwsToGcpRunner {
     Uri
       .unsafeFromString(s"https://www.googleapis.com/upload/storage/v1/b/$bucket/o")
       .withQueryParam("uploadType", "resumable")
-
-  /**
-    * Default region in AWS.
-    *
-    * HTTP requests to buckets in this region must use 's3' as their subdomain,
-    * as opposed to the 's3-region' pattern used by everything else.
-    */
-  private val DefaultAwsRegion = "us-east-1"
 
   private val bytesPerMib = 1048576
 
