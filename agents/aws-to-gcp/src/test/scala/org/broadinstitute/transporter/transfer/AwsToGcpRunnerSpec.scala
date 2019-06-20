@@ -19,7 +19,14 @@ class AwsToGcpRunnerSpec extends FlatSpec with Matchers {
       Uri.unsafeFromString(s"https://$bucket.s3-us-west-2.amazonaws.com/$path")
   }
 
-  it should "URL encode segments in S3 paths" in {
+  it should "Not encode reserved characters or / in S3 paths" in {
+    val path = AwsToGcpRunner.awsReservedChars.mkString("/")
+
+    AwsToGcpRunner.s3Uri(bucket, AwsToGcpRunner.DefaultAwsRegion, path) shouldBe
+      Uri.unsafeFromString(s"https://$bucket.s3.amazonaws.com/$path")
+  }
+
+  it should "URL encode unreserved characters in S3 paths" in {
     val path = "path/to/**thing1**/special=true/[thing2]"
 
     AwsToGcpRunner.s3Uri(bucket, AwsToGcpRunner.DefaultAwsRegion, path) shouldBe

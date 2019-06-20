@@ -411,8 +411,15 @@ object AwsToGcpRunner {
     */
   private[transfer] val DefaultAwsRegion = "us-east-1"
 
-  /** Special characters reserved by AWS which do not require encoding in HTTP request URIs. */
-  private val awsReservedChars = Set('_', '-', '~', '.')
+  /**
+    * Characters which don't require URI encoding when included in HTTP paths to AWS.
+    *
+    * @see https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html#create-signature-presign-entire-payload
+    */
+  private[transfer] val awsReservedChars = ('A' to 'Z').toSet
+    .union(('a' to 'z').toSet)
+    .union(('0' to '9').toSet)
+    .union(Set('_', '-', '~', '.'))
 
   /** Build the REST API endpoint for a bucket/path in S3. */
   private[transfer] def s3Uri(bucket: String, region: String, path: String): Uri = {
@@ -420,22 +427,10 @@ object AwsToGcpRunner {
     val encoded = path
       .split('/')
       .map { segment =>
-        /*
-         * NOTE: This uses the encoding scheme recommended by the AWS docs. See:
-         * https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html#create-signature-presign-entire-payload
-         */
-        val resultBuilder = new StringBuilder
-        segment.foreach { ch =>
-          if ((ch >= 'A' && ch <= 'Z') ||
-              (ch >= 'a' && ch <= 'z') ||
-              (ch >= '0' && ch <= '9') ||
-              awsReservedChars.contains(ch)) {
-            resultBuilder.append(ch)
-          } else {
-            resultBuilder.append(s"%${Hex.encodeHexString(Array(ch.toByte), false)}")
-          }
+        segment.flatMap {
+          case ch if awsReservedChars.contains(ch) => ch.toString
+          case toEncode                            => s"%${Hex.encodeHexString(Array(toEncode.toByte), false)}"
         }
-        resultBuilder.toString()
       }
       .mkString("/")
     Uri.unsafeFromString(s"https://$bucket.$subdomain.amazonaws.com/$encoded")
