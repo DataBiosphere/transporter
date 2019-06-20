@@ -3,7 +3,7 @@ package org.broadinstitute.transporter.transfer
 import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import fs2.{Chunk, Stream}
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import io.circe.jawn.JawnParser
 import io.circe.syntax._
 import org.apache.commons.codec.binary.{Base64, Hex}
@@ -14,6 +14,7 @@ import org.http4s.client.Client
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.{Logger, Retry, RetryPolicy}
 import org.http4s.headers._
+import org.http4s.multipart._
 import org.http4s.util.CaseInsensitiveString
 
 import scala.concurrent.ExecutionContext
@@ -91,6 +92,28 @@ class AwsToGcpRunner(
         IO.raiseError(
           GcsTargetTaken(s"gs://${request.gcsBucket}/${request.gcsPath}", existingMd5)
         )
+      } else if (s3Metadata.contentLength < ChunkSize) {
+        // If the file is tiny, we can upload it in one shot.
+        for {
+          allBytes <- getS3Chunk(
+            bucket = request.s3Bucket,
+            region = request.s3Region,
+            path = request.s3Path,
+            rangeStart = 0,
+            rangeEnd = s3Metadata.contentLength - 1
+          )
+          _ <- createGcsObject(
+            bucket = request.gcsBucket,
+            path = request.gcsPath,
+            expectedMd5 = request.expectedMd5,
+            contentType = s3Metadata.contentType.getOrElse(
+              `Content-Type`(MediaType.application.`octet-stream`)
+            ),
+            data = allBytes
+          )
+        } yield {
+          Right(AwsToGcpOutput(request.gcsBucket, request.gcsPath))
+        }
       } else {
         // Finally, if we haven't found a reason to bail out early, we begin a GCS upload.
         initGcsResumableUpload(
@@ -220,6 +243,89 @@ class AwsToGcpRunner(
     }
   }
 
+  /**
+    * Build object metadata to include in upload requests to GCS.
+    */
+  private def buildGcsUploadMetadata(path: String, expectedMd5: Option[String]): Json = {
+    // Object metadata is used by Google to register the upload to the correct pseudo-path.
+    val baseObjectMetadata = JsonObject("name" -> path.asJson)
+    expectedMd5
+      .fold(baseObjectMetadata) { hexMd5 =>
+        baseObjectMetadata.add(
+          "md5Hash",
+          Base64.encodeBase64String(Hex.decodeHex(hexMd5.toCharArray)).asJson
+        )
+      }
+      .asJson
+  }
+
+  /**
+    * Create a new object in GCS using a multipart upload.
+    *
+    * One-shot uploads are recommended for any object less than 5MB. Multipart is the one
+    * mechanism to do a one-shot upload while still setting object metadata.
+    *
+    * @see https://cloud.google.com/storage/docs/json_api/v1/how-tos/multipart-upload
+    *
+    * @param bucket the GCS bucket to create the new object within
+    * @param path path within `bucket` where the new object will be created
+    * @param contentType content-type to set on the new object
+    * @param expectedMd5 expected MD5, if any, of the new object. Setting this will enable
+    *                    server-side content validation in GCS
+    * @param data bytes to write into the new file
+    */
+  private def createGcsObject(
+    bucket: String,
+    path: String,
+    contentType: `Content-Type`,
+    expectedMd5: Option[String],
+    data: Chunk[Byte]
+  ): IO[Unit] = {
+    val multipartBoundary = Boundary.create
+    val objectMetadata = buildGcsUploadMetadata(path, expectedMd5)
+
+    val dataHeader =
+      s"""--${multipartBoundary.value}
+         |${`Content-Type`(MediaType.application.json, Charset.`UTF-8`).renderString}
+         |
+         |${objectMetadata.noSpaces}
+         |
+         |--${multipartBoundary.value}
+         |${contentType.renderString}
+         |""".stripMargin.getBytes
+
+    val dataFooter =
+      s"""
+         |--${multipartBoundary.value}--""".stripMargin.getBytes
+
+    val fullBody = Stream
+      .emits(dataHeader)
+      .append(Stream.chunk(data))
+      .append(Stream.emits(dataFooter))
+
+    val fullSize = dataHeader.size + data.size + dataFooter.size
+
+    val fullHeaders = Headers.of(
+      `Content-Type`(MediaType.multipartType("related", Some(multipartBoundary.value))),
+      `Content-Length`.unsafeFromLong(fullSize.toLong)
+    )
+
+    for {
+      gcsReq <- IO.delay {
+        Request[IO](
+          method = Method.POST,
+          uri = baseGcsUploadUri(bucket, "multipart"),
+          headers = fullHeaders,
+          body = fullBody
+        )
+      }
+      uploadSuccessful <- httpClient.successful(googleAuth.addAuth(gcsReq))
+      _ <- IO
+        .raiseError(new RuntimeException(s"Failed to upload bytes to $path in $bucket"))
+        .whenA(!uploadSuccessful)
+    } yield ()
+  }
+
   /** Send a request to delete an object in GCS. */
   private def deleteGcsObject(bucket: String, path: String): IO[Unit] = {
     val gcsUri = baseGcsUri(bucket, path)
@@ -250,31 +356,20 @@ class AwsToGcpRunner(
     s3Metadata: S3Metadata,
     expectedMd5: Option[String]
   ): IO[String] = {
-    // Object metadata is used by Google to register the upload to the correct pseudo-path.
-    val baseObjectMetadata = JsonObject("name" -> path.asJson)
-    val objectMetadata = expectedMd5
-      .fold(baseObjectMetadata) { hexMd5 =>
-        baseObjectMetadata.add(
-          "md5Hash",
-          Base64.encodeBase64String(Hex.decodeHex(hexMd5.toCharArray)).asJson
-        )
-      }
-      .asJson
-
-    val initBody = Stream.emits(objectMetadata.noSpaces.getBytes)
+    val objectMetadata = buildGcsUploadMetadata(path, expectedMd5).noSpaces.getBytes
+    val initHeaders = Headers.of(
+      `Content-Length`.unsafeFromLong(objectMetadata.length.toLong),
+      `Content-Type`(MediaType.application.json, Charset.`UTF-8`),
+      Header("X-Upload-Content-Length", s3Metadata.contentLength.toString)
+    )
 
     for {
-      initSize <- initBody.covary[IO].compile.fold(0L)((s, _) => s + 1)
-      initHeaders = Headers.of(
-        `Content-Length`.unsafeFromLong(initSize),
-        `Content-Type`(MediaType.application.json, Charset.`UTF-8`),
-        Header("X-Upload-Content-Length", s3Metadata.contentLength.toString)
-      )
+
       gcsReq <- IO.delay {
         Request[IO](
           method = Method.POST,
-          uri = baseGcsUploadUri(bucket),
-          body = initBody,
+          uri = baseGcsUploadUri(bucket, "resumable"),
+          body = Stream.emits(objectMetadata),
           headers = s3Metadata.contentType.fold(initHeaders) { s3ContentType =>
             initHeaders.put(Header("X-Upload-Content-Type", s3ContentType.renderString))
           }
@@ -369,7 +464,8 @@ class AwsToGcpRunner(
       gcsReq <- IO.delay {
         Request[IO](
           method = Method.PUT,
-          uri = baseGcsUploadUri(bucket).withQueryParam("upload_id", uploadToken),
+          uri = baseGcsUploadUri(bucket, "resumable")
+            .withQueryParam("upload_id", uploadToken),
           headers = Headers.of(
             `Content-Length`.unsafeFromLong(chunk.size.toLong),
             `Content-Range`(rangeStart, rangeStart + chunk.size - 1)
@@ -441,10 +537,10 @@ object AwsToGcpRunner {
     Uri.unsafeFromString(s"https://www.googleapis.com/storage/v1/b/$bucket/o/$path")
 
   /** Build the REST API endpoint for a resumable upload to a GCS bucket. */
-  private def baseGcsUploadUri(bucket: String): Uri =
+  private def baseGcsUploadUri(bucket: String, uploadType: String): Uri =
     Uri
       .unsafeFromString(s"https://www.googleapis.com/upload/storage/v1/b/$bucket/o")
-      .withQueryParam("uploadType", "resumable")
+      .withQueryParam("uploadType", uploadType)
 
   private val bytesPerMib = 1048576
 
