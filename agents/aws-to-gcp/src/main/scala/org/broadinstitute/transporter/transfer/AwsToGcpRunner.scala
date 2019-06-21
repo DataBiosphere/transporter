@@ -92,7 +92,7 @@ class AwsToGcpRunner(
         IO.raiseError(
           GcsTargetTaken(s"gs://${request.gcsBucket}/${request.gcsPath}", existingMd5)
         )
-      } else if (s3Metadata.contentLength < ChunkSize) {
+      } else if (s3Metadata.contentLength <= ChunkSize) {
         // If the file is tiny, we can upload it in one shot.
         for {
           allBytes <- getS3Chunk(
