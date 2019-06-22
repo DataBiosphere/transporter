@@ -371,7 +371,11 @@ class AwsToGcpRunner(
           uri = baseGcsUploadUri(bucket, "resumable"),
           body = Stream.emits(objectMetadata),
           headers = s3Metadata.contentType.fold(initHeaders) { s3ContentType =>
-            initHeaders.put(Header("X-Upload-Content-Type", s3ContentType.renderString))
+            initHeaders.put(
+              s3ContentType.toRaw.copy(
+                name = CaseInsensitiveString("X-Upload-Content-Type")
+              )
+            )
           }
         )
       }
