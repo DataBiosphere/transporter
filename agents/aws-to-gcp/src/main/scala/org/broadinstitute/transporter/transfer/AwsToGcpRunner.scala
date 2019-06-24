@@ -79,9 +79,9 @@ class AwsToGcpRunner(
        * existing object.
        */
       _ <- deleteGcsObject(bucket = request.gcsBucket, path = request.gcsPath)
-        .whenA(gcsExists && !md5sMatch && forceTransfer)
+        .whenA(gcsExists && forceTransfer)
 
-      out <- if (md5sMatch) {
+      out <- if (md5sMatch && !forceTransfer) {
         // If there's already a GCS object with the md5 we want, we can short-circuit.
         IO.pure(Right(AwsToGcpOutput(request.gcsBucket, request.gcsPath)))
       } else if (gcsExists && !forceTransfer) {
@@ -95,13 +95,21 @@ class AwsToGcpRunner(
       } else if (s3Metadata.contentLength <= ChunkSize) {
         // If the file is tiny, we can upload it in one shot.
         for {
-          allBytes <- getS3Chunk(
-            bucket = request.s3Bucket,
-            region = request.s3Region,
-            path = request.s3Path,
-            rangeStart = 0,
-            rangeEnd = s3Metadata.contentLength - 1
-          )
+          allBytes <- if (s3Metadata.contentLength == 0) {
+            /*
+             * Edge case: make sure we don't request a nonsense content-range of
+             * "0--1" from S3.
+             */
+            IO.pure(Chunk.empty[Byte])
+          } else {
+            getS3Chunk(
+              bucket = request.s3Bucket,
+              region = request.s3Region,
+              path = request.s3Path,
+              rangeStart = 0,
+              rangeEnd = s3Metadata.contentLength - 1
+            )
+          }
           _ <- createGcsObject(
             bucket = request.gcsBucket,
             path = request.gcsPath,
@@ -371,7 +379,11 @@ class AwsToGcpRunner(
           uri = baseGcsUploadUri(bucket, "resumable"),
           body = Stream.emits(objectMetadata),
           headers = s3Metadata.contentType.fold(initHeaders) { s3ContentType =>
-            initHeaders.put(Header("X-Upload-Content-Type", s3ContentType.renderString))
+            initHeaders.put(
+              s3ContentType.toRaw.copy(
+                name = CaseInsensitiveString("X-Upload-Content-Type")
+              )
+            )
           }
         )
       }
