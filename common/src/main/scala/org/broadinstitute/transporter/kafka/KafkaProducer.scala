@@ -10,9 +10,6 @@ import fs2.kafka.{
   KafkaProducer => KProducer
 }
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.apache.kafka.clients.CommonClientConfigs
-import org.apache.kafka.common.config.SslConfigs
-import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.broadinstitute.transporter.kafka.config.ConnectionConfig
 import org.broadinstitute.transporter.transfer.TransferMessage
 
@@ -71,13 +68,7 @@ object KafkaProducer {
       .withRequestTimeout(config.requestTimeout)
       .withCloseTimeout(config.closeTimeout)
 
-    config.tls.fold(base) { tlsConfig =>
-      base.withProperties(
-        CommonClientConfigs.SECURITY_PROTOCOL_CONFIG -> SecurityProtocol.SSL.name,
-        SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG -> tlsConfig.truststorePath.toAbsolutePath.toString,
-        SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG -> tlsConfig.truststorePassword
-      )
-    }
+    config.tls.fold(base)(tlsConfig => base.withProperties(tlsConfig.asMap))
   }
 
   /**
