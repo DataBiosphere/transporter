@@ -27,7 +27,7 @@ pipeline {
             }
         }
         stage('Publish') {
-            when { branch 'master' }
+            //when { branch 'master' }
             steps {
                 script {
                     def dockerProjects = ['aws-to-gcp-agent', 'echo-agent', 'manager', 'manager-migrations']

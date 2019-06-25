@@ -10,6 +10,9 @@ import fs2.kafka.{
   KafkaProducer => KProducer
 }
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import org.apache.kafka.clients.CommonClientConfigs
+import org.apache.kafka.common.config.SslConfigs
+import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.broadinstitute.transporter.kafka.config.ConnectionConfig
 import org.broadinstitute.transporter.transfer.TransferMessage
 
@@ -54,8 +57,8 @@ object KafkaProducer {
     * Some settings in the output are hard-coded to prevent silent data loss in the producer,
     * which isn't acceptable for our use-case.
     */
-  private def producerSettings[K: Serializer, V: Serializer](config: ConnectionConfig) =
-    ProducerSettings[K, V]
+  private def producerSettings[K: Serializer, V: Serializer](config: ConnectionConfig) = {
+    val base = ProducerSettings[K, V]
     // Required to connect to Kafka at all.
       .withBootstrapServers(config.bootstrapServers.intercalate(","))
       // For debugging on the Kafka server; adds an ID to the logs.
@@ -67,6 +70,15 @@ object KafkaProducer {
       // No "official" recommendation on these values, we can tweak as we see fit.
       .withRequestTimeout(config.requestTimeout)
       .withCloseTimeout(config.closeTimeout)
+
+    config.tls.fold(base) { tlsConfig =>
+      base.withProperties(
+        CommonClientConfigs.SECURITY_PROTOCOL_CONFIG -> SecurityProtocol.SSL.name,
+        SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG -> tlsConfig.truststorePath.toAbsolutePath.toString,
+        SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG -> tlsConfig.truststorePassword
+      )
+    }
+  }
 
   /**
     * Concrete implementation of our producer used by mainline code.

@@ -11,7 +11,8 @@ case class ConnectionConfig(
   bootstrapServers: NonEmptyList[String],
   clientId: String,
   requestTimeout: FiniteDuration,
-  closeTimeout: FiniteDuration
+  closeTimeout: FiniteDuration,
+  tls: Option[TlsConfig]
 )
 
 object ConnectionConfig {
