@@ -54,8 +54,8 @@ object KafkaProducer {
     * Some settings in the output are hard-coded to prevent silent data loss in the producer,
     * which isn't acceptable for our use-case.
     */
-  private def producerSettings[K: Serializer, V: Serializer](config: ConnectionConfig) =
-    ProducerSettings[K, V]
+  private def producerSettings[K: Serializer, V: Serializer](config: ConnectionConfig) = {
+    val base = ProducerSettings[K, V]
     // Required to connect to Kafka at all.
       .withBootstrapServers(config.bootstrapServers.intercalate(","))
       // For debugging on the Kafka server; adds an ID to the logs.
@@ -67,6 +67,9 @@ object KafkaProducer {
       // No "official" recommendation on these values, we can tweak as we see fit.
       .withRequestTimeout(config.requestTimeout)
       .withCloseTimeout(config.closeTimeout)
+
+    config.tls.fold(base)(tlsConfig => base.withProperties(tlsConfig.asMap))
+  }
 
   /**
     * Concrete implementation of our producer used by mainline code.

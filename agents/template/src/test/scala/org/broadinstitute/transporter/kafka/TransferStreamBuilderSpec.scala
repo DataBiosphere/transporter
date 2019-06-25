@@ -75,7 +75,7 @@ class TransferStreamBuilderSpec
     val builder = new TransferStreamBuilder(topics, runner)
     val topology = builder.build.unsafeRunSync()
     val config =
-      KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"), topics)
+      KStreamsConfig("test-app", List(s"localhost:${baseConfig.kafkaPort}"), topics, None)
 
     runStreams(
       List(topics.requestTopic, topics.progressTopic, topics.resultTopic),
