@@ -6,7 +6,7 @@ import pureconfig.generic.semiauto.deriveReader
 
 import scala.concurrent.duration.FiniteDuration
 
-/** Configuration determining how Transporter should interact with its backing Kafka cluster. */
+/** Configuration determining how Transporter should connect to its backing Kafka cluster. */
 case class ConnectionConfig(
   bootstrapServers: NonEmptyList[String],
   clientId: String,
