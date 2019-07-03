@@ -25,7 +25,7 @@ We package Transporter components into Docker images, and publish the images to
 are published on every merge to master.
 
 It should be possible to deploy Transporter anywhere Docker can run. We deploy to GKE using infrastructure in the
-[transporter-deploy](github.com/broadinstitute/transporter-deploy/README.md) repository.
+[dsp-ingest-deploy](https://github.com/broadinstitute/dsp-ingest-deploy/blob/master/README.md) repository.
 
 ## Building
 Transporter is built using `sbt`. Installation instructions for `sbt` are [here](https://www.scala-sbt.org/download.html).

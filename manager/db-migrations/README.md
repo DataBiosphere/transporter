@@ -25,5 +25,5 @@ sbt:transporter> transporter-manager-migrations/run
 ```
 
 ## Running Migrations on Deploy
-See the [transporter-deploy](github.com/broadinstitute/transporter-deploy/README.md) repository
+See the [dsp-ingest-deploy](https://github.com/broadinstitute/dsp-ingest-deploy/blob/master/README.md) repository
 for an example of how migrations can run as an init container through the Cloudsql proxy.
