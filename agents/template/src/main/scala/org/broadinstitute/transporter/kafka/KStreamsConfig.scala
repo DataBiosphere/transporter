@@ -4,7 +4,12 @@ import java.util.Properties
 
 import org.apache.kafka.streams.StreamsConfig
 import org.apache.kafka.streams.errors.LogAndFailExceptionHandler
-import org.broadinstitute.transporter.kafka.config.{TlsConfig, TopicConfig}
+import org.broadinstitute.transporter.kafka.config.{
+  ConnectionConfig,
+  ScramConfig,
+  TlsConfig,
+  TopicConfig
+}
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
@@ -15,7 +20,8 @@ case class KStreamsConfig(
   applicationId: String,
   bootstrapServers: List[String],
   topics: TopicConfig,
-  tls: Option[TlsConfig]
+  tls: Option[TlsConfig],
+  scramSha: Option[ScramConfig]
 ) {
 
   /**
@@ -24,8 +30,8 @@ case class KStreamsConfig(
     * Exposed for use by unit testing libs which try to helpfully perform the
     * Properties generation on their own.
     */
-  private[kafka] def asMap: Map[String, String] = {
-    val base = Map(
+  private[kafka] def asMap: Map[String, String] =
+    ConnectionConfig.securityProperties(tls, scramSha) ++ Map(
       StreamsConfig.APPLICATION_ID_CONFIG -> applicationId,
       StreamsConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers.mkString(","),
       StreamsConfig.PROCESSING_GUARANTEE_CONFIG -> StreamsConfig.EXACTLY_ONCE,
@@ -39,9 +45,6 @@ case class KStreamsConfig(
         LogAndFailExceptionHandler
       ].getName
     )
-
-    tls.fold(base)(_.asMap ++ base)
-  }
 
   /** Convert this config to the properties required by Kafka's Java API. */
   def asProperties: Properties = {

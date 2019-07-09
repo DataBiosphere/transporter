@@ -25,7 +25,8 @@ trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
     "kafka-test",
     requestTimeout = 2.seconds,
     closeTimeout = 1.second,
-    tls = None
+    tls = None,
+    scramSha = None
   )
 
   protected def withKafka[T](body: EmbeddedKafkaConfig => T): T =
