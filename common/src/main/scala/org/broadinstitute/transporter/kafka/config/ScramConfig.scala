@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.kafka.config
 
 import org.apache.kafka.common.config.SaslConfigs
+import org.apache.kafka.common.security.scram.ScramLoginModule
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
@@ -11,11 +12,11 @@ case class ScramConfig(username: String, password: String) {
   def asMap: Map[String, String] = Map(
     SaslConfigs.SASL_MECHANISM -> "SCRAM-SHA-256",
     SaslConfigs.SASL_JAAS_CONFIG -> List(
-      "org.apache.kafka.common.security.scram.ScramLoginModule",
+      classOf[ScramLoginModule].getName,
       "required",
       s"username=$username",
       s"password=$password"
-    ).mkString(" ")
+    ).mkString("", " ", ";")
   )
 }
 
