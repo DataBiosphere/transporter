@@ -58,7 +58,7 @@ object KafkaProducer {
     ProducerSettings[K, V]
     // Required to connect to Kafka at all.
       .withBootstrapServers(config.bootstrapServers.intercalate(","))
-      .withProperties(ConnectionConfig.securityProperties(config.tls, config.scramSha))
+      .withProperties(ConnectionConfig.securityProperties(config.tls, config.scram))
       // For debugging on the Kafka server; adds an ID to the logs.
       .withClientId(config.clientId)
       // Recommended for apps where it's not acceptable to lose messages.

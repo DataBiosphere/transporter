@@ -15,7 +15,7 @@ case class ConnectionConfig(
   requestTimeout: FiniteDuration,
   closeTimeout: FiniteDuration,
   tls: Option[TlsConfig],
-  scramSha: Option[ScramConfig]
+  scram: Option[ScramConfig]
 )
 
 object ConnectionConfig {

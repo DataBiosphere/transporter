@@ -84,7 +84,7 @@ object KafkaConsumer {
       ConsumerSettings[K, V](actorEc)
       // Required to connect to Kafka at all.
         .withBootstrapServers(conn.bootstrapServers.intercalate(","))
-        .withProperties(ConnectionConfig.securityProperties(conn.tls, conn.scramSha))
+        .withProperties(ConnectionConfig.securityProperties(conn.tls, conn.scram))
         // Required to be the same across all instances of a single application,
         // to avoid duplicate message processing.
         .withGroupId(consumer.groupId)
