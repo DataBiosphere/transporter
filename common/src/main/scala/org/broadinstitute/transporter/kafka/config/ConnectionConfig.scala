@@ -30,7 +30,7 @@ object ConnectionConfig {
     *
     * @param maybeTls optional config describing how the client should connect to Kafka over TLS
     * @param maybeScramSha optional config describing how the client should authenticate to Kafka
-    *                      using SASL SCRAM-SHA-256
+    *                      using SASL SCRAM
     */
   def securityProperties(
     maybeTls: Option[TlsConfig],
