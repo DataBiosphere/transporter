@@ -79,7 +79,7 @@ class TransferStreamBuilderSpec
       List(s"localhost:${baseConfig.kafkaPort}"),
       topics,
       tls = None,
-      scramSha = None
+      scram = None
     )
 
     runStreams(

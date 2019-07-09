@@ -21,7 +21,7 @@ case class KStreamsConfig(
   bootstrapServers: List[String],
   topics: TopicConfig,
   tls: Option[TlsConfig],
-  scramSha: Option[ScramConfig]
+  scram: Option[ScramConfig]
 ) {
 
   /**
@@ -31,7 +31,7 @@ case class KStreamsConfig(
     * Properties generation on their own.
     */
   private[kafka] def asMap: Map[String, String] =
-    ConnectionConfig.securityProperties(tls, scramSha) ++ Map(
+    ConnectionConfig.securityProperties(tls, scram) ++ Map(
       StreamsConfig.APPLICATION_ID_CONFIG -> applicationId,
       StreamsConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers.mkString(","),
       StreamsConfig.PROCESSING_GUARANTEE_CONFIG -> StreamsConfig.EXACTLY_ONCE,
