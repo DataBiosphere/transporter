@@ -81,9 +81,10 @@ object KafkaConsumer {
     // NOTE: This EC is backed by a single-threaded pool. If a pool with > 1 thread is created,
     // the Kafka libs will detect the possibility of concurrent modification and throw an exception.
     fs2.kafka.consumerExecutionContextResource[IO].map { actorEc =>
-      val base = ConsumerSettings[K, V](actorEc)
+      ConsumerSettings[K, V](actorEc)
       // Required to connect to Kafka at all.
         .withBootstrapServers(conn.bootstrapServers.intercalate(","))
+        .withProperties(ConnectionConfig.securityProperties(conn.tls, conn.scram))
         // Required to be the same across all instances of a single application,
         // to avoid duplicate message processing.
         .withGroupId(consumer.groupId)
@@ -100,8 +101,6 @@ object KafkaConsumer {
         // No "official" recommendation on these values, we can tweak as we see fit.
         .withRequestTimeout(conn.requestTimeout)
         .withCloseTimeout(conn.closeTimeout)
-
-      conn.tls.fold(base)(tlsConfig => base.withProperties(tlsConfig.asMap))
     }
 
   /**

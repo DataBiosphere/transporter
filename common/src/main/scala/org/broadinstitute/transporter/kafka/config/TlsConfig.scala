@@ -2,9 +2,7 @@ package org.broadinstitute.transporter.kafka.config
 
 import java.nio.file.Path
 
-import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.common.config.SslConfigs
-import org.apache.kafka.common.security.auth.SecurityProtocol
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
@@ -22,7 +20,6 @@ case class TlsConfig(
 
   /** Convert this config to a map containing the properties required by Kafka's API.  */
   def asMap: Map[String, String] = Map(
-    CommonClientConfigs.SECURITY_PROTOCOL_CONFIG -> SecurityProtocol.SSL.name,
     SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG -> truststorePath.toAbsolutePath.toString,
     SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG -> truststorePassword
   )
