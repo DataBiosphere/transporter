@@ -41,7 +41,7 @@ inThisBuild(
 val betterMonadicForVersion = "0.3.0"
 
 // Configuration.
-val pureConfigVersion = "0.11.0"
+val pureConfigVersion = "0.11.1"
 
 // Data types & control flow.
 val catsVersion = "1.6.0"
@@ -60,31 +60,31 @@ val everitJsonSchemaVersion = "1.11.1"
 
 // Kafka.
 val fs2KafkaVersion = "0.19.9"
-val kafkaVersion = "2.2.0"
+val kafkaVersion = "2.2.1"
 
 // Logging.
 val logbackVersion = "1.2.3"
 val log4catsVersion = "0.3.0"
-val log4sVersion = "1.8.1"
+val log4sVersion = "1.8.2"
 
 // Transfer.
-val googleAuthVersion = "0.16.1"
+val googleAuthVersion = "0.16.2"
 
 // Utils.
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val http4sVersion = "0.20.1"
+val http4sVersion = "0.20.6"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.22.2"
-val tapirVersion = "0.8.3"
+val swaggerUiVersion = "3.23.0"
+val tapirVersion = "0.9.0"
 
 // Testing.
-val liquibaseVersion = "3.6.3"
+val liquibaseVersion = "3.7.0"
 val scalaMockVersion = "4.2.0"
-val scalaTestVersion = "3.0.7"
-val testcontainersVersion = "1.11.3"
-val testcontainersScalaVersion = "0.25.0"
+val scalaTestVersion = "3.0.8"
+val testcontainersVersion = "1.11.4"
+val testcontainersScalaVersion = "0.29.0"
 
 // Settings to apply to all sub-projects.
 // Can't be applied at the build level because of scoping rules.
