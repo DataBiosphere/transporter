@@ -1,7 +1,6 @@
 package org.broadinstitute.transporter.info
 
 import org.broadinstitute.transporter.PostgresSpec
-import org.junit.runner.Description
 import org.scalamock.scalatest.MockFactory
 
 class InfoControllerSpec extends PostgresSpec with MockFactory {
@@ -23,7 +22,7 @@ class InfoControllerSpec extends PostgresSpec with MockFactory {
 
   it should "report not-OK when the DB is unreachable" in {
     val controller = new InfoController(version, transactor)
-    container.finished()(Description.EMPTY)
+    container.stop()
 
     controller.status
       .unsafeRunSync() shouldBe ManagerStatus(
