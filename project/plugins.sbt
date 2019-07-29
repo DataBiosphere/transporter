@@ -1,7 +1,7 @@
 // Inject build variables into app code.
 addSbtPlugin("com.eed3si9n" % "sbt-buildinfo" % "0.9.0")
 // App packaging.
-addSbtPlugin("com.typesafe.sbt" % "sbt-native-packager" % "1.3.19")
+addSbtPlugin("com.typesafe.sbt" % "sbt-native-packager" % "1.3.25")
 // Code formatting.
 addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.0.2")
 // Enable git access in the build.

@@ -27,10 +27,17 @@ pipeline {
             }
         }
         stage('Publish') {
-            when { branch 'master' }
+            // when { branch 'master' }
             steps {
                 script {
-                    def dockerProjects = ['aws-to-gcp-agent', 'echo-agent', 'manager', 'manager-migrations']
+                    def dockerProjects = [
+                    'aws-to-gcp-agent',
+                    'aws-to-gcp-agent-deploy',
+                    'echo-agent',
+                    'echo-agent-deploy',
+                    'manager',
+                    'manager-deploy',
+                    'manager-migrations']
                     sh "sbt ${dockerProjects.collect { "transporter-$it/Docker/publish" }.join(' ') }"
                 }
             }
