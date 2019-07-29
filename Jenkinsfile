@@ -13,6 +13,7 @@ pipeline {
     stages {
         stage('Sanity-check') {
             steps {
+                sh 'echo $PATH'
                 sh 'which gcloud'
             }
         }
