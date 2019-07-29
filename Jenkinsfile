@@ -8,9 +8,14 @@ pipeline {
         disableConcurrentBuilds()
     }
     environment {
-        PATH = "${tool('sbt')}:$PATH"
+        PATH = "${tool('gcloud')}:${tool('sbt')}:$PATH"
     }
     stages {
+        stage('Sanity-check') {
+            steps {
+                sh 'which gcloud'
+            }
+        }
         stage('Check formatting') {
             steps {
                 sh 'sbt scalafmtCheckAll'
