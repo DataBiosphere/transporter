@@ -1,6 +1,6 @@
 import com.typesafe.sbt.SbtNativePackager.autoImport.NativePackagerHelper
 import com.typesafe.sbt.packager.NativePackagerKeys
-import com.typesafe.sbt.packager.docker.{Cmd, DockerPlugin}
+import com.typesafe.sbt.packager.docker.{Cmd, DockerChmodType, DockerPlugin}
 import com.typesafe.sbt.packager.linux.LinuxKeys
 import com.typesafe.sbt.packager.universal.UniversalPlugin.autoImport._
 import sbt._
@@ -30,7 +30,9 @@ object TransporterDeployPlugin extends AutoPlugin with LinuxKeys with NativePack
             case (f, _) => makeRelative(f).map(relative => f -> relative)
           }
         }.value,
-        dockerEntrypoint := Seq("/usr/local/bin/cp-config.sh")
+        dockerChmodType := DockerChmodType.UserGroupWriteExecute,
+        dockerEntrypoint := Seq("/usr/local/bin/cp-config.sh"),
+        dockerCommands := dockerCommands.value :+ Cmd("WORKDIR", "/working")
       )
 
     List(deployProject)
