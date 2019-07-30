@@ -5,7 +5,6 @@ pipeline {
     options {
         timestamps()
         ansiColor('xterm')
-        disableConcurrentBuilds()
     }
     environment {
         PATH = "${tool('sbt')}:$PATH"
@@ -60,11 +59,19 @@ pipeline {
                             '#!/bin/bash',
                             'set +x -e',
                             'echo Publishing artifacts...',
+                            // Pull the login key for the service account that can publish to GCR.
                             'export VAULT_TOKEN=$(cat $VAULT_TOKEN_PATH)',
                             "vault read -format=json $saVaultKey | jq .data > $saTmp",
-                            'export CLOUDSDK_CONFIG=${WORKSPACE}',
+                            // Jenkins' home directory is read-only, so we have to set up
+                            // local storage to write temporary gcloud / docker configs.
+                            'export CLOUDSDK_CONFIG=${WORKSPACE}/.gcloud',
+                            'export DOCKER_CONFIG=${WORKSPACE}/.docker',
+                            'mkdir -p ${CLOUDSDK_CONFIG} ${DOCKER_CONFIG}',
+                            'cp -r ${HOME}/.docker/* ${DOCKER_CONFIG}/',
+                            // Log into gcloud, then link Docker to gcloud.
                             "gcloud auth activate-service-account \$(vault read -field=client_email $saVaultKey) --key-file=$saTmp",
                             'gcloud auth configure-docker --quiet',
+                            // Push :allthethings: if the setup succeeded.
                             "sbt ${dockerProjects.collect { "transporter-$it/Docker/publish" }.join(' ') }"
                     ]
 
