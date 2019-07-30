@@ -19,6 +19,8 @@ object TransporterDeployPlugin extends AutoPlugin with LinuxKeys with NativePack
       .settings(
         dockerBaseImage := "broadinstitute/configurator-base:1.0.2",
         dockerRepository := Some("us.gcr.io/broad-dsp-gcr-public"),
+        // Match DSP convention for init container names.
+        Docker / packageName := s"${proj.id}-config",
         Docker / defaultLinuxInstallLocation := "/configs",
         Docker / maintainer := "monster@broadinstitute.org",
         Universal / mappings := (Compile / baseDirectory).map { baseDir =>

@@ -291,7 +291,7 @@ lazy val `transporter-agent-template` = project
 /** Dummy agent to test framework plumbing. */
 lazy val `transporter-echo-agent` = project
   .in(file("./agents/echo"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(TransporterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(commonSettings)
 
