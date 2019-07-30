@@ -49,7 +49,6 @@ pipeline {
                             'aws-to-gcp-agent',
                             'aws-to-gcp-agent-deploy',
                             'echo-agent',
-                            'echo-agent-deploy',
                             'manager',
                             'manager-deploy',
                             'manager-migrations'
