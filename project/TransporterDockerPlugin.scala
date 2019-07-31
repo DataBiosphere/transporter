@@ -6,6 +6,10 @@ import sbt._
 import sbt.Keys._
 import sbt.plugins.JvmPlugin
 
+/**
+  * Docker plugin for transporter components, defines a variety of configurations
+  * for app containers when enabled for a project.
+  */
 object TransporterDockerPlugin extends AutoPlugin with LinuxKeys with NativePackagerKeys {
   import DockerPlugin.autoImport._
 

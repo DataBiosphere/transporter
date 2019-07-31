@@ -214,7 +214,7 @@ lazy val `transporter-manager-migrations` = project
 /** Web service which receives, distributes, and tracks transfer requests. */
 lazy val `transporter-manager` = project
   .in(file("./manager"))
-  .enablePlugins(BuildInfoPlugin, TransporterDockerPlugin)
+  .enablePlugins(BuildInfoPlugin, TransporterDeployPlugin)
   .dependsOn(`transporter-common`, `transporter-manager-migrations` % Test)
   .settings(commonSettings)
   .settings(
@@ -298,7 +298,7 @@ lazy val `transporter-echo-agent` = project
 /** Agent which can transfer files from AWS to GCP. */
 lazy val `transporter-aws-to-gcp-agent` = project
   .in(file("./agents/aws-to-gcp"))
-  .enablePlugins(TransporterDockerPlugin)
+  .enablePlugins(TransporterDeployPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(commonSettings)
   .settings(
