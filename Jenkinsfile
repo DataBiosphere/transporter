@@ -50,7 +50,7 @@ pipeline {
 
                     def steps = [
                             '#!/bin/bash',
-                            'set +x -e',
+                            'set +x -euo pipefail',
                             'echo Publishing artifacts...',
                             // Pull the login key for the service account that can publish to GCR.
                             'export VAULT_TOKEN=$(cat $VAULT_TOKEN_PATH)',
