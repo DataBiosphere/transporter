@@ -6,6 +6,10 @@ import com.typesafe.sbt.packager.universal.UniversalPlugin.autoImport._
 import sbt._
 import sbt.Keys._
 
+/**
+  * Docker plugin for transporter components, defines a variety of configurations
+  * for init containers when enabled for a project.
+  */
 object TransporterDeployPlugin extends AutoPlugin with LinuxKeys with NativePackagerKeys {
   import DockerPlugin.autoImport._
 
