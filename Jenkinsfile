@@ -39,14 +39,6 @@ pipeline {
                 script {
                     def saVaultKey = 'secret/dsde/monster/dev/gcr/broad-dsp-gcr-public-sa.json'
                     def saTmp = '${WORKSPACE}/sa-key.json'
-                    def dockerProjects = [
-                            'aws-to-gcp-agent',
-                            'aws-to-gcp-agent-deploy',
-                            'echo-agent',
-                            'manager',
-                            'manager-deploy',
-                            'manager-migrations'
-                    ]
 
                     def steps = [
                             '#!/bin/bash',
@@ -65,7 +57,7 @@ pipeline {
                             "gcloud auth activate-service-account \$(vault read -field=client_email $saVaultKey) --key-file=$saTmp",
                             'gcloud auth configure-docker --quiet',
                             // Push :allthethings: if the setup succeeded.
-                            "sbt ${dockerProjects.collect { "transporter-$it/Docker/publish" }.join(' ') }"
+                            'sbt publish'
                     ]
 
                     sh steps.join('\n')

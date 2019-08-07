@@ -109,8 +109,11 @@ val commonSettings = Seq(
   )
 )
 
+val commonNoPublish = commonSettings :+ (publish / skip := true)
+
 lazy val transporter = project
   .in(file("."))
+  .settings(publish / skip := true)
   .aggregate(
     `transporter-common`,
     `transporter-manager`,
@@ -122,7 +125,7 @@ lazy val transporter = project
 /** Definitions used by both the manager and agents. */
 lazy val `transporter-common` = project
   .in(file("./common"))
-  .settings(commonSettings)
+  .settings(commonNoPublish)
   .settings(
     // Needed to resolve JSON schema lib.
     resolvers += "Jitpack" at "https://jitpack.io",
@@ -264,7 +267,7 @@ lazy val `transporter-manager` = project
 lazy val `transporter-agent-template` = project
   .in(file("./agents/template"))
   .dependsOn(`transporter-common`)
-  .settings(commonSettings)
+  .settings(commonNoPublish)
   .settings(
     libraryDependencies ++= Seq(
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
