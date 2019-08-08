@@ -1,0 +1,152 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${service_account}
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ${service_account}-use-${pod_security_policy_role}
+subjects:
+  - kind: ServiceAccount
+    name: ${service_account}
+roleRef:
+  kind: Role
+  name: ${pod_security_policy_role}
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: transporter-manager
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: transporter-manager
+    spec:
+      serviceAccountName: ${service_account}
+      volumes:
+        - name: kafka-ca-cert
+          secret:
+            secretName: ${kafka_tls_secret_name}
+            items:
+              - key: ${kafka_tls_secret_key}
+                path: ca.crt
+                mode: 0444
+        - name: appdir
+          emptyDir: {}
+      initContainers:
+        - name: transporter-manager-config
+          image: us.gcr.io/broad-dsp-gcr-public/transporter-manager-config:<<VERSION>>
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: appdir
+              mountPath: /working
+          env:
+            - name: DB_URL
+              value: ${db_url}
+            - name: DB_NAME
+              value: ${db_name}
+            - name: DB_USERNAME
+              value: ${db_username}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${db_password_secret_name}
+                  key: ${db_password_secret_key}
+
+            - name: KAFKA_BOOTSTRAP_URL
+              value: ${kafka_url}
+            - name: KAFKA_CLUSTER_TRUSTSTORE_PATH
+              value: /tmp/client.truststore.jks
+            - name: KAFKA_CLUSTER_TRUSTSTORE_PASSWORD
+              value: required-by-keytool-but-not-meaningful-outside-of-pod
+            - name: KAFKA_SCRAM_USERNAME
+              value: ${kafka_username}
+            - name: KAFKA_SCRAM_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${kafka_password_secret_name}
+                  key: ${kafka_password_secret_key}
+            - name: KAFKA_SCRAM_ALGORITHM
+              value: ${kafka_password_scram_algorithm}
+
+            - name: REQUEST_TOPIC
+              value: ${requests_topic}
+            - name: PROGRESS_TOPIC
+              value: ${progress_topic}
+            - name: RESULT_TOPIC
+              value: ${result_topic}
+
+            - name: SUBMISSION_INTERVAL
+              value: 5s
+            - name: MAX_CONCURRENT_TRANSFERS
+              value: "1000"
+        - name: transporter-manager-migrations
+          image: broadinstitute/transporter-manager-migrations:<<VERSION>>
+          imagePullPolicy: IfNotPresent
+          command: [ "/bin/bash", "/etc/entrypoint.sh", "liquibase", "update" ]
+          volumeMounts:
+            - name: appdir
+              mountPath: /etc/entrypoint.sh
+              subPath: transporter-manager-migrations/entrypoint.sh
+      containers:
+        - name: transporter-manager
+          image: broadinstitute/transporter-manager:<<VERSION>>
+          imagePullPolicy: IfNotPresent
+          command: [ "/bin/bash", "/etc/entrypoint.sh" ]
+          env:
+            - name: TRANSPORTER_HEAP_SIZE
+              value: 1g
+          ports:
+            - name: http-port
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1728Mi
+            limits:
+              memory: 1920Mi
+          volumeMounts:
+            - name: appdir
+              mountPath: /etc/application.conf
+              subPath: transporter-manager/application.conf
+              readOnly: true
+            - name: appdir
+              mountPath: /etc/entrypoint.sh
+              subPath: transporter-manager/entrypoint.sh
+              readOnly: true
+            - name: kafka-ca-cert
+              mountPath: /etc/tls
+              subPath: ca.crt
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: http-port
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: http-port
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transporter-manager
+spec:
+  ports:
+    - port: 8080
+      targetPort: http-port
+  selector:
+    app: transporter-manager

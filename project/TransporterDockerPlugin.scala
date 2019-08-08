@@ -21,7 +21,9 @@ object TransporterDockerPlugin extends AutoPlugin with LinuxKeys with NativePack
     dockerExposedPorts := Seq(8080),
     dockerLabels := Map("TRANSPORTER_VERSION" -> version.value),
     Docker / defaultLinuxInstallLocation := "/app",
-    Docker / maintainer := "monster@broadinstitute.org"
+    Docker / maintainer := "monster@broadinstitute.org",
+    // Make our CI life easier and set up publish delegation here.
+    publish := (Docker / publish).value
   )
 
 }
