@@ -38,7 +38,7 @@ inThisBuild(
 )
 
 // Compiler plugins.
-val betterMonadicForVersion = "0.3.0"
+val betterMonadicForVersion = "0.3.1"
 
 // Configuration.
 val pureConfigVersion = "0.11.1"
@@ -74,16 +74,16 @@ val googleAuthVersion = "0.16.2"
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val http4sVersion = "0.20.6"
+val http4sVersion = "0.20.9"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.23.0"
-val tapirVersion = "0.9.0"
+val swaggerUiVersion = "3.23.4"
+val tapirVersion = "0.9.1"
 
 // Testing.
 val liquibaseVersion = "3.7.0"
 val scalaMockVersion = "4.2.0"
 val scalaTestVersion = "3.0.8"
-val testcontainersVersion = "1.11.4"
+val testcontainersVersion = "1.12.0"
 val testcontainersScalaVersion = "0.29.0"
 
 // Settings to apply to all sub-projects.
