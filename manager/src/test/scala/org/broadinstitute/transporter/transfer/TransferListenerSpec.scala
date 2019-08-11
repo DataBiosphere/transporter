@@ -266,4 +266,39 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
         recorded shouldBe json"""{ "step": 4 }"""
       }
   }
+
+  it should "not deadlock on concurrent batch updates" in withRequest { (tx, listener) =>
+    val ids = request1Transfers.map(_._1)
+    val updates = ids.zipWithIndex.map {
+      case (id, i) =>
+        TransferMessage(
+          TransferIds(request1Id, id),
+          i -> json"""{ "step": $i }"""
+        )
+    }
+    val results = ids.reverse.map { id =>
+      TransferMessage(
+        TransferIds(request1Id, id),
+        (TransferResult.Success: TransferResult) -> json"""{ "id": $id }"""
+      )
+    }
+
+    for {
+      _ <- ids.traverse_ { id =>
+        sql"update transfers set status = 'submitted' where id = $id".update.run
+      }.transact(tx)
+      _ <- (
+        listener.markTransfersInProgress(Chunk.seq(updates)),
+        listener.recordTransferResults(Chunk.seq(results))
+      ).parMapN {
+        case (_, _) => ()
+      }
+      statuses <- sql"select count(1) from transfers where status = 'succeeded'"
+        .query[Long]
+        .unique
+        .transact(tx)
+    } yield {
+      statuses shouldBe ids.length
+    }
+  }
 }
