@@ -1,5 +1,7 @@
 package org.broadinstitute.transporter.info
 
+import cats.effect.IO
+import doobie.util.transactor.Transactor
 import org.broadinstitute.transporter.PostgresSpec
 import org.scalamock.scalatest.MockFactory
 
@@ -21,8 +23,14 @@ class InfoControllerSpec extends PostgresSpec with MockFactory {
   }
 
   it should "report not-OK when the DB is unreachable" in {
-    val controller = new InfoController(version, transactor)
-    container.stop()
+    val badTransactor = Transactor.fromDriverManager[IO](
+      container.driverClassName,
+      container.jdbcUrl,
+      container.username,
+      "nope"
+    )
+
+    val controller = new InfoController(version, badTransactor)
 
     controller.status
       .unsafeRunSync() shouldBe ManagerStatus(
