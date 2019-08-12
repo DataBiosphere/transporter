@@ -79,18 +79,11 @@ class TransferListener private[transfer] (
       .mapValues(_.maxBy(_.message._1))
       .values
       .toVector
+      .sortBy(_.ids.transfer)
       .map {
         case TransferMessage(ids, (stepCount, message)) =>
-          (
-            TransferStatus.InProgress: TransferStatus,
-            message,
-            stepCount,
-            ids.transfer,
-            ids.request,
-            stepCount
-          )
+          (message, stepCount, ids.transfer, ids.request, stepCount)
       }
-      .sortBy(_._4)
 
     val statuses = List(TransferStatus.Submitted, TransferStatus.InProgress)
       .map(_.entryName.toLowerCase)
@@ -98,9 +91,10 @@ class TransferListener private[transfer] (
 
     for {
       now <- getNow
-      numUpdated <- Update[(TransferStatus, Json, Int, UUID, UUID, Int)](
+      numUpdated <- Update[(Json, Int, UUID, UUID, Int)](
         s"""update $TransfersTable
-           |set status = ?, info = ?, updated_at = ${timestampSql(now)}, steps_run = ?
+           |set status = '${TransferStatus.InProgress.entryName}',
+           |updated_at = ${timestampSql(now)}, info = ?, steps_run = ?
            |from $RequestsTable
            |where $TransfersTable.request_id = $RequestsTable.id
            |and $TransfersTable.status in $statuses
@@ -121,14 +115,16 @@ class TransferListener private[transfer] (
   ): IO[Int] =
     for {
       now <- getNow
-      statusUpdates = results.map {
-        case TransferMessage(ids, (result, info)) =>
-          val status = result match {
-            case TransferResult.Success      => TransferStatus.Succeeded
-            case TransferResult.FatalFailure => TransferStatus.Failed
-          }
-          (status, info, ids.transfer, ids.request)
-      }.toVector.sortBy(_._3)
+      statusUpdates = results.toVector
+        .sortBy(_.ids.transfer)
+        .map {
+          case TransferMessage(ids, (result, info)) =>
+            val status = result match {
+              case TransferResult.Success      => TransferStatus.Succeeded
+              case TransferResult.FatalFailure => TransferStatus.Failed
+            }
+            (status, info, ids.transfer, ids.request)
+        }
       numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
         s"""update $TransfersTable
            |set status = ?, info = ?, updated_at = ${timestampSql(now)}
