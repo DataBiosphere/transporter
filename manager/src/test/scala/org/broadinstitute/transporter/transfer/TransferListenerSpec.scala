@@ -25,7 +25,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
   private val results = mock[KafkaConsumer[(TransferResult, Json)]]
 
   private val request1Id = UUID.randomUUID()
-  private val request1Transfers = List.tabulate(10) { i =>
+  private val request1Transfers = List.tabulate(50) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 

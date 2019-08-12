@@ -74,28 +74,30 @@ class TransferListener private[transfer] (
   private[transfer] def markTransfersInProgress(
     progress: Chunk[TransferMessage[(Int, Json)]]
   ): IO[Int] = {
+    val statusUpdates = progress.toVector
+      .groupBy(_.ids)
+      .mapValues(_.maxBy(_.message._1))
+      .values
+      .toVector
+      .map {
+        case TransferMessage(ids, (stepCount, message)) =>
+          (
+            TransferStatus.InProgress: TransferStatus,
+            message,
+            stepCount,
+            ids.transfer,
+            ids.request,
+            stepCount
+          )
+      }
+      .sortBy(_._4)
+
     val statuses = List(TransferStatus.Submitted, TransferStatus.InProgress)
       .map(_.entryName.toLowerCase)
       .mkString("('", "','", "')")
+
     for {
       now <- getNow
-      statusUpdates = progress.toVector
-        .groupBy(_.ids)
-        .mapValues(_.maxBy(_.message._1))
-        .values
-        .toList
-        .map {
-          case TransferMessage(ids, (stepCount, message)) =>
-            (
-              TransferStatus.InProgress: TransferStatus,
-              message,
-              stepCount,
-              ids.transfer,
-              ids.request,
-              stepCount
-            )
-        }
-
       numUpdated <- Update[(TransferStatus, Json, Int, UUID, UUID, Int)](
         s"""update $TransfersTable
            |set status = ?, info = ?, updated_at = ${timestampSql(now)}, steps_run = ?
@@ -126,7 +128,7 @@ class TransferListener private[transfer] (
             case TransferResult.FatalFailure => TransferStatus.Failed
           }
           (status, info, ids.transfer, ids.request)
-      }
+      }.toVector.sortBy(_._3)
       numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
         s"""update $TransfersTable
            |set status = ?, info = ?, updated_at = ${timestampSql(now)}
