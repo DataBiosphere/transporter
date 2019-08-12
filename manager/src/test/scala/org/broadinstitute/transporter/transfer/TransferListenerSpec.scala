@@ -283,16 +283,14 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       )
     }
 
+    val doUpdate = listener.markTransfersInProgress(Chunk.seq(updates))
+    val doRecord = listener.recordTransferResults(Chunk.seq(results))
+
     for {
       _ <- ids.traverse_ { id =>
         sql"update transfers set status = 'submitted' where id = $id".update.run
       }.transact(tx)
-      _ <- (
-        listener.markTransfersInProgress(Chunk.seq(updates)),
-        listener.recordTransferResults(Chunk.seq(results))
-      ).parMapN {
-        case (_, _) => ()
-      }
+      _ <- List(doUpdate, doRecord, doRecord, doUpdate, doRecord, doUpdate).parSequence_
       statuses <- sql"select count(1) from transfers where status = 'succeeded'"
         .query[Long]
         .unique
