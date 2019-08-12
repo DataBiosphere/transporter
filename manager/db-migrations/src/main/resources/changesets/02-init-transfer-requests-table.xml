@@ -19,6 +19,7 @@
         </createTable>
 
         <sql>
+            DROP TYPE IF EXISTS transfer_status;
             CREATE TYPE transfer_status AS ENUM ('submitted', 'failed', 'succeeded')
         </sql>
 

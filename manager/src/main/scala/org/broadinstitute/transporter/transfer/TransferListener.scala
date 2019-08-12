@@ -74,31 +74,27 @@ class TransferListener private[transfer] (
   private[transfer] def markTransfersInProgress(
     progress: Chunk[TransferMessage[(Int, Json)]]
   ): IO[Int] = {
+    val statusUpdates = progress.toVector
+      .groupBy(_.ids)
+      .mapValues(_.maxBy(_.message._1))
+      .values
+      .toVector
+      .sortBy(_.ids.transfer)
+      .map {
+        case TransferMessage(ids, (stepCount, message)) =>
+          (message, stepCount, ids.transfer, ids.request, stepCount)
+      }
+
     val statuses = List(TransferStatus.Submitted, TransferStatus.InProgress)
       .map(_.entryName.toLowerCase)
       .mkString("('", "','", "')")
+
     for {
       now <- getNow
-      statusUpdates = progress.toVector
-        .groupBy(_.ids)
-        .mapValues(_.maxBy(_.message._1))
-        .values
-        .toList
-        .map {
-          case TransferMessage(ids, (stepCount, message)) =>
-            (
-              TransferStatus.InProgress: TransferStatus,
-              message,
-              stepCount,
-              ids.transfer,
-              ids.request,
-              stepCount
-            )
-        }
-
-      numUpdated <- Update[(TransferStatus, Json, Int, UUID, UUID, Int)](
+      numUpdated <- Update[(Json, Int, UUID, UUID, Int)](
         s"""update $TransfersTable
-           |set status = ?, info = ?, updated_at = ${timestampSql(now)}, steps_run = ?
+           |set status = '${TransferStatus.InProgress.entryName}',
+           |updated_at = ${timestampSql(now)}, info = ?, steps_run = ?
            |from $RequestsTable
            |where $TransfersTable.request_id = $RequestsTable.id
            |and $TransfersTable.status in $statuses
@@ -119,14 +115,16 @@ class TransferListener private[transfer] (
   ): IO[Int] =
     for {
       now <- getNow
-      statusUpdates = results.map {
-        case TransferMessage(ids, (result, info)) =>
-          val status = result match {
-            case TransferResult.Success      => TransferStatus.Succeeded
-            case TransferResult.FatalFailure => TransferStatus.Failed
-          }
-          (status, info, ids.transfer, ids.request)
-      }
+      statusUpdates = results.toVector
+        .sortBy(_.ids.transfer)
+        .map {
+          case TransferMessage(ids, (result, info)) =>
+            val status = result match {
+              case TransferResult.Success      => TransferStatus.Succeeded
+              case TransferResult.FatalFailure => TransferStatus.Failed
+            }
+            (status, info, ids.transfer, ids.request)
+        }
       numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
         s"""update $TransfersTable
            |set status = ?, info = ?, updated_at = ${timestampSql(now)}

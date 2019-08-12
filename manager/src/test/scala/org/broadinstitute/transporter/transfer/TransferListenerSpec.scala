@@ -25,7 +25,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
   private val results = mock[KafkaConsumer[(TransferResult, Json)]]
 
   private val request1Id = UUID.randomUUID()
-  private val request1Transfers = List.tabulate(10) { i =>
+  private val request1Transfers = List.tabulate(50) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 
@@ -265,5 +265,38 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       } yield {
         recorded shouldBe json"""{ "step": 4 }"""
       }
+  }
+
+  it should "not deadlock on concurrent batch updates" in withRequest { (tx, listener) =>
+    val ids = request1Transfers.map(_._1)
+    val updates = ids.zipWithIndex.map {
+      case (id, i) =>
+        TransferMessage(
+          TransferIds(request1Id, id),
+          i -> json"""{ "step": $i }"""
+        )
+    }
+    val results = ids.reverse.map { id =>
+      TransferMessage(
+        TransferIds(request1Id, id),
+        (TransferResult.Success: TransferResult) -> json"""{ "id": $id }"""
+      )
+    }
+
+    val doUpdate = listener.markTransfersInProgress(Chunk.seq(updates))
+    val doRecord = listener.recordTransferResults(Chunk.seq(results))
+
+    for {
+      _ <- ids.traverse_ { id =>
+        sql"update transfers set status = 'submitted' where id = $id".update.run
+      }.transact(tx)
+      _ <- List(doUpdate, doRecord, doRecord, doUpdate, doRecord, doUpdate).parSequence_
+      statuses <- sql"select count(1) from transfers where status = 'succeeded'"
+        .query[Long]
+        .unique
+        .transact(tx)
+    } yield {
+      statuses shouldBe ids.length
+    }
   }
 }

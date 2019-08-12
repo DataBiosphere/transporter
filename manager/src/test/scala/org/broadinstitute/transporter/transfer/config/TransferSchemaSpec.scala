@@ -5,7 +5,7 @@ import io.circe.syntax._
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
 class TransferSchemaSpec extends FlatSpec with Matchers with EitherValues {
-  behavior of "QueueSchema"
+  behavior of "TransferSchema"
 
   private val draft4Schema = json"""{
     "$$schema": ${TransferSchema.schemaUrl(4)},
