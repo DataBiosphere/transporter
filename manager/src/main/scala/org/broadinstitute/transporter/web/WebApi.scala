@@ -186,6 +186,20 @@ class WebApi(
         )
       }
 
+  private val reconsiderSingleTransferRoute: Route[(UUID, UUID), ApiError, RequestAck] =
+    transferBase
+      .in("reconsider" / path[UUID]("transfer-id"))
+      .put
+      .out(jsonBody[RequestAck])
+      .description("Reset the state of a single failed transfer in a request to 'pending'")
+      .serverLogic {
+        case (requestId, transferId) =>
+          buildResponse(
+            transferController.reconsiderSingleTransfer(requestId, transferId),
+            s"Failed to reconsider transfer for $transferId in request $requestId"
+          )
+      }
+
   private val detailsRoute: Route[(UUID, UUID), ApiError, TransferDetails] =
     transferBase
       .in("detail" / path[UUID]("transfer-id"))
@@ -208,6 +222,7 @@ class WebApi(
     requestOutputsRoute,
     requestFailuresRoute,
     reconsiderRoute,
+    reconsiderSingleTransferRoute,
     detailsRoute
   )
 

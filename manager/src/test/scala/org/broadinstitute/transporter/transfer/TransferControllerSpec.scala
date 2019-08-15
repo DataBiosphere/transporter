@@ -476,6 +476,46 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
+  it should "reconsider a specific failed transfer in a request" in withRequest {
+    (tx, controller) =>
+      val (id, body) = request1Transfers.head
+      for {
+        _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void.transact(tx)
+        ack <- controller.reconsiderSingleTransfer(request1Id, id)
+        n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        ack shouldBe RequestAck(request1Id, 1)
+        n shouldBe 0
+      }
+  }
+
+  it should "fail if the transfer is not a part of the enclosing request" in withController {
+    val transferId = UUID.randomUUID()
+    (_, controller) =>
+      controller
+        .reconsiderSingleTransfer(request1Id, transferId)
+        .attempt
+        .map(_.left.value shouldBe NotFound(transferId))
+  }
+
+  it should "not reconsider a successful transfer" in withRequest {
+    (tx, controller) =>
+      val (id, body) = request1Transfers.head
+      for {
+        ack <- controller.reconsiderSingleTransfer(request1Id, id)
+        n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        ack shouldBe RequestAck(request1Id, 0)
+        n shouldBe 0
+      }
+  }
+
   it should "get details for a single transfer" in withRequest { (tx, controller) =>
     val (id, body) = request1Transfers.head
     val submitted = Instant.now()

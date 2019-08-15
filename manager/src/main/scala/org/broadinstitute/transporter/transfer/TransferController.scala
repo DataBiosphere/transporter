@@ -218,6 +218,23 @@ class TransferController(
     }.map(RequestAck(requestId, _))
 
   /**
+    * Reset the status for a single failed transfer to 'pending' so that it will be re-submitted by the periodic
+    * sweeper.
+    */
+  def reconsiderSingleTransfer(requestId: UUID, transferId: UUID): IO[RequestAck] =
+    checkAndExec(requestId) { rId =>
+      List(
+        Fragment.const(s"update $TransfersTable t"),
+        fr"set status = ${TransferStatus.Pending: TransferStatus} from t",
+        Fragments.whereAnd(
+          fr"t.request_id = $rId",
+          fr"t.id = $transferId",
+          fr"t.status = ${TransferStatus.Failed: TransferStatus}"
+        )
+      ).combineAll.update.run
+    }.map(RequestAck(requestId, _))
+
+  /**
     * Get all information stored by Transporter about a specific transfer under a request.
     */
   def lookupTransferDetails(
