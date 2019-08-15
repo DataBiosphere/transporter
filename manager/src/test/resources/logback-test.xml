@@ -18,7 +18,7 @@
         <appender-ref ref="DOCKER-STDOUT" />
     </logger>
 
-    <!-- Kafka and Zookeeper are *very* noisy. -->
+    <!-- Suppress particularly noisy systems. -->
     <logger name="kafka" level="WARN" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
@@ -26,6 +26,9 @@
         <appender-ref ref="STDOUT" />
     </logger>
     <logger name="org.apache.zookeeper" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+    <logger name="liquibase" level="WARN" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
 
