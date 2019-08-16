@@ -12,8 +12,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   * to the Transporter manager.
   *
   * @param id unique ID of the request
-  * @param overallStatus top-level status for the request, derived based on
-  *                      the counts of individual statuses in `statusCounts`
+  * @param receivedAt timestamp when the request batch was stored by Transporter
   * @param statusCounts counts of the transfers in each potential "transfer status"
   *                     registered under the request
   * @param submittedAt timestamp when the first transfer of the request was submitted
@@ -21,15 +20,15 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   * @param updatedAt timestamp of the last message received from Kafka about a transfer
   *                  under this request
   */
-case class RequestStatus(
+case class RequestSummary(
   id: UUID,
-  overallStatus: TransferStatus,
+  receivedAt: OffsetDateTime,
   statusCounts: Map[TransferStatus, Long],
   submittedAt: Option[OffsetDateTime],
   updatedAt: Option[OffsetDateTime]
 )
 
-object RequestStatus {
-  implicit val decoder: Decoder[RequestStatus] = deriveDecoder
-  implicit val encoder: Encoder[RequestStatus] = deriveEncoder
+object RequestSummary {
+  implicit val decoder: Decoder[RequestSummary] = deriveDecoder
+  implicit val encoder: Encoder[RequestSummary] = deriveEncoder
 }
