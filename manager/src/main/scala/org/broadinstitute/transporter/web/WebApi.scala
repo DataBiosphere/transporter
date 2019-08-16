@@ -7,8 +7,6 @@ import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import enumeratum.{Enum, EnumEntry}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import io.circe.{Decoder, Encoder}
-import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import org.broadinstitute.transporter.BuildInfo
 import org.broadinstitute.transporter.error.ApiError
 import org.broadinstitute.transporter.info.{InfoController, ManagerStatus, ManagerVersion}
@@ -106,10 +104,11 @@ class WebApi(
 
   private val requestsBase = baseRoute.in("transfers")
 
-  private val lookupRequestsRoute: Route[(Long, Long), ApiError, Page[RequestSummary]] =
+  private val lookupRequestsRoute: LookupRoute[RequestSummary] =
     requestsBase
       .in(query[Long]("offset"))
       .in(query[Long]("limit"))
+      .in(query[SortOrder]("sort"))
       .out(jsonBody[Page[RequestSummary]])
       .errorOut(
         oneOf[ApiError](
@@ -121,11 +120,11 @@ class WebApi(
       )
       .description("List all transfer batches known to Transporter")
       .serverLogic {
-        case (offset, limit) =>
+        case (offset, limit, sort) =>
           buildResponse(
-            transferController.listRequests(offset, limit).map { requests =>
-              Page(requests, requests.size.toLong)
-            },
+            transferController
+              .listRequests(offset, limit, newestFirst = sort == SortOrder.Desc)
+              .map(requests => Page(requests, requests.size.toLong)),
             "Failed to list transfer batches"
           )
       }
@@ -401,10 +400,7 @@ object WebApi {
 
   type Route[I, E, O] = ServerEndpoint[I, E, O, Nothing, IO]
 
-  case class Page[I](items: List[I], total: Long)
-
-  implicit def decoder[I: Decoder]: Decoder[Page[I]] = deriveDecoder
-  implicit def encoder[I: Encoder]: Encoder[Page[I]] = deriveEncoder
+  type LookupRoute[E] = Route[(Long, Long, SortOrder), ApiError, Page[E]]
 
   /*
    * Tapir can auto-derive schemas for most types, but it needs
@@ -419,6 +415,15 @@ object WebApi {
 
   implicit def enumSchema[E <: EnumEntry: Enum]: SchemaFor[E] =
     SchemaFor(Schema.SString)
+
+  implicit def enumCodec[E <: EnumEntry](implicit E: Enum[E]): Codec.PlainCodec[E] =
+    Codec.stringPlainCodecUtf8.mapDecode { s =>
+      E.namesToValuesMap.get(s) match {
+        case Some(e) => DecodeResult.Value(e)
+        case None =>
+          DecodeResult.Mismatch(s"One of: ${E.values.map(_.entryName).mkString(",")}", s)
+      }
+    }(_.entryName)
 
   implicit def enumMapSchema[E <: EnumEntry, V](
     implicit e: Enum[E],

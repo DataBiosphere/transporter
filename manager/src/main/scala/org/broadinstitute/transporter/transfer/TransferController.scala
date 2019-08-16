@@ -40,15 +40,28 @@ class TransferController(
   private val logger = Slf4jLogger.getLogger[IO]
   private implicit val logHandler: LogHandler = DbLogHandler(logger)
 
-  def listRequests(offset: Long, limit: Long): IO[List[RequestSummary]] =
-    lookupSummaries(Left((offset, limit))).transact(dbClient)
+  def listRequests(
+    offset: Long,
+    limit: Long,
+    newestFirst: Boolean
+  ): IO[List[RequestSummary]] =
+    lookupSummaries(Left((offset, limit)), newestFirst)
+      .transact(dbClient)
 
   private def lookupSummaries(
-    paginationOrId: Either[(Long, Long), UUID]
+    paginationOrId: Either[(Long, Long), UUID],
+    newestFirst: Boolean = true
   ): ConnectionIO[List[RequestSummary]] = {
+
+    val order = Fragment.const(if (newestFirst) "desc" else "asc")
+
+    val groupBy = fr"group by r.id, t.status"
     val filterOrLimit = paginationOrId.fold(
-      { case (offset, limit) => fr"order by r.id limit $limit offset $offset" },
-      id => fr"where r.id = $id"
+      {
+        case (offset, limit) =>
+          groupBy ++ fr"order by r.id" ++ order ++ fr"limit $limit offset $offset"
+      },
+      id => fr"where r.id = $id" ++ groupBy
     )
 
     val tempTable = "id_status_summaries"
@@ -59,8 +72,7 @@ class TransferController(
       fr"select r.id as id, t.status as status,",
       fr"min(t.submitted_at) as submit_t, max(t.updated_at) as update_t, count(t.id) as n",
       fr"from" ++ TransfersJoinTable,
-      filterOrLimit,
-      fr"group by r.id, t.status"
+      filterOrLimit
     ).combineAll
 
     val pivotTable = "count_pivot"
@@ -89,7 +101,8 @@ class TransferController(
       Fragment.const(
         s"(select id, min(submit_t) as first_submit, max(update_t) as last_update from $tempTable group by id) as times"
       ),
-      Fragment.const(s"left join $pivotTable using (id)")
+      Fragment.const(s"left join $pivotTable using (id)"),
+      fr"order by id" ++ order
     ).combineAll
 
     for {

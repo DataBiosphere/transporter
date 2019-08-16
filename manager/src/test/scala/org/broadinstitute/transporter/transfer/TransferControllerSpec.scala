@@ -118,6 +118,44 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
+  it should "get summaries for all tracked requests" in withRequest { (_, controller) =>
+    controller.listRequests(offset = 0, limit = 2, newestFirst = false).map { requests =>
+      requests should have length 2
+      val req1 = requests.head
+      val req2 = requests.last
+
+      req1.id shouldBe request1Id
+      req2.id shouldBe request2Id
+    }
+  }
+
+  it should "order tracked summaries depending on user input" in withRequest {
+    (_, controller) =>
+      controller.listRequests(offset = 0, limit = 2, newestFirst = true).map { requests =>
+        requests should have length 2
+        val req1 = requests.head
+        val req2 = requests.last
+
+        req1.id shouldBe request2Id
+        req2.id shouldBe request1Id
+      }
+  }
+
+  it should "paginate list of tracked summaries" in withRequest { (_, controller) =>
+    for {
+      out1 <- controller.listRequests(offset = 1, limit = 10, newestFirst = true)
+      out2 <- controller.listRequests(offset = 1, limit = 10, newestFirst = false)
+      out3 <- controller.listRequests(offset = 100, limit = 1, newestFirst = true)
+    } yield {
+      out1 should have length 1
+      out2 should have length 1
+      out3 shouldBe empty
+
+      out1.head.id shouldBe request2Id
+      out2.head.id shouldBe request1Id
+    }
+  }
+
   it should "get summaries for registered transfers" in withRequest { (tx, controller) =>
     val now = Instant.now
     val fakeSubmitted = request1Transfers.take(3).map(_._1)
