@@ -430,12 +430,14 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     (tx, controller) =>
       val (id, _) = request1Transfers.head
       for {
-        before <- sql"select count(*) from transfers"
+        _ <- sql"update transfers set status = ${TransferStatus.InProgress: TransferStatus} where id = $id".update.run.void
+          .transact(tx)
+        before <- sql"select count(*) from transfers where status = ${TransferStatus.Pending: TransferStatus}"
           .query[Long]
           .unique
           .transact(tx)
         ack <- controller.reconsiderSingleTransfer(request1Id, id)
-        after <- sql"select count(*) from transfers"
+        after <- sql"select count(*) from transfers where status = ${TransferStatus.Pending: TransferStatus}"
           .query[Long]
           .unique
           .transact(tx)
