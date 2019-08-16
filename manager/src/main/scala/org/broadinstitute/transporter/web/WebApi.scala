@@ -104,30 +104,33 @@ class WebApi(
 
   private val requestsBase = baseRoute.in("transfers")
 
-  private val lookupRequestsRoute: LookupRoute[RequestSummary] =
-    requestsBase
-      .in(query[Long]("offset"))
-      .in(query[Long]("limit"))
-      .in(query[SortOrder]("sort"))
-      .out(jsonBody[Page[RequestSummary]])
-      .errorOut(
-        oneOf[ApiError](
-          statusMapping(
-            StatusCodes.InternalServerError,
-            jsonBody[ApiError.UnhandledError]
-          )
+  private val lookupRequestsRoute: Route[
+    (Long, Long, SortOrder),
+    ApiError,
+    Page[RequestSummary]
+  ] = requestsBase
+    .in(query[Long]("offset"))
+    .in(query[Long]("limit"))
+    .in(query[SortOrder]("sort"))
+    .out(jsonBody[Page[RequestSummary]])
+    .errorOut(
+      oneOf[ApiError](
+        statusMapping(
+          StatusCodes.InternalServerError,
+          jsonBody[ApiError.UnhandledError]
         )
       )
-      .description("List all transfer batches known to Transporter")
-      .serverLogic {
-        case (offset, limit, sort) =>
-          buildResponse(
-            transferController
-              .listRequests(offset, limit, newestFirst = sort == SortOrder.Desc)
-              .map(requests => Page(requests, requests.size.toLong)),
-            "Failed to list transfer batches"
-          )
-      }
+    )
+    .description("List all transfer batches known to Transporter")
+    .serverLogic {
+      case (offset, limit, sort) =>
+        buildResponse(
+          transferController
+            .listRequests(offset, limit, newestFirst = sort == SortOrder.Desc)
+            .map(requests => Page(requests, requests.length)),
+          "Failed to list transfer batches"
+        )
+    }
 
   private val requestBase = requestsBase
     .in(path[UUID]("request-id"))
@@ -400,8 +403,6 @@ object WebApi {
 
   type Route[I, E, O] = ServerEndpoint[I, E, O, Nothing, IO]
 
-  type LookupRoute[E] = Route[(Long, Long, SortOrder), ApiError, Page[E]]
-
   /*
    * Tapir can auto-derive schemas for most types, but it needs
    * some help for classes that we'd rather have map to standard
@@ -423,7 +424,7 @@ object WebApi {
         case None =>
           DecodeResult.Mismatch(s"One of: ${E.values.map(_.entryName).mkString(",")}", s)
       }
-    }(_.entryName)
+    }(_.entryName).schema(enumSchema[E].schema)
 
   implicit def enumMapSchema[E <: EnumEntry, V](
     implicit e: Enum[E],

@@ -40,6 +40,10 @@ class TransferController(
   private val logger = Slf4jLogger.getLogger[IO]
   private implicit val logHandler: LogHandler = DbLogHandler(logger)
 
+  /**
+    * Fetch summaries of all the batch requests stored by Transporter
+    * which fall within a specified page range.
+    */
   def listRequests(
     offset: Long,
     limit: Long,
@@ -48,6 +52,13 @@ class TransferController(
     lookupSummaries(Left((offset, limit)), newestFirst)
       .transact(dbClient)
 
+  /**
+    * Fetch summaries of either:
+    *   1. All batch requests stored by Transporter which fall in a page range, or
+    *   2. A specific batch requests, identified by ID
+    *
+    * Batch requests are ordered by their IDs for now.
+    */
   private def lookupSummaries(
     paginationOrId: Either[(Long, Long), UUID],
     newestFirst: Boolean = true

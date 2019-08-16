@@ -5,6 +5,12 @@ import enumeratum.EnumEntry.Lowercase
 
 import scala.collection.immutable.IndexedSeq
 
+/**
+  * Enum modeling valid sort orders for lookup requests.
+  *
+  * Scoped at the `web` layer because it's mainly useful for
+  * generating detailed OpenAPI documentation.
+  */
 sealed trait SortOrder extends EnumEntry with Lowercase
 
 object SortOrder extends Enum[SortOrder] {
