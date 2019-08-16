@@ -478,9 +478,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
   it should "reconsider a specific failed transfer in a request" in withRequest {
     (tx, controller) =>
-      val (id, body) = request1Transfers.head
+      val (id, _) = request1Transfers.head
       for {
-        _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void.transact(tx)
+        _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void
+          .transact(tx)
         ack <- controller.reconsiderSingleTransfer(request1Id, id)
         n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
           .query[Long]
@@ -498,22 +499,21 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller
         .reconsiderSingleTransfer(request1Id, transferId)
         .attempt
-        .map(_.left.value shouldBe NotFound(transferId))
+        .map(_.left.value shouldBe NotFound(request1Id, Some(transferId)))
   }
 
-  it should "not reconsider a successful transfer" in withRequest {
-    (tx, controller) =>
-      val (id, body) = request1Transfers.head
-      for {
-        ack <- controller.reconsiderSingleTransfer(request1Id, id)
-        n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
-          .query[Long]
-          .unique
-          .transact(tx)
-      } yield {
-        ack shouldBe RequestAck(request1Id, 0)
-        n shouldBe 0
-      }
+  it should "not reconsider a successful transfer" in withRequest { (tx, controller) =>
+    val (id, _) = request1Transfers.head
+    for {
+      ack <- controller.reconsiderSingleTransfer(request1Id, id)
+      n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        .query[Long]
+        .unique
+        .transact(tx)
+    } yield {
+      ack shouldBe RequestAck(request1Id, 0)
+      n shouldBe 0
+    }
   }
 
   it should "get details for a single transfer" in withRequest { (tx, controller) =>

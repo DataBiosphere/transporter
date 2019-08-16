@@ -191,7 +191,9 @@ class WebApi(
       .in("reconsider" / path[UUID]("transfer-id"))
       .put
       .out(jsonBody[RequestAck])
-      .description("Reset the state of a single failed transfer in a request to 'pending'")
+      .description(
+        "Reset the state of a single failed transfer in a request to 'pending'"
+      )
       .serverLogic {
         case (requestId, transferId) =>
           buildResponse(

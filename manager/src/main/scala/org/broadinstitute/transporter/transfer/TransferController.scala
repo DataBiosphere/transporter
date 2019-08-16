@@ -128,6 +128,33 @@ class TransferController(
     transaction.transact(dbClient)
   }
 
+  /**
+    * Check that a transfer with the given ID exists, then run an operation using the ID as input.
+    *
+    * Utility for sharing guardrails across transfer-level operations in the controller.
+    */
+  private def checkAndExec[Out](requestId: UUID, transferId: UUID)(
+    f: (UUID, UUID) => ConnectionIO[Out]
+  ): IO[Out] = {
+    val transaction = for {
+      requestRow <- List(
+        Fragment.const(s"select 1 from $TransfersTable"),
+        Fragments.whereAnd(fr"request_id = $requestId", fr"id = $transferId")
+      ).combineAll
+        .query[Long]
+        .option
+      _ <- IO
+        .raiseError(NotFound(requestId, Some(transferId)))
+        .whenA(requestRow.isEmpty)
+        .to[ConnectionIO]
+      out <- f(requestId, transferId)
+    } yield {
+      out
+    }
+
+    transaction.transact(dbClient)
+  }
+
   /** Get the current summary-level status for a request. */
   def lookupRequestStatus(requestId: UUID): IO[RequestStatus] =
     checkAndExec(requestId) { rId =>
@@ -222,13 +249,13 @@ class TransferController(
     * sweeper.
     */
   def reconsiderSingleTransfer(requestId: UUID, transferId: UUID): IO[RequestAck] =
-    checkAndExec(requestId) { rId =>
+    checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
         Fragment.const(s"update $TransfersTable t"),
-        fr"set status = ${TransferStatus.Pending: TransferStatus} from t",
+        fr"set status = ${TransferStatus.Pending: TransferStatus}",
         Fragments.whereAnd(
           fr"t.request_id = $rId",
-          fr"t.id = $transferId",
+          fr"t.id = $tId",
           fr"t.status = ${TransferStatus.Failed: TransferStatus}"
         )
       ).combineAll.update.run
