@@ -124,10 +124,15 @@ class WebApi(
     .description("List all transfer batches known to Transporter")
     .serverLogic {
       case (offset, limit, sort) =>
+        val getPage = transferController.listRequests(
+          offset,
+          limit,
+          newestFirst = sort == SortOrder.Desc
+        )
+        val getTotal = transferController.countRequests
+
         buildResponse(
-          transferController
-            .listRequests(offset, limit, newestFirst = sort == SortOrder.Desc)
-            .map(requests => Page(requests, requests.length)),
+          (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
           "Failed to list transfer batches"
         )
     }

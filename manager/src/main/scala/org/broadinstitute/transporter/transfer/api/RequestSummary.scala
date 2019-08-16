@@ -12,6 +12,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   * to the Transporter manager.
   *
   * @param id unique ID of the request
+  * @param receivedAt timestamp when the request batch was stored by Transporter
   * @param statusCounts counts of the transfers in each potential "transfer status"
   *                     registered under the request
   * @param submittedAt timestamp when the first transfer of the request was submitted
@@ -21,6 +22,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   */
 case class RequestSummary(
   id: UUID,
+  receivedAt: OffsetDateTime,
   statusCounts: Map[TransferStatus, Long],
   submittedAt: Option[OffsetDateTime],
   updatedAt: Option[OffsetDateTime]

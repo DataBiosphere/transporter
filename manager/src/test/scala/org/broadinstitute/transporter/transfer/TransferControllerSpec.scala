@@ -4,7 +4,7 @@ import java.sql.Timestamp
 import java.time.{Instant, OffsetDateTime, ZoneId}
 import java.util.UUID
 
-import cats.effect.IO
+import cats.effect.{Clock, IO}
 import cats.implicits._
 import doobie._
 import doobie.implicits._
@@ -16,8 +16,16 @@ import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.EitherValues
 
+import scala.concurrent.duration.TimeUnit
+
 class TransferControllerSpec extends PostgresSpec with MockFactory with EitherValues {
   import org.broadinstitute.transporter.db.DoobieInstances._
+
+  val nowMillis = 1234L
+  private implicit val clk: Clock[IO] = new Clock[IO] {
+    override def realTime(unit: TimeUnit): IO[Long] = IO.pure(nowMillis)
+    override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(nowMillis)
+  }
 
   private val requestSchema =
     json"""{ "type": "object" }""".as[TransferSchema].right.value
@@ -41,8 +49,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   def withRequest(test: (Transactor[IO], TransferController) => IO[Any]): Unit =
     withController { (tx, controller) =>
       val setup = for {
-        _ <- List(request1Id, request2Id).traverse_ { id =>
-          sql"insert into transfer_requests (id) values ($id)".update.run.void
+        _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
+          case (id, i) =>
+            val ts = Timestamp.from(Instant.ofEpochMilli(nowMillis + i))
+            sql"insert into transfer_requests (id, received_at) values ($id, $ts)".update.run.void
         }
         _ <- request1Transfers.traverse_ {
           case (id, body) =>
@@ -118,6 +128,15 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
+  it should "count all tracked requests" in withRequest { (_, controller) =>
+    controller.countRequests.map(_ shouldBe 2)
+  }
+
+  it should "not fail counting when no requests are tracked" in withController {
+    (_, controller) =>
+      controller.countRequests.map(_ shouldBe 0)
+  }
+
   it should "get summaries for all tracked requests" in withRequest { (_, controller) =>
     controller.listRequests(offset = 0, limit = 2, newestFirst = false).map { requests =>
       requests should have length 2
@@ -143,8 +162,11 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
   it should "paginate list of tracked summaries" in withRequest { (_, controller) =>
     for {
-      out1 <- controller.listRequests(offset = 1, limit = 10, newestFirst = true)
-      out2 <- controller.listRequests(offset = 1, limit = 10, newestFirst = false)
+      // Order oldest to newest, skip the first one, expect to get the newest
+      out1 <- controller.listRequests(offset = 1, limit = 10, newestFirst = false)
+      // Order newest to oldest, skip the first one, expect to get the oldest
+      out2 <- controller.listRequests(offset = 1, limit = 10, newestFirst = true)
+      // Skip past everything to make sure we don't crash on nonsense limits
       out3 <- controller.listRequests(offset = 100, limit = 1, newestFirst = true)
     } yield {
       out1 should have length 1
@@ -197,6 +219,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     } yield {
       summary shouldBe RequestSummary(
         request1Id,
+        OffsetDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), ZoneId.of("UTC")),
         Map(
           TransferStatus.Pending -> 1,
           TransferStatus.Submitted -> 3,
@@ -218,6 +241,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       } yield {
         summary1 shouldBe RequestSummary(
           request1Id,
+          OffsetDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), ZoneId.of("UTC")),
           TransferStatus.values.map(_ -> 0L).toMap ++ Map(
             TransferStatus.Pending -> request1Transfers.length.toLong
           ),
@@ -226,6 +250,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         )
         summary2 shouldBe RequestSummary(
           request2Id,
+          OffsetDateTime.ofInstant(Instant.ofEpochMilli(nowMillis + 1), ZoneId.of("UTC")),
           TransferStatus.values.map(_ -> 0L).toMap ++ Map(
             TransferStatus.Pending -> request2Transfers.length.toLong
           ),

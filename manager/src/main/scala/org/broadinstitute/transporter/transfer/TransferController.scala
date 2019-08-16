@@ -1,9 +1,10 @@
 package org.broadinstitute.transporter.transfer
 
+import java.time.Instant
 import java.util.UUID
 
 import cats.data.Validated.{Invalid, Valid}
-import cats.effect.IO
+import cats.effect.{Clock, IO}
 import cats.implicits._
 import doobie._
 import doobie.implicits._
@@ -32,13 +33,21 @@ import org.broadinstitute.transporter.transfer.config.TransferSchema
 class TransferController(
   schema: TransferSchema,
   dbClient: Transactor[IO]
-) {
+)(implicit clk: Clock[IO]) {
 
   import DoobieInstances._
   import Constants._
 
   private val logger = Slf4jLogger.getLogger[IO]
   private implicit val logHandler: LogHandler = DbLogHandler(logger)
+
+  /** Get the total number of transfer requests stored by Transporter. */
+  def countRequests: IO[Long] =
+    Fragment
+      .const(s"select count(1) from $RequestsTable")
+      .query[Long]
+      .unique
+      .transact(dbClient)
 
   /**
     * Fetch summaries of all the batch requests stored by Transporter
@@ -66,11 +75,11 @@ class TransferController(
 
     val order = Fragment.const(if (newestFirst) "desc" else "asc")
 
-    val groupBy = fr"group by r.id, t.status"
+    val groupBy = fr"group by r.id, r.received_at, t.status"
     val filterOrLimit = paginationOrId.fold(
       {
         case (offset, limit) =>
-          groupBy ++ fr"order by r.id" ++ order ++ fr"limit $limit offset $offset"
+          groupBy ++ fr"order by r.received_at" ++ order ++ fr"limit $limit offset $offset"
       },
       id => fr"where r.id = $id" ++ groupBy
     )
@@ -80,7 +89,7 @@ class TransferController(
     // The 'crosstab' function needs a real (if temporary) table to work.
     val createTempTable = List(
       Fragment.const(s"create temporary table $tempTable as"),
-      fr"select r.id as id, t.status as status,",
+      fr"select r.id as id, t.status as status, r.received_at as receive_t,",
       fr"min(t.submitted_at) as submit_t, max(t.updated_at) as update_t, count(t.id) as n",
       fr"from" ++ TransfersJoinTable,
       filterOrLimit
@@ -108,12 +117,15 @@ class TransferController(
     ).combineAll
 
     val getSummaryInfo = List(
-      fr"select id, json_build_object(" ++ statusKvPairs ++ fr"), first_submit, last_update from",
+      fr"select id, received_at, json_build_object(" ++ statusKvPairs ++ fr"), first_submit, last_update from",
       Fragment.const(
-        s"(select id, min(submit_t) as first_submit, max(update_t) as last_update from $tempTable group by id) as times"
+        s"""(
+           |  select id, receive_t as received_at, min(submit_t) as first_submit, max(update_t) as last_update
+           |  from $tempTable group by id, receive_t
+           |) as times""".stripMargin
       ),
       Fragment.const(s"left join $pivotTable using (id)"),
-      fr"order by id" ++ order
+      fr"order by received_at" ++ order
     ).combineAll
 
     for {
@@ -137,19 +149,30 @@ class TransferController(
     for {
       _ <- validateRequests(request.transfers)
       _ <- logger.info(
-        s"Submitting ${request.transfers.length} transfers"
+        s"Received ${request.transfers.length} transfers"
       )
-      ack <- recordTransferRequest(request).transact(dbClient)
+      now <- clk
+        .realTime(scala.concurrent.duration.MILLISECONDS)
+        .map(Instant.ofEpochMilli)
+      ack <- recordTransferRequest(request, now).transact(dbClient)
     } yield {
       ack
     }
 
   /** Record a batch of validated transfers with the given ID. */
-  private def recordTransferRequest(request: BulkRequest): ConnectionIO[RequestAck] =
+  private def recordTransferRequest(
+    request: BulkRequest,
+    now: Instant
+  ): ConnectionIO[RequestAck] = {
+    val requestId = UUID.randomUUID()
+
+    val updateSql = List(
+      Fragment.const(s"insert into $RequestsTable (id, received_at) values"),
+      fr"($requestId," ++ Fragment.const(timestampSql(now)) ++ fr")"
+    ).combineAll
+
     for {
-      requestId <- (Fragment
-        .const(s"insert into $RequestsTable (id) values") ++ fr"(${UUID.randomUUID()})").update
-        .withUniqueGeneratedKeys[UUID]("id")
+      requestId <- updateSql.update.withUniqueGeneratedKeys[UUID]("id")
       transferInfo = request.transfers.map { body =>
         (UUID.randomUUID(), requestId, TransferStatus.Pending: TransferStatus, body, -1)
       }
@@ -159,6 +182,7 @@ class TransferController(
     } yield {
       RequestAck(requestId, transferCount)
     }
+  }
 
   /** Validate that every request in a batch matches an expected JSON schema. */
   private def validateRequests(requests: List[Json]): IO[Unit] =
