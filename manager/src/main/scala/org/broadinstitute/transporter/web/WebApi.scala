@@ -102,8 +102,43 @@ class WebApi(
       .in("api" / "transporter" / "v1")
       .tag("Transfers")
 
-  private val transferBase = baseRoute
-    .in("transfers" / path[UUID]("request-id"))
+  private val requestsBase = baseRoute.in("transfers")
+
+  private val lookupRequestsRoute: Route[
+    (Long, Long, SortOrder),
+    ApiError,
+    Page[RequestSummary]
+  ] = requestsBase
+    .in(query[Long]("offset"))
+    .in(query[Long]("limit"))
+    .in(query[SortOrder]("sort"))
+    .out(jsonBody[Page[RequestSummary]])
+    .errorOut(
+      oneOf[ApiError](
+        statusMapping(
+          StatusCodes.InternalServerError,
+          jsonBody[ApiError.UnhandledError]
+        )
+      )
+    )
+    .description("List all transfer batches known to Transporter")
+    .serverLogic {
+      case (offset, limit, sort) =>
+        val getPage = transferController.listRequests(
+          offset,
+          limit,
+          newestFirst = sort == SortOrder.Desc
+        )
+        val getTotal = transferController.countRequests
+
+        buildResponse(
+          (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
+          "Failed to list transfer batches"
+        )
+    }
+
+  private val requestBase = requestsBase
+    .in(path[UUID]("request-id"))
     .errorOut(
       oneOf(
         statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
@@ -115,9 +150,7 @@ class WebApi(
     )
 
   private val batchSubmitRoute: Route[BulkRequest, ApiError, RequestAck] =
-    baseRoute
-      .in("transfers")
-      .post
+    requestsBase.post
       .in(jsonBody[BulkRequest])
       .out(jsonBody[RequestAck])
       .errorOut(
@@ -132,15 +165,15 @@ class WebApi(
       .description("Submit a new batch of transfer requests")
       .serverLogic { request =>
         buildResponse(
-          transferController.recordTransfer(request),
+          transferController.recordRequest(request),
           "Failed to submit request"
         )
       }
 
-  private val requestStatusRoute: Route[UUID, ApiError, RequestStatus] =
-    transferBase
+  private val requestStatusRoute: Route[UUID, ApiError, RequestSummary] =
+    requestBase
       .in("status")
-      .out(jsonBody[RequestStatus])
+      .out(jsonBody[RequestSummary])
       .description("Get the current summary status of a transfer request")
       .serverLogic { requestId =>
         buildResponse(
@@ -150,7 +183,7 @@ class WebApi(
       }
 
   private val requestOutputsRoute: Route[UUID, ApiError, RequestInfo] =
-    transferBase
+    requestBase
       .in("outputs")
       .out(jsonBody[RequestInfo])
       .description("Get the outputs of successful transfers from a request")
@@ -162,7 +195,7 @@ class WebApi(
       }
 
   private val requestFailuresRoute: Route[UUID, ApiError, RequestInfo] =
-    transferBase
+    requestBase
       .in("failures")
       .out(jsonBody[RequestInfo])
       .description("Get the outputs of failed transfers from a request")
@@ -174,7 +207,7 @@ class WebApi(
       }
 
   private val reconsiderRoute: Route[UUID, ApiError, RequestAck] =
-    transferBase
+    requestBase
       .in("reconsider")
       .put
       .out(jsonBody[RequestAck])
@@ -187,7 +220,7 @@ class WebApi(
       }
 
   private val detailsRoute: Route[(UUID, UUID), ApiError, TransferDetails] =
-    transferBase
+    requestBase
       .in("detail" / path[UUID]("transfer-id"))
       .out(jsonBody[TransferDetails])
       .description("Get detailed info about a single transfer from a request")
@@ -203,6 +236,7 @@ class WebApi(
   private val documentedRoutes = List(
     statusRoute,
     versionRoute,
+    lookupRequestsRoute,
     batchSubmitRoute,
     requestStatusRoute,
     requestOutputsRoute,
@@ -387,6 +421,15 @@ object WebApi {
 
   implicit def enumSchema[E <: EnumEntry: Enum]: SchemaFor[E] =
     SchemaFor(Schema.SString)
+
+  implicit def enumCodec[E <: EnumEntry](implicit E: Enum[E]): Codec.PlainCodec[E] =
+    Codec.stringPlainCodecUtf8.mapDecode { s =>
+      E.namesToValuesMap.get(s) match {
+        case Some(e) => DecodeResult.Value(e)
+        case None =>
+          DecodeResult.Mismatch(s"One of: ${E.values.map(_.entryName).mkString(",")}", s)
+      }
+    }(_.entryName).schema(enumSchema[E].schema)
 
   implicit def enumMapSchema[E <: EnumEntry, V](
     implicit e: Enum[E],

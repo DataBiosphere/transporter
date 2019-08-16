@@ -1,6 +1,7 @@
 package org.broadinstitute.transporter.transfer
 
-import java.time.OffsetDateTime
+import java.sql.Timestamp
+import java.time.{Instant, OffsetDateTime}
 import java.util.UUID
 
 import cats.effect.{IO, Timer}
@@ -44,8 +45,10 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
       new TransferSubmitter(theTopic, parallelism.toLong, interval, tx, kafka)
 
     val setup = for {
-      _ <- List(request1Id, request2Id).traverse_ { id =>
-        sql"insert into transfer_requests (id) values ($id)".update.run.void
+      _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
+        case (id, i) =>
+          val ts = Timestamp.from(Instant.ofEpochMilli(i.toLong))
+          sql"insert into transfer_requests (id, received_at) values ($id, $ts)".update.run.void
       }
       _ <- request1Transfers.traverse_ {
         case (id, body) =>

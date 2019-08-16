@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="13" author="danmoran">
+
+        <addColumn tableName="transfer_requests">
+            <column name="received_at" type="timestamp" />
+        </addColumn>
+
+        <sql>
+            UPDATE transfer_requests SET received_at = (now() at time zone 'utc')::timestamp
+        </sql>
+
+        <addNotNullConstraint tableName="transfer_requests" columnName="received_at" />
+
+        <createIndex tableName="transfer_requests" indexName="transfer_requests_received_at">
+            <column name="received_at" />
+        </createIndex>
+
+        <rollback>
+            <dropColumn tableName="transfer_requests" columnName="received_at" />
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>

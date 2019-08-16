@@ -4,7 +4,7 @@ import java.sql.Timestamp
 import java.time.{Instant, OffsetDateTime, ZoneId}
 import java.util.UUID
 
-import cats.effect.IO
+import cats.effect.{Clock, IO}
 import cats.implicits._
 import doobie._
 import doobie.implicits._
@@ -16,8 +16,16 @@ import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.EitherValues
 
+import scala.concurrent.duration.TimeUnit
+
 class TransferControllerSpec extends PostgresSpec with MockFactory with EitherValues {
   import org.broadinstitute.transporter.db.DoobieInstances._
+
+  val nowMillis = 1234L
+  private implicit val clk: Clock[IO] = new Clock[IO] {
+    override def realTime(unit: TimeUnit): IO[Long] = IO.pure(nowMillis)
+    override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(nowMillis)
+  }
 
   private val requestSchema =
     json"""{ "type": "object" }""".as[TransferSchema].right.value
@@ -41,8 +49,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   def withRequest(test: (Transactor[IO], TransferController) => IO[Any]): Unit =
     withController { (tx, controller) =>
       val setup = for {
-        _ <- List(request1Id, request2Id).traverse_ { id =>
-          sql"insert into transfer_requests (id) values ($id)".update.run.void
+        _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
+          case (id, i) =>
+            val ts = Timestamp.from(Instant.ofEpochMilli(nowMillis + i))
+            sql"insert into transfer_requests (id, received_at) values ($id, $ts)".update.run.void
         }
         _ <- request1Transfers.traverse_ {
           case (id, body) =>
@@ -78,7 +88,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           countRequests.query[Long].unique,
           countTransfers.query[Long].unique
         ).tupled.transact(tx)
-        ack <- controller.recordTransfer(request)
+        ack <- controller.recordRequest(request)
         (postRequests, postTransfers) <- (
           (countRequests ++ fr"where id = ${ack.id}")
             .query[Long]
@@ -104,7 +114,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           countRequests.query[Long].unique,
           countTransfers.query[Long].unique
         ).tupled.transact(tx)
-        ackOrErr <- controller.recordTransfer(request).attempt
+        ackOrErr <- controller.recordRequest(request).attempt
         (postRequests, postTransfers) <- (
           countRequests.query[Long].unique,
           countTransfers.query[Long].unique
@@ -118,220 +128,134 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "get summaries for registered transfers" in withRequest { (_, controller) =>
-    for {
-      summary1 <- controller.lookupRequestStatus(request1Id)
-      summary2 <- controller.lookupRequestStatus(request2Id)
-    } yield {
-      summary1 shouldBe RequestStatus(
-        request1Id,
-        TransferStatus.Pending,
-        TransferStatus.values.map(_ -> 0L).toMap ++ Map(
-          TransferStatus.Pending -> request1Transfers.length.toLong
-        ),
-        None,
-        None
-      )
-      summary2 shouldBe RequestStatus(
-        request2Id,
-        TransferStatus.Pending,
-        TransferStatus.values.map(_ -> 0L).toMap ++ Map(
-          TransferStatus.Pending -> request2Transfers.length.toLong
-        ),
-        None,
-        None
-      )
+  it should "count all tracked requests" in withRequest { (_, controller) =>
+    controller.countRequests.map(_ shouldBe 2)
+  }
+
+  it should "not fail counting when no requests are tracked" in withController {
+    (_, controller) =>
+      controller.countRequests.map(_ shouldBe 0)
+  }
+
+  it should "get summaries for all tracked requests" in withRequest { (_, controller) =>
+    controller.listRequests(offset = 0, limit = 2, newestFirst = false).map { requests =>
+      requests should have length 2
+      val req1 = requests.head
+      val req2 = requests.last
+
+      req1.id shouldBe request1Id
+      req2.id shouldBe request2Id
     }
   }
 
-  it should "prioritize 'inprogress' status over all in request summaries" in withRequest {
-    (tx, controller) =>
-      val now = Instant.now
-      val fakeSubmitted = request1Transfers.take(3).map(_._1)
-      val fakeInProgress = request1Transfers(6)._1
-      val fakeSucceeded = request1Transfers.takeRight(2).map(_._1)
-      val fakeFailed = request1Transfers.slice(3, 6).map(_._1)
+  it should "order tracked summaries depending on user input" in withRequest {
+    (_, controller) =>
+      controller.listRequests(offset = 0, limit = 2, newestFirst = true).map { requests =>
+        requests should have length 2
+        val req1 = requests.head
+        val req2 = requests.last
 
-      val transaction = for {
-        _ <- fakeSubmitted.traverse_ { id =>
-          sql"""update transfers set
+        req1.id shouldBe request2Id
+        req2.id shouldBe request1Id
+      }
+  }
+
+  it should "paginate list of tracked summaries" in withRequest { (_, controller) =>
+    for {
+      // Order oldest to newest, skip the first one, expect to get the newest
+      out1 <- controller.listRequests(offset = 1, limit = 10, newestFirst = false)
+      // Order newest to oldest, skip the first one, expect to get the oldest
+      out2 <- controller.listRequests(offset = 1, limit = 10, newestFirst = true)
+      // Skip past everything to make sure we don't crash on nonsense limits
+      out3 <- controller.listRequests(offset = 100, limit = 1, newestFirst = true)
+    } yield {
+      out1 should have length 1
+      out2 should have length 1
+      out3 shouldBe empty
+
+      out1.head.id shouldBe request2Id
+      out2.head.id shouldBe request1Id
+    }
+  }
+
+  it should "get summaries for registered transfers" in withRequest { (tx, controller) =>
+    val now = Instant.now
+    val fakeSubmitted = request1Transfers.take(3).map(_._1)
+    val fakeInProgress = request1Transfers(6)._1
+    val fakeSucceeded = request1Transfers.takeRight(2).map(_._1)
+    val fakeFailed = request1Transfers.slice(3, 6).map(_._1)
+
+    val transaction = for {
+      _ <- fakeSubmitted.traverse_ { id =>
+        sql"""update transfers set
                 status = ${TransferStatus.Submitted: TransferStatus},
                 submitted_at = ${Timestamp.from(now)}
                 where id = $id""".update.run
-        }
-        _ <- sql"""update transfers set
+      }
+      _ <- sql"""update transfers set
                    status = ${TransferStatus.InProgress: TransferStatus},
                    submitted_at = ${Timestamp.from(now)},
                    updated_at = ${Timestamp.from(now.plusMillis(10000))}
                    where id = $fakeInProgress""".update.run
-        _ <- fakeSucceeded.traverse_ { id =>
-          sql"""update transfers set
+      _ <- fakeSucceeded.traverse_ { id =>
+        sql"""update transfers set
                 status = ${TransferStatus.Succeeded: TransferStatus},
                 submitted_at = ${Timestamp.from(now.minusMillis(30000))},
                 updated_at = ${Timestamp.from(now)}
                 where id = $id""".update.run
-        }
-        _ <- fakeFailed.traverse_ { id =>
-          sql"""update transfers set
+      }
+      _ <- fakeFailed.traverse_ { id =>
+        sql"""update transfers set
                 status = ${TransferStatus.Failed: TransferStatus},
                 submitted_at = ${Timestamp.from(now.plusMillis(30000))},
                 updated_at = ${Timestamp.from(now.minusMillis(30000))}
                 where id = $id""".update.run
-        }
-      } yield ()
-
-      for {
-        _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(request1Id)
-      } yield {
-        summary shouldBe RequestStatus(
-          request1Id,
-          TransferStatus.InProgress,
-          Map(
-            TransferStatus.Pending -> 1,
-            TransferStatus.Submitted -> 3,
-            TransferStatus.Failed -> 3,
-            TransferStatus.Succeeded -> 2,
-            TransferStatus.InProgress -> 1
-          ),
-          Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
-          Some(OffsetDateTime.ofInstant(now.plusMillis(10000), ZoneId.of("UTC")))
-        )
       }
+    } yield ()
+
+    for {
+      _ <- transaction.transact(tx)
+      summary <- controller.lookupRequestStatus(request1Id)
+    } yield {
+      summary shouldBe RequestSummary(
+        request1Id,
+        OffsetDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), ZoneId.of("UTC")),
+        Map(
+          TransferStatus.Pending -> 1,
+          TransferStatus.Submitted -> 3,
+          TransferStatus.Failed -> 3,
+          TransferStatus.Succeeded -> 2,
+          TransferStatus.InProgress -> 1
+        ),
+        Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
+        Some(OffsetDateTime.ofInstant(now.plusMillis(10000), ZoneId.of("UTC")))
+      )
+    }
   }
 
-  it should "prioritize 'submitted' status over 'pending' in request summaries" in withRequest {
-    (tx, controller) =>
-      val now = Instant.now
-      val fakeSubmitted = request1Transfers.take(3).map(_._1)
-      val fakeSucceeded = request1Transfers.takeRight(2).map(_._1)
-      val fakeFailed = request1Transfers.slice(3, 6).map(_._1)
-
-      val transaction = for {
-        _ <- fakeSubmitted.traverse_ { id =>
-          sql"""update transfers set
-                status = ${TransferStatus.Submitted: TransferStatus},
-                submitted_at = ${Timestamp.from(now)}
-                where id = $id""".update.run
-        }
-        _ <- fakeSucceeded.traverse_ { id =>
-          sql"""update transfers set
-                status = ${TransferStatus.Succeeded: TransferStatus},
-                submitted_at = ${Timestamp.from(now.minusMillis(30000))},
-                updated_at = ${Timestamp.from(now)}
-                where id = $id""".update.run
-        }
-        _ <- fakeFailed.traverse_ { id =>
-          sql"""update transfers set
-                status = ${TransferStatus.Failed: TransferStatus},
-                submitted_at = ${Timestamp.from(now.plusMillis(30000))},
-                updated_at = ${Timestamp.from(now.minusMillis(30000))}
-                where id = $id""".update.run
-        }
-      } yield ()
-
+  it should "include zero counts for unrepresented statuses in request summaries" in withRequest {
+    (_, controller) =>
       for {
-        _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(request1Id)
+        summary1 <- controller.lookupRequestStatus(request1Id)
+        summary2 <- controller.lookupRequestStatus(request2Id)
       } yield {
-        summary shouldBe RequestStatus(
+        summary1 shouldBe RequestSummary(
           request1Id,
-          TransferStatus.Submitted,
-          Map(
-            TransferStatus.Pending -> 2,
-            TransferStatus.Submitted -> 3,
-            TransferStatus.Failed -> 3,
-            TransferStatus.Succeeded -> 2,
-            TransferStatus.InProgress -> 0
+          OffsetDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), ZoneId.of("UTC")),
+          TransferStatus.values.map(_ -> 0L).toMap ++ Map(
+            TransferStatus.Pending -> request1Transfers.length.toLong
           ),
-          Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
-          Some(OffsetDateTime.ofInstant(now, ZoneId.of("UTC")))
+          None,
+          None
         )
-      }
-  }
-
-  it should "prioritize 'pending' status over terminal statuses in request summaries" in withRequest {
-    (tx, controller) =>
-      val now = Instant.now
-      val fakeSucceeded = request1Transfers.takeRight(4).map(_._1)
-      val fakeFailed = request1Transfers.take(4).map(_._1)
-
-      val transaction = for {
-        _ <- fakeSucceeded.traverse_ { id =>
-          sql"""update transfers set
-                status = ${TransferStatus.Succeeded: TransferStatus},
-                submitted_at = ${Timestamp.from(now.minusMillis(30000))},
-                updated_at = ${Timestamp.from(now)}
-                where id = $id""".update.run
-        }
-        _ <- fakeFailed.traverse_ { id =>
-          sql"""update transfers set
-                status = ${TransferStatus.Failed: TransferStatus},
-                submitted_at = ${Timestamp.from(now.plusMillis(30000))},
-                updated_at = ${Timestamp.from(now.minusMillis(30000))}
-                where id = $id""".update.run
-        }
-      } yield ()
-
-      for {
-        _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(request1Id)
-      } yield {
-        summary shouldBe RequestStatus(
-          request1Id,
-          TransferStatus.Pending,
-          Map(
-            TransferStatus.Pending -> 2,
-            TransferStatus.Submitted -> 0,
-            TransferStatus.Succeeded -> 4,
-            TransferStatus.Failed -> 4,
-            TransferStatus.InProgress -> 0
+        summary2 shouldBe RequestSummary(
+          request2Id,
+          OffsetDateTime.ofInstant(Instant.ofEpochMilli(nowMillis + 1), ZoneId.of("UTC")),
+          TransferStatus.values.map(_ -> 0L).toMap ++ Map(
+            TransferStatus.Pending -> request2Transfers.length.toLong
           ),
-          Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
-          Some(OffsetDateTime.ofInstant(now, ZoneId.of("UTC")))
-        )
-      }
-  }
-
-  it should "prioritize failures over successes in request summaries" in withRequest {
-    (tx, controller) =>
-      val now = Instant.now
-      val fakeSucceeded = request1Transfers.take(8).map(_._1)
-      val fakeFailed = request1Transfers.takeRight(2).map(_._1)
-
-      val transaction = for {
-        _ <- fakeSucceeded.traverse_ { id =>
-          sql"""update transfers set
-                status = ${TransferStatus.Succeeded: TransferStatus},
-                submitted_at = ${Timestamp.from(now.minusMillis(30000))},
-                updated_at = ${Timestamp.from(now)}
-                where id = $id""".update.run
-        }
-        _ <- fakeFailed.traverse_ { id =>
-          sql"""update transfers set
-                status = ${TransferStatus.Failed: TransferStatus},
-                submitted_at = ${Timestamp.from(now.plusMillis(30000))},
-                updated_at = ${Timestamp.from(now.minusMillis(30000))}
-                where id = $id""".update.run
-        }
-      } yield ()
-
-      for {
-        _ <- transaction.transact(tx)
-        summary <- controller.lookupRequestStatus(request1Id)
-      } yield {
-        summary shouldBe RequestStatus(
-          request1Id,
-          TransferStatus.Failed,
-          Map(
-            TransferStatus.Pending -> 0,
-            TransferStatus.Submitted -> 0,
-            TransferStatus.Succeeded -> 8,
-            TransferStatus.Failed -> 2,
-            TransferStatus.InProgress -> 0
-          ),
-          Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
-          Some(OffsetDateTime.ofInstant(now, ZoneId.of("UTC")))
+          None,
+          None
         )
       }
   }
