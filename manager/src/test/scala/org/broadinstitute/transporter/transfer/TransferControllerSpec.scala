@@ -426,18 +426,23 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .map(_.left.value shouldBe NotFound(request1Id, Some(transferId)))
   }
 
-  it should "not reconsider a successful transfer" in withRequest { (tx, controller) =>
-    val (id, _) = request1Transfers.head
-    for {
-      ack <- controller.reconsiderSingleTransfer(request1Id, id)
-      n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
-        .query[Long]
-        .unique
-        .transact(tx)
-    } yield {
-      ack shouldBe RequestAck(request1Id, 0)
-      n shouldBe 0
-    }
+  it should "not reconsider a transfer that is in any state apart from failure" in withRequest {
+    (tx, controller) =>
+      val (id, _) = request1Transfers.head
+      for {
+        before <- sql"select count(*) from transfers"
+          .query[Long]
+          .unique
+          .transact(tx)
+        ack <- controller.reconsiderSingleTransfer(request1Id, id)
+        after <- sql"select count(*) from transfers"
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        ack shouldBe RequestAck(request1Id, 0)
+        before shouldBe after
+      }
   }
 
   it should "get details for a single transfer" in withRequest { (tx, controller) =>

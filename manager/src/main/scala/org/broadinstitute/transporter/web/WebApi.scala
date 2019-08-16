@@ -221,7 +221,7 @@ class WebApi(
 
   private val reconsiderSingleTransferRoute: Route[(UUID, UUID), ApiError, RequestAck] =
     requestBase
-      .in("reconsider" / path[UUID]("transfer-id"))
+      .in("detail" / path[UUID]("transfer-id") / "reconsider")
       .put
       .out(jsonBody[RequestAck])
       .description(
