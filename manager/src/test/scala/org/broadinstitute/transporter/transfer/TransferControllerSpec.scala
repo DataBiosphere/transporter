@@ -494,11 +494,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   }
 
   it should "fail to get details under a nonexistent request" in withController {
+    val transferId = UUID.randomUUID()
     (_, controller) =>
       controller
-        .lookupTransferDetails(request1Id, UUID.randomUUID())
+        .lookupTransferDetails(request1Id, transferId)
         .attempt
-        .map(_.left.value shouldBe NotFound(request1Id))
+        .map(_.left.value shouldBe NotFound(request1Id, Some(transferId)))
   }
 
   it should "fail to get details for a nonexistent transfer" in withRequest {

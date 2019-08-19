@@ -206,6 +206,42 @@ class WebApi(
         )
       }
 
+  private val lookupTransfersRoute: Route[
+    (UUID, Long, Long, SortOrder),
+    ApiError,
+    Page[TransferDetails]
+  ] = requestsBase
+    .in(path[UUID]("request-id"))
+    .in(query[Long]("offset"))
+    .in(query[Long]("limit"))
+    .in(query[SortOrder]("sort"))
+    .out(jsonBody[Page[TransferDetails]])
+    .errorOut(
+      oneOf[ApiError](
+        statusMapping(
+          StatusCodes.InternalServerError,
+          jsonBody[ApiError.UnhandledError]
+        )
+      )
+    )
+    .description(
+      "Get the transfer IDs for a given request ID, page number, and number of transfer IDs per page"
+    )
+    .serverLogic {
+      case (requestId, offset, limit, sort) =>
+        val getPage = transferController.listTransfers(
+          requestId,
+          offset,
+          limit,
+          sort == SortOrder.Desc
+        )
+        val getTotal = transferController.CountTransfers
+        buildResponse(
+          (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
+          s"Failed to list transfers for request ID $requestId"
+        )
+    }
+
   private val reconsiderRoute: Route[UUID, ApiError, RequestAck] =
     requestBase
       .in("reconsider")
@@ -257,6 +293,7 @@ class WebApi(
     requestStatusRoute,
     requestOutputsRoute,
     requestFailuresRoute,
+    lookupTransfersRoute,
     reconsiderRoute,
     reconsiderSingleTransferRoute,
     detailsRoute

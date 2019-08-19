@@ -334,18 +334,42 @@ class TransferController(
     requestId: UUID,
     transferId: UUID
   ): IO[TransferDetails] =
-    for {
-      maybeDetails <- checkAndExec(requestId) { rId =>
-        List(
-          fr"select t.id, t.status, t.body, t.submitted_at, t.updated_at, t.info from",
-          TransfersJoinTable,
-          Fragments.whereAnd(fr"r.id = $rId", fr"t.id = $transferId")
-        ).combineAll
-          .query[TransferDetails]
-          .option
-      }
-      details <- maybeDetails.liftTo[IO](NotFound(requestId, Some(transferId)))
-    } yield {
-      details
+    checkAndExec(requestId, transferId) { (rId, tId) =>
+      List(
+        fr"select t.id, t.status, t.body, t.submitted_at, t.updated_at, t.info from",
+        TransfersJoinTable,
+        Fragments.whereAnd(fr"r.id = $rId", fr"t.id = $tId")
+      ).combineAll
+        .query[TransferDetails]
+        .unique
     }
+
+  /** Get the total number of transfers stored by Transporter. */
+  def CountTransfers: IO[Long] =
+    Fragment
+      .const(s"select count(1) from $TransfersTable")
+      .query[Long]
+      .unique
+      .transact(dbClient)
+
+  /**
+    * For a request ID, page #, and IDs per page, return the list of associated transfer IDs. Page order should match
+    * the order of the input batch.
+    */
+  def listTransfers(
+    requestId: UUID,
+    offset: Long,
+    limit: Long,
+    newestFirst: Boolean
+  ): IO[List[TransferDetails]] =
+    checkAndExec(requestId) { rId =>
+      val order = Fragment.const(if (newestFirst) "desc" else "asc")
+      List(
+        fr"select id, status, body, submitted_at, updated_at, info from $TransfersTable",
+        fr"where request_id = $rId order by id " ++ order ++ fr" limit $limit offset $offset"
+      ).combineAll
+        .query[TransferDetails]
+        .to[List]
+    }
+
 }
