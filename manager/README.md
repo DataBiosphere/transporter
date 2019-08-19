@@ -48,6 +48,7 @@ Paths below prefixed with `/api/transporter/v1/transfers/{request-id}`.
 
 | Verb | Path | Description |
 | ---- | ---- | ----------- |
+| PUT | `/detail/{transfer-id}/reconsider` | Reset the state of a specific failed transfer in a request to 'Pending'. |
 | GET | `/detail/{transfer-id}` | Get all information stored by the Manager about a specific transfer under a bulk request. |
 
 ## Running Locally

@@ -225,6 +225,33 @@ class TransferController(
     transaction.transact(dbClient)
   }
 
+  /**
+    * Check that a transfer with the given ID exists, then run an operation using the ID as input.
+    *
+    * Utility for sharing guardrails across transfer-level operations in the controller.
+    */
+  private def checkAndExec[Out](requestId: UUID, transferId: UUID)(
+    f: (UUID, UUID) => ConnectionIO[Out]
+  ): IO[Out] = {
+    val transaction = for {
+      requestRow <- List(
+        Fragment.const(s"select 1 from $TransfersTable"),
+        Fragments.whereAnd(fr"request_id = $requestId", fr"id = $transferId")
+      ).combineAll
+        .query[Long]
+        .option
+      _ <- IO
+        .raiseError(NotFound(requestId, Some(transferId)))
+        .whenA(requestRow.isEmpty)
+        .to[ConnectionIO]
+      out <- f(requestId, transferId)
+    } yield {
+      out
+    }
+
+    transaction.transact(dbClient)
+  }
+
   /** Get the current summary-level status for a request. */
   def lookupRequestStatus(requestId: UUID): IO[RequestSummary] =
     checkAndExec(requestId)(rId => lookupSummaries(Right(rId)).map(_.head))
@@ -278,6 +305,23 @@ class TransferController(
         Fragments.whereAnd(
           fr"t.request_id = r.id",
           fr"r.id = $rId",
+          fr"t.status = ${TransferStatus.Failed: TransferStatus}"
+        )
+      ).combineAll.update.run
+    }.map(RequestAck(requestId, _))
+
+  /**
+    * Reset the status for a single failed transfer to 'pending' so that it will be re-submitted by the periodic
+    * sweeper.
+    */
+  def reconsiderSingleTransfer(requestId: UUID, transferId: UUID): IO[RequestAck] =
+    checkAndExec(requestId, transferId) { (rId, tId) =>
+      List(
+        Fragment.const(s"update $TransfersTable t"),
+        fr"set status = ${TransferStatus.Pending: TransferStatus}",
+        Fragments.whereAnd(
+          fr"t.request_id = $rId",
+          fr"t.id = $tId",
           fr"t.status = ${TransferStatus.Failed: TransferStatus}"
         )
       ).combineAll.update.run

@@ -400,6 +400,53 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
+  it should "reconsider a specific failed transfer in a request" in withRequest {
+    (tx, controller) =>
+      val (id, _) = request1Transfers.head
+      for {
+        _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void
+          .transact(tx)
+        ack <- controller.reconsiderSingleTransfer(request1Id, id)
+        n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        ack shouldBe RequestAck(request1Id, 1)
+        n shouldBe 0
+      }
+  }
+
+  it should "fail if the transfer is not a part of the enclosing request" in withController {
+    val transferId = UUID.randomUUID()
+    (_, controller) =>
+      controller
+        .reconsiderSingleTransfer(request1Id, transferId)
+        .attempt
+        .map(_.left.value shouldBe NotFound(request1Id, Some(transferId)))
+  }
+
+  it should "not reconsider a transfer that is in any state apart from failure" in withRequest {
+    (tx, controller) =>
+      val (id, _) = request1Transfers.head
+      for {
+        _ <- sql"update transfers set status = ${TransferStatus.InProgress: TransferStatus} where id = $id".update.run.void
+          .transact(tx)
+        before <- sql"select count(*) from transfers where status = ${TransferStatus.Pending: TransferStatus}"
+          .query[Long]
+          .unique
+          .transact(tx)
+        ack <- controller.reconsiderSingleTransfer(request1Id, id)
+        after <- sql"select count(*) from transfers where status = ${TransferStatus.Pending: TransferStatus}"
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        ack shouldBe RequestAck(request1Id, 0)
+        before shouldBe after
+      }
+  }
+
   it should "get details for a single transfer" in withRequest { (tx, controller) =>
     val (id, body) = request1Transfers.head
     val submitted = Instant.now()
