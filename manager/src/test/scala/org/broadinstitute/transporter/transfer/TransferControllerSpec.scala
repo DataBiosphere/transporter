@@ -494,11 +494,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   }
 
   it should "fail to get details under a nonexistent request" in withController {
+    val transferId = UUID.randomUUID()
     (_, controller) =>
       controller
-        .lookupTransferDetails(request1Id, UUID.randomUUID())
+        .lookupTransferDetails(request1Id, transferId)
         .attempt
-        .map(_.left.value shouldBe NotFound(request1Id))
+        .map(_.left.value shouldBe NotFound(request1Id, Some(transferId)))
   }
 
   it should "fail to get details for a nonexistent transfer" in withRequest {
@@ -509,5 +510,136 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .map(
           _.left.value shouldBe NotFound(request1Id, Some(request2Transfers.head._1))
         )
+  }
+
+  it should "count all tracked transfers" in withRequest { (_, controller) =>
+    controller.countTransfers(request1Id).map(_ shouldBe 10)
+  }
+
+  it should "get details for multiple transfers" in withRequest { (tx, controller) =>
+    val request1TransfersSorted = request1Transfers.sortBy(_._1.toString)
+    val (id1, body1) = request1TransfersSorted(2)
+    val (id2, body2) = request1TransfersSorted(3)
+    val submitted = Instant.now()
+    val updated = submitted.plusMillis(30000)
+
+    for {
+      initInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
+      _ <- sql"""update transfers set
+                 status = ${TransferStatus.Submitted: TransferStatus},
+                 submitted_at = ${Timestamp.from(submitted)}
+                 where id = $id1""".update.run.void.transact(tx)
+      _ <- sql"""update transfers set
+                 status = ${TransferStatus.Submitted: TransferStatus},
+                 submitted_at = ${Timestamp.from(submitted)}
+                 where id = $id2""".update.run.void.transact(tx)
+      submittedInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
+      _ <- sql"""update transfers set
+                 status = ${TransferStatus.Succeeded: TransferStatus},
+                 updated_at = ${Timestamp.from(updated)},
+                 info = '{}'
+                 where id = $id1""".update.run.void.transact(tx)
+      _ <- sql"""update transfers set
+                 status = ${TransferStatus.Succeeded: TransferStatus},
+                 updated_at = ${Timestamp.from(updated)},
+                 info = '{}'
+                 where id = $id2""".update.run.void.transact(tx)
+      updatedInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
+    } yield {
+      initInfo shouldBe List(
+        TransferDetails(
+          id1,
+          TransferStatus.Pending,
+          body1,
+          None,
+          None,
+          None
+        ),
+        TransferDetails(
+          id2,
+          TransferStatus.Pending,
+          body2,
+          None,
+          None,
+          None
+        )
+      )
+      submittedInfo shouldBe List(
+        TransferDetails(
+          id1,
+          TransferStatus.Submitted,
+          body1,
+          Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
+          None,
+          None
+        ),
+        TransferDetails(
+          id2,
+          TransferStatus.Submitted,
+          body2,
+          Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
+          None,
+          None
+        )
+      )
+      updatedInfo shouldBe List(
+        TransferDetails(
+          id1,
+          TransferStatus.Succeeded,
+          body1,
+          Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
+          Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
+          Some(json"{}")
+        ),
+        TransferDetails(
+          id2,
+          TransferStatus.Succeeded,
+          body2,
+          Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
+          Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
+          Some(json"{}")
+        )
+      )
+    }
+  }
+
+  it should "return an empty list if the limit is 0" in withRequest { (tx, controller) =>
+    val (id1, _) = request1Transfers.head
+    val submitted = Instant.now()
+
+    for {
+      _ <- sql"""update transfers set
+                 status = ${TransferStatus.Submitted: TransferStatus},
+                 submitted_at = ${Timestamp.from(submitted)}
+                 where id = $id1""".update.run.void.transact(tx)
+      theInfo <- controller.listTransfers(request1Id, 2, 0, sortDesc = false)
+    } yield {
+      theInfo shouldBe List()
+    }
+  }
+
+  it should "return an empty list if the offset is beyond what exists in the table" in withRequest {
+    (tx, controller) =>
+      val (id1, _) = request1Transfers.head
+      val submitted = Instant.now()
+
+      for {
+        _ <- sql"""update transfers set
+                 status = ${TransferStatus.Submitted: TransferStatus},
+                 submitted_at = ${Timestamp.from(submitted)}
+                 where id = $id1""".update.run.void.transact(tx)
+        theInfo <- controller.listTransfers(request1Id, 100, 2, sortDesc = false)
+      } yield {
+        theInfo shouldBe List()
+      }
+  }
+
+  it should "fail to get details for multiple transfers under a nonexistent request" in withController {
+    val requestId = UUID.randomUUID()
+    (_, controller) =>
+      controller
+        .listTransfers(requestId, 2, 2, sortDesc = true)
+        .attempt
+        .map(_.left.value shouldBe NotFound(requestId))
   }
 }
