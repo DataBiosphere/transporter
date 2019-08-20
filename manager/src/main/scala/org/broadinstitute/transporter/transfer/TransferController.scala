@@ -346,10 +346,10 @@ class TransferController(
     }
 
   /** Get the total number of transfers stored by Transporter. */
-  def CountTransfers(requestId: UUID): IO[Long] =
+  def countTransfers(requestId: UUID): IO[Long] =
     List(
       fr"select count(1) from",
-      Fragment.const(s"$TransfersTable"),
+      Fragment.const(TransfersTable),
       fr"where request_id = $requestId"
     ).combineAll
       .query[Long]
@@ -357,7 +357,7 @@ class TransferController(
       .transact(dbClient)
 
   /**
-    * For a request ID, page #, and IDs per page, return the list of associated transfer IDs. Page order should match
+    * For a request ID, page #, and IDs per page, return the list of associated transfer IDs. Page order will match
     * the order of the input batch.
     */
   def listTransfers(

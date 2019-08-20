@@ -217,7 +217,7 @@ class WebApi(
     .in(query[SortOrder]("sort"))
     .out(jsonBody[Page[TransferDetails]])
     .description(
-      "Get the transfer IDs for a given request ID, page number, and number of transfer IDs per page"
+      "Get transfer details for a given request"
     )
     .serverLogic {
       case (requestId, offset, limit, sort) =>
