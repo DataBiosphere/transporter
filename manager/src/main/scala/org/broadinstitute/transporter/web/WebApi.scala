@@ -211,6 +211,7 @@ class WebApi(
     ApiError,
     Page[TransferDetails]
   ] = singleRequestBase
+    .in("list-transfers")
     .in(query[Long]("offset"))
     .in(query[Long]("limit"))
     .in(query[SortOrder]("sort"))

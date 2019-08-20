@@ -51,7 +51,7 @@ Paths below prefixed with `/api/transporter/v1/transfers/{request-id}`.
 | ---- | ---- | ----------- |
 | PUT | `/detail/{transfer-id}/reconsider` | Reset the state of a specific failed transfer in a request to 'Pending'. |
 | GET | `/detail/{transfer-id}` | Get all information stored by the Manager about a specific transfer under a bulk request. |
-| GET | `/list` | Get the transfer IDs for a given request ID which fall within a specified page range. |
+| GET | `/list-transfers` | Get the transfer IDs for a given request ID which fall within a specified page range. |
 
 ## Running Locally
 To run the Manager locally:
