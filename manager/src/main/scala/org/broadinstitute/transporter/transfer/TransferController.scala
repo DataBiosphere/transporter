@@ -336,18 +336,22 @@ class TransferController(
   ): IO[TransferDetails] =
     checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
-        fr"select t.id, t.status, t.body, t.submitted_at, t.updated_at, t.info from",
-        TransfersJoinTable,
-        Fragments.whereAnd(fr"r.id = $rId", fr"t.id = $tId")
+        Fragment.const(
+          s"select id, status, body, submitted_at, updated_at, info from $TransfersTable"
+        ),
+        Fragments.whereAnd(fr"request_id = $rId", fr"id = $tId")
       ).combineAll
         .query[TransferDetails]
         .unique
     }
 
   /** Get the total number of transfers stored by Transporter. */
-  def CountTransfers: IO[Long] =
-    Fragment
-      .const(s"select count(1) from $TransfersTable")
+  def CountTransfers(requestId: UUID): IO[Long] =
+    List(
+      fr"select count(1) from",
+      Fragment.const(s"$TransfersTable"),
+      fr"where request_id = $requestId"
+    ).combineAll
       .query[Long]
       .unique
       .transact(dbClient)
@@ -360,13 +364,15 @@ class TransferController(
     requestId: UUID,
     offset: Long,
     limit: Long,
-    newestFirst: Boolean
+    sortDesc: Boolean
   ): IO[List[TransferDetails]] =
     checkAndExec(requestId) { rId =>
-      val order = Fragment.const(if (newestFirst) "desc" else "asc")
+      val order = Fragment.const(if (sortDesc) "desc" else "asc")
       List(
-        fr"select id, status, body, submitted_at, updated_at, info from $TransfersTable",
-        fr"where request_id = $rId order by id " ++ order ++ fr" limit $limit offset $offset"
+        Fragment.const(
+          s"select id, status, body, submitted_at, updated_at, info from $TransfersTable"
+        ),
+        fr"where request_id = $rId order by id" ++ order ++ fr"limit $limit offset $offset"
       ).combineAll
         .query[TransferDetails]
         .to[List]

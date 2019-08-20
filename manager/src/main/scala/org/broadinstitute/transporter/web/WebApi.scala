@@ -137,7 +137,7 @@ class WebApi(
         )
     }
 
-  private val requestBase = requestsBase
+  private val singleRequestBase = requestsBase
     .in(path[UUID]("request-id"))
     .errorOut(
       oneOf(
@@ -171,7 +171,7 @@ class WebApi(
       }
 
   private val requestStatusRoute: Route[UUID, ApiError, RequestSummary] =
-    requestBase
+    singleRequestBase
       .in("status")
       .out(jsonBody[RequestSummary])
       .description("Get the current summary status of a transfer request")
@@ -183,7 +183,7 @@ class WebApi(
       }
 
   private val requestOutputsRoute: Route[UUID, ApiError, RequestInfo] =
-    requestBase
+    singleRequestBase
       .in("outputs")
       .out(jsonBody[RequestInfo])
       .description("Get the outputs of successful transfers from a request")
@@ -195,7 +195,7 @@ class WebApi(
       }
 
   private val requestFailuresRoute: Route[UUID, ApiError, RequestInfo] =
-    requestBase
+    singleRequestBase
       .in("failures")
       .out(jsonBody[RequestInfo])
       .description("Get the outputs of failed transfers from a request")
@@ -210,20 +210,11 @@ class WebApi(
     (UUID, Long, Long, SortOrder),
     ApiError,
     Page[TransferDetails]
-  ] = requestsBase
-    .in(path[UUID]("request-id"))
+  ] = singleRequestBase
     .in(query[Long]("offset"))
     .in(query[Long]("limit"))
     .in(query[SortOrder]("sort"))
     .out(jsonBody[Page[TransferDetails]])
-    .errorOut(
-      oneOf[ApiError](
-        statusMapping(
-          StatusCodes.InternalServerError,
-          jsonBody[ApiError.UnhandledError]
-        )
-      )
-    )
     .description(
       "Get the transfer IDs for a given request ID, page number, and number of transfer IDs per page"
     )
@@ -233,9 +224,9 @@ class WebApi(
           requestId,
           offset,
           limit,
-          sort == SortOrder.Desc
+          sortDesc = sort == SortOrder.Desc
         )
-        val getTotal = transferController.CountTransfers
+        val getTotal = transferController.CountTransfers(requestId)
         buildResponse(
           (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
           s"Failed to list transfers for request ID $requestId"
@@ -243,7 +234,7 @@ class WebApi(
     }
 
   private val reconsiderRoute: Route[UUID, ApiError, RequestAck] =
-    requestBase
+    singleRequestBase
       .in("reconsider")
       .put
       .out(jsonBody[RequestAck])
@@ -256,7 +247,7 @@ class WebApi(
       }
 
   private val reconsiderSingleTransferRoute: Route[(UUID, UUID), ApiError, RequestAck] =
-    requestBase
+    singleRequestBase
       .in("detail" / path[UUID]("transfer-id") / "reconsider")
       .put
       .out(jsonBody[RequestAck])
@@ -272,7 +263,7 @@ class WebApi(
       }
 
   private val detailsRoute: Route[(UUID, UUID), ApiError, TransferDetails] =
-    requestBase
+    singleRequestBase
       .in("detail" / path[UUID]("transfer-id"))
       .out(jsonBody[TransferDetails])
       .description("Get detailed info about a single transfer from a request")
