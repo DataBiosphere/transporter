@@ -513,7 +513,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   }
 
   it should "count all tracked transfers" in withRequest { (_, controller) =>
-    controller.CountTransfers(request1Id).map(_ shouldBe 10)
+    controller.countTransfers(request1Id).map(_ shouldBe 10)
   }
 
   it should "get details for multiple transfers" in withRequest { (tx, controller) =>

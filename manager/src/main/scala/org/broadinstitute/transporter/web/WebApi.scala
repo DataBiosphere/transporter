@@ -227,7 +227,7 @@ class WebApi(
           limit,
           sortDesc = sort == SortOrder.Desc
         )
-        val getTotal = transferController.CountTransfers(requestId)
+        val getTotal = transferController.countTransfers(requestId)
         buildResponse(
           (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
           s"Failed to list transfers for request ID $requestId"
