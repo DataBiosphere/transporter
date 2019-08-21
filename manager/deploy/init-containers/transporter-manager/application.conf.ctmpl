@@ -17,6 +17,7 @@ org.broadinstitute.transporter {
                 hash-algorithm = "{{env "KAFKA_SCRAM_ALGORITHM"}}"
             }
         }
+        consumer.group-id = "{{env "KAFKA_GROUP_ID"}}"
 
         topics {
             request-topic = {{env "REQUEST_TOPIC"}}
