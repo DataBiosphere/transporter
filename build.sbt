@@ -221,6 +221,10 @@ lazy val `transporter-manager` = project
   .dependsOn(`transporter-common`, `transporter-manager-migrations` % Test)
   .settings(commonSettings)
   .settings(
+    publish := {
+      publish.value
+      (`transporter-manager-migrations` / publish).value
+    },
     libraryDependencies ++= Seq(
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.softwaremill.tapir" %% "tapir-core" % tapirVersion,
