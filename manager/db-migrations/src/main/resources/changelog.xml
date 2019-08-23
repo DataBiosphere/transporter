@@ -15,4 +15,5 @@
     <include file="changesets/11-add-steps-run.xml" relativeToChangelogFile="true" />
     <include file="changesets/12-enable-tablefunc.xml" relativeToChangelogFile="true" />
     <include file="changesets/13-add-request-received-time.xml" relativeToChangelogFile="true" />
+    <include file="changesets/14-add-request-priority.xml" relativeToChangelogFile="true" />
 </databaseChangeLog>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.1.xsd">
+
+    <changeSet id="14" author="raaid">
+
+        <addColumn tableName="transfers">
+            <column name="priority" type="smallint" />
+        </addColumn>
+
+        <sql>
+            UPDATE transfers SET priority = 0::smallint
+        </sql>
+
+        <addNotNullConstraint tableName="transfers" columnName="priority" />
+
+        <createIndex tableName="transfers" indexName="transfers_priority">
+            <column name="priority" />
+        </createIndex>
+
+        <rollback>
+            <dropColumn tableName="transfers" columnName="priority" />
+        </rollback>
+
+    </changeSet>
+
+</databaseChangeLog>

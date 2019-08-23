@@ -49,16 +49,16 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       _ <- request1Transfers.traverse_ {
         case (id, body) =>
           sql"""insert into transfers
-                  (id, request_id, body, status, steps_run)
+                  (id, request_id, body, status, steps_run, priority)
                   values
-                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
+                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
       _ <- request2Transfers.traverse_ {
         case (id, body) =>
           sql"""insert into transfers
-                  (id, request_id, body, status, steps_run)
+                  (id, request_id, body, status, steps_run, priority)
                   values
-                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
+                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
     } yield ()
 

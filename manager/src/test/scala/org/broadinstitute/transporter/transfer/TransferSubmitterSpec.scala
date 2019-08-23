@@ -53,16 +53,16 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
       _ <- request1Transfers.traverse_ {
         case (id, body) =>
           sql"""insert into transfers
-                  (id, request_id, body, status, steps_run)
+                  (id, request_id, body, status, steps_run, priority)
                   values
-                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
+                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
       _ <- request2Transfers.traverse_ {
         case (id, body) =>
           sql"""insert into transfers
-                  (id, request_id, body, status, steps_run)
+                  (id, request_id, body, status, steps_run, priority)
                   values
-                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
+                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
     } yield ()
 
@@ -208,4 +208,48 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
       }
   }
 
+  it should "order transfers by priority" in withRequest { (tx, submitter) =>
+    val (tId1, _) = request1Transfers(4)
+    val (tId2, _) = request1Transfers(6)
+    val (tId3, _) = request1Transfers(8)
+    (kafka.submit _)
+      .expects(where { (topic: String, submitted: List[TransferMessage[Json]]) =>
+        topic == theTopic &&
+        submitted.length == parallelism &&
+        submitted.last.ids.transfer == tId1 &&
+        submitted(submitted.length - 2).ids.transfer == tId2 &&
+        submitted(submitted.length - 3).ids.transfer == tId3
+      })
+      .returning(IO.unit)
+    (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
+
+    for {
+      _ <- sql"""update transfers set priority = 3 where id = $tId3""".update.run.void
+        .transact(tx)
+      _ <- sql"""update transfers set priority = 4 where id = $tId2""".update.run.void
+        .transact(tx)
+      _ <- sql"""update transfers set priority = 5 where id = $tId1""".update.run.void
+        .transact(tx)
+      _ <- submitter.submitEligibleTransfers
+      submitted <- sql"""select id, submitted_at
+                           from transfers
+                           where status = ${TransferStatus.Submitted: TransferStatus}"""
+        .query[(UUID, Option[OffsetDateTime])]
+        .to[List]
+        .transact(tx)
+      _ <- submitter.submitEligibleTransfers
+      totalSubmitted <- sql"""select count(*) from transfers
+                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+        .query[Long]
+        .unique
+        .transact(tx)
+    } yield {
+      submitted.length shouldBe parallelism
+      submitted.foreach {
+        case (_, submittedAt) =>
+          submittedAt.isDefined shouldBe true
+      }
+      totalSubmitted shouldBe submitted.length
+    }
+  }
 }

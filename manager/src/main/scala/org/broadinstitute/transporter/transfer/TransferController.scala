@@ -14,7 +14,7 @@ import doobie.util.update.Update
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
 import org.broadinstitute.transporter.db.{Constants, DbLogHandler, DoobieInstances}
-import org.broadinstitute.transporter.error.ApiError.{InvalidRequest, NotFound}
+import org.broadinstitute.transporter.error.ApiError.{Conflict, InvalidRequest, NotFound}
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.config.TransferSchema
 
@@ -145,23 +145,38 @@ class TransferController(
     * being recorded; instead, a periodic sweeper pulls pending messages from the DB
     * to maintain a configured parallelism factor.
     */
-  def recordRequest(request: BulkRequest): IO[RequestAck] =
+  def recordRequest(request: BulkRequest): IO[RequestAck] = {
+
+    val transfersWithDefaults = request.transfers.map { transfer =>
+      if (request.defaults.isDefined) {
+        TransferRequest(
+          transfer.payload.deepMerge(request.defaults.get.payload),
+          transfer.priority.orElse(request.defaults.get.priority)
+        )
+      } else {
+        transfer
+      }
+    }
+
     for {
-      _ <- validateRequests(request.transfers)
+      _ <- validateRequests(transfersWithDefaults.map { transfer =>
+        transfer.payload
+      })
       _ <- logger.info(
         s"Received ${request.transfers.length} transfers"
       )
       now <- clk
         .realTime(scala.concurrent.duration.MILLISECONDS)
         .map(Instant.ofEpochMilli)
-      ack <- recordTransferRequest(request, now).transact(dbClient)
+      ack <- recordTransferRequest(transfersWithDefaults, now).transact(dbClient)
     } yield {
       ack
     }
+  }
 
   /** Record a batch of validated transfers with the given ID. */
   private def recordTransferRequest(
-    request: BulkRequest,
+    listOfTransfers: List[TransferRequest],
     now: Instant
   ): ConnectionIO[RequestAck] = {
     val requestId = UUID.randomUUID()
@@ -173,11 +188,18 @@ class TransferController(
 
     for {
       requestId <- updateSql.update.withUniqueGeneratedKeys[UUID]("id")
-      transferInfo = request.transfers.map { body =>
-        (UUID.randomUUID(), requestId, TransferStatus.Pending: TransferStatus, body, -1)
+      transferInfo = listOfTransfers.map { transfer =>
+        (
+          UUID.randomUUID(),
+          requestId,
+          TransferStatus.Pending: TransferStatus,
+          transfer.payload,
+          -1,
+          transfer.priority.getOrElse(0.toShort)
+        )
       }
-      transferCount <- Update[(UUID, UUID, TransferStatus, Json, Int)](
-        s"insert into $TransfersTable (id, request_id, status, body, steps_run) values (?, ?, ?, ?, ?)"
+      transferCount <- Update[(UUID, UUID, TransferStatus, Json, Int, Short)](
+        s"insert into $TransfersTable (id, request_id, status, body, steps_run, priority) values (?, ?, ?, ?, ?, ?)"
       ).updateMany(transferInfo)
     } yield {
       RequestAck(requestId, transferCount)
@@ -378,4 +400,49 @@ class TransferController(
         .to[List]
     }
 
+  /**
+    * Update the priority of all transfers under a request if the transfer is pending.
+    */
+  def updateRequestPriority(requestId: UUID, priority: Short): IO[RequestAck] =
+    checkAndExec(requestId) { rId =>
+      for {
+        updatedRows <- List(
+          Fragment.const(s"update $TransfersTable t"),
+          fr"set priority = $priority",
+          Fragments.whereAnd(
+            fr"t.request_id = $rId",
+            fr"t.status = ${TransferStatus.Pending: TransferStatus}"
+          )
+        ).combineAll.update.run
+        _ <- IO
+          .raiseError(Conflict(requestId))
+          .whenA(updatedRows == 0)
+          .to[ConnectionIO]
+      } yield { RequestAck(requestId, updatedRows) }
+    }
+
+  /**
+    * Update the priority of a specific transfer under a request if the transfer is pending.
+    */
+  def updateTransferPriority(
+    requestId: UUID,
+    transferId: UUID,
+    priority: Short
+  ): IO[RequestAck] =
+    checkAndExec(requestId, transferId) { (rId, tId) =>
+      for {
+        updatedRows <- List(
+          Fragment.const(s"update $TransfersTable set priority = $priority"),
+          Fragments.whereAnd(
+            fr"request_id = $rId",
+            fr"id = $tId",
+            fr"status = ${TransferStatus.Pending: TransferStatus}"
+          )
+        ).combineAll.update.run
+        _ <- IO
+          .raiseError(Conflict(requestId, Some(transferId)))
+          .whenA(updatedRows == 0)
+          .to[ConnectionIO]
+      } yield { RequestAck(requestId, updatedRows) }
+    }
 }

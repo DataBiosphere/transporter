@@ -57,16 +57,16 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         _ <- request1Transfers.traverse_ {
           case (id, body) =>
             sql"""insert into transfers
-                  (id, request_id, body, status, steps_run)
+                  (id, request_id, body, status, steps_run, priority)
                   values
-                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
+                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
         }
         _ <- request2Transfers.traverse_ {
           case (id, body) =>
             sql"""insert into transfers
-                  (id, request_id, body, status, steps_run)
+                  (id, request_id, body, status, steps_run, priority)
                   values
-                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0)""".update.run.void
+                  ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
         }
       } yield ()
 
@@ -81,7 +81,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   it should "record new transfers with well-formed requests" in withController {
     (tx, controller) =>
       val transferCount = 10
-      val request = BulkRequest(List.tabulate(transferCount)(i => json"""{ "i": $i }"""))
+      val request = BulkRequest(
+        List.tabulate(transferCount)(i => TransferRequest(json"""{ "i": $i }""", None))
+      )
 
       for {
         (initRequests, initTransfers) <- (
@@ -107,7 +109,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   it should "not record new transfers with malformed requests" in withController {
     (tx, controller) =>
       val transferCount = 10
-      val request = BulkRequest(List.tabulate(transferCount)(i => json"""[$i]"""))
+      val request = BulkRequest(
+        List.tabulate(transferCount)(i => TransferRequest(json"""[$i]""", None))
+      )
 
       for {
         (initRequests, initTransfers) <- (
@@ -641,5 +645,87 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .listTransfers(requestId, 2, 2, sortDesc = true)
         .attempt
         .map(_.left.value shouldBe NotFound(requestId))
+  }
+
+  it should "update the priority for all transfers in a request" in withRequest {
+    (tx, controller) =>
+      for {
+        _ <- controller.updateRequestPriority(request1Id, 2)
+        changePriorities <- sql"""select priority from transfers where request_id = $request1Id"""
+          .query[Short]
+          .to[List]
+          .transact(tx)
+        unchangedPriorities <- sql"""select priority from transfers where request_id != $request1Id"""
+          .query[Short]
+          .to[List]
+          .transact(tx)
+      } yield {
+        changePriorities.map { _ shouldBe 2 }
+        unchangedPriorities.map { _ shouldBe 0 }
+      }
+  }
+
+  it should "fail to update the priority for transfers if the request ID does not exist" in withController {
+    val requestId = UUID.randomUUID()
+    (_, controller) =>
+      controller
+        .updateRequestPriority(requestId, 2)
+        .attempt
+        .map(_.left.value shouldBe NotFound(requestId))
+  }
+
+  it should "fail to update the priority for transfers in a request if the transfers are no longer pending" in withRequest {
+    (tx, controller) =>
+      for {
+        _ <- sql"""update transfers set status = ${TransferStatus.Submitted: TransferStatus} where request_id = $request1Id""".update.run.void
+          .transact(tx)
+      } yield {
+        controller
+          .updateRequestPriority(request1Id, 2)
+          .attempt
+          .map(_.left.value shouldBe Conflict(request1Id))
+      }
+  }
+
+  it should "update the priority for a specific transfer" in withRequest {
+    (tx, controller) =>
+      val (tId, _) = request1Transfers.head
+      for {
+        _ <- controller.updateTransferPriority(request1Id, tId, 2)
+        changedPriorities <- sql"""select priority from transfers where request_id = $request1Id and id = $tId"""
+          .query[Short]
+          .to[List]
+          .transact(tx)
+        unchangedPriorities <- sql"""select priority from transfers where id != $tId"""
+          .query[Short]
+          .to[List]
+          .transact(tx)
+      } yield {
+        changedPriorities.map { _ shouldBe 2 }
+        unchangedPriorities.map { _ shouldBe 0 }
+      }
+  }
+
+  it should "fail to update the priority for a transfer if the transfer ID does not exist" in withController {
+    val transferId = UUID.randomUUID()
+    (_, controller) =>
+      controller
+        .updateTransferPriority(request1Id, transferId, 2)
+        .attempt
+        .map(_.left.value shouldBe NotFound(request1Id, Some(transferId)))
+  }
+
+  it should "fail to update the priority for a specific transfer if the transfer is no longer pending" in withRequest {
+    val (tId, _) = request1Transfers.head
+    (tx, controller) =>
+      for {
+        _ <- sql"""update transfers set status = ${TransferStatus.Submitted: TransferStatus} where request_id = $request1Id and id = $tId""".update.run.void
+          .transact(tx)
+      } yield {
+        controller
+          .updateTransferPriority(request1Id, tId, 2)
+          .attempt
+          .map(_.left.value shouldBe Conflict(request1Id, Some(tId)))
+      }
   }
 }
