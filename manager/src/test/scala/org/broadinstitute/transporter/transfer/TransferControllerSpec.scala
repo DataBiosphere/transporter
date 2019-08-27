@@ -687,6 +687,17 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
+  it should "return 0 rows updated if the priority updater no-ops on transfers under a request" in withRequest {
+    (tx, controller) =>
+      for {
+        _ <- sql"""update transfers set priority = 5 where request_id = $request1Id""".update.run.void
+          .transact(tx)
+        myOutput <- controller.updateRequestPriority(request1Id, 5)
+      } yield {
+        myOutput.updatedCount shouldBe 0
+      }
+  }
+
   it should "update the priority for a specific transfer" in withRequest {
     (tx, controller) =>
       val (tId, _) = request1Transfers.head
@@ -726,6 +737,18 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           .updateTransferPriority(request1Id, tId, 2)
           .attempt
           .map(_.left.value shouldBe Conflict(request1Id, Some(tId)))
+      }
+  }
+
+  it should "return 0 rows updated if the priority updater no-ops on a specific transfer" in withRequest {
+    val (tId, _) = request1Transfers.head
+    (tx, controller) =>
+      for {
+        _ <- sql"""update transfers set priority = 5 where id = $tId""".update.run.void
+          .transact(tx)
+        myOutput <- controller.updateTransferPriority(request1Id, tId, 5)
+      } yield {
+        myOutput.updatedCount shouldBe 0
       }
   }
 }

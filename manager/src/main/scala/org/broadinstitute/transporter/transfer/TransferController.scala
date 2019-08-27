@@ -150,7 +150,7 @@ class TransferController(
     val transfersWithDefaults = request.transfers.map { transfer =>
       if (request.defaults.isDefined) {
         TransferRequest(
-          transfer.payload.deepMerge(request.defaults.get.payload),
+          request.defaults.get.payload.deepMerge(transfer.payload),
           transfer.priority.orElse(request.defaults.get.priority)
         )
       } else {
@@ -159,9 +159,7 @@ class TransferController(
     }
 
     for {
-      _ <- validateRequests(transfersWithDefaults.map { transfer =>
-        transfer.payload
-      })
+      _ <- validateRequests(transfersWithDefaults.map(_.payload))
       _ <- logger.info(
         s"Received ${request.transfers.length} transfers"
       )
@@ -176,7 +174,7 @@ class TransferController(
 
   /** Record a batch of validated transfers with the given ID. */
   private def recordTransferRequest(
-    listOfTransfers: List[TransferRequest],
+    transfers: List[TransferRequest],
     now: Instant
   ): ConnectionIO[RequestAck] = {
     val requestId = UUID.randomUUID()
@@ -188,7 +186,7 @@ class TransferController(
 
     for {
       requestId <- updateSql.update.withUniqueGeneratedKeys[UUID]("id")
-      transferInfo = listOfTransfers.map { transfer =>
+      transferInfo = transfers.map { transfer =>
         (
           UUID.randomUUID(),
           requestId,
@@ -402,23 +400,35 @@ class TransferController(
 
   /**
     * Update the priority of all transfers under a request if the transfer is pending.
+    * Will overwrite every priority stored in the DB, even for transfers with non-default priorities
+    * on submission.
     */
   def updateRequestPriority(requestId: UUID, priority: Short): IO[RequestAck] =
     checkAndExec(requestId) { rId =>
       for {
+        checkRows <- List(
+          Fragment.const(s"select count(1) from $TransfersTable"),
+          Fragments.whereAnd(
+            fr"request_id = $rId",
+            fr"status = ${TransferStatus.Pending: TransferStatus}"
+          )
+        ).combineAll.query[Long].unique
+        _ <- IO
+          .raiseError(Conflict(requestId))
+          .whenA(checkRows == 0)
+          .to[ConnectionIO]
         updatedRows <- List(
           Fragment.const(s"update $TransfersTable t"),
           fr"set priority = $priority",
           Fragments.whereAnd(
             fr"t.request_id = $rId",
+            fr"t.priority != $priority",
             fr"t.status = ${TransferStatus.Pending: TransferStatus}"
           )
         ).combineAll.update.run
-        _ <- IO
-          .raiseError(Conflict(requestId))
-          .whenA(updatedRows == 0)
-          .to[ConnectionIO]
-      } yield { RequestAck(requestId, updatedRows) }
+      } yield {
+        RequestAck(requestId, updatedRows)
+      }
     }
 
   /**
@@ -431,18 +441,27 @@ class TransferController(
   ): IO[RequestAck] =
     checkAndExec(requestId, transferId) { (rId, tId) =>
       for {
-        updatedRows <- List(
-          Fragment.const(s"update $TransfersTable set priority = $priority"),
+        checkRows <- List(
+          Fragment.const(s"select count(1) from $TransfersTable"),
           Fragments.whereAnd(
-            fr"request_id = $rId",
             fr"id = $tId",
             fr"status = ${TransferStatus.Pending: TransferStatus}"
           )
-        ).combineAll.update.run
+        ).combineAll.query[Long].unique
         _ <- IO
-          .raiseError(Conflict(requestId, Some(transferId)))
-          .whenA(updatedRows == 0)
+          .raiseError(Conflict(rId, Some(tId)))
+          .whenA(checkRows == 0)
           .to[ConnectionIO]
-      } yield { RequestAck(requestId, updatedRows) }
+        updatedRows <- List(
+          Fragment.const(s"update $TransfersTable set priority = $priority"),
+          Fragments.whereAnd(
+            fr"id = $tId",
+            fr"priority != $priority",
+            fr"status = ${TransferStatus.Pending: TransferStatus}"
+          )
+        ).combineAll.update.run
+      } yield {
+        RequestAck(requestId, updatedRows)
+      }
     }
 }

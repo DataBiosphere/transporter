@@ -30,7 +30,7 @@ object ApiError {
 
   /**
     * Exception used to mark when a user attempts to modify a resource
-    *  but the request could not be completed due to a conflict with the current state of the resource.
+    * but the request could not be completed due to a conflict with the current state of the resource.
     */
   case class Conflict(requestId: UUID, transferId: Option[UUID] = None) extends ApiError
 
