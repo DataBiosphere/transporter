@@ -252,4 +252,51 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
       totalSubmitted shouldBe submitted.length
     }
   }
+
+  it should "submit batches of eligible transfers to Kafka as ordered by priority" in withRequest {
+    val (tId0, _) = request1Transfers(9)
+    val (tId1, _) = request1Transfers(6)
+    val (tId2, _) = request1Transfers(8)
+    val (tId3, _) = request1Transfers(7)
+    val (tId4, _) = request1Transfers(5)
+    val myTransfers = List(tId0, tId1, tId2, tId3, tId4)
+    (tx, submitter) =>
+      (kafka.submit _)
+        .expects(where { (topic: String, submitted: List[TransferMessage[Json]]) =>
+          topic == theTopic &&
+          submitted.length == parallelism &&
+          submitted.forall { message =>
+            message.ids.request == request1Id &&
+            request1Transfers.contains(message.ids.transfer -> message.message)
+          }
+        })
+        .returning(IO.unit)
+      (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
+
+      for {
+        _ <- sql"""update transfers set priority = 5 where id in ($tId0, $tId1, $tId2, $tId3, $tId4)""".update.run.void
+          .transact(tx)
+        _ <- submitter.submitEligibleTransfers
+        submitted <- sql"""select id, submitted_at
+                           from transfers
+                           where status = ${TransferStatus.Submitted: TransferStatus}"""
+          .query[(UUID, Option[OffsetDateTime])]
+          .to[List]
+          .transact(tx)
+        _ <- submitter.submitEligibleTransfers
+        totalSubmitted <- sql"""select count(*) from transfers
+                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        submitted.length shouldBe parallelism
+        submitted.foreach {
+          case (id, submittedAt) =>
+            myTransfers should contain(id)
+            submittedAt.isDefined shouldBe true
+        }
+        totalSubmitted shouldBe submitted.length
+      }
+  }
 }
