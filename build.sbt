@@ -76,8 +76,8 @@ val enumeratumVersion = "1.5.13"
 // Web.
 val http4sVersion = "0.20.9"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.23.4"
-val tapirVersion = "0.9.1"
+val swaggerUiVersion = "3.23.5"
+val tapirVersion = "0.9.3"
 
 // Testing.
 val liquibaseVersion = "3.7.0"

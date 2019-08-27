@@ -319,9 +319,31 @@ class WebApi(
       )
       val labeledScheme = ListMap(OAuthConfig.AuthName -> Right(scheme))
 
-      base.copy(components = base.components.map { components =>
+      val newComponents = base.components.map { components =>
         components.copy(securitySchemes = labeledScheme)
-      })
+      }
+
+      val pathSecurity = List(ListMap(OAuthConfig.AuthName -> OAuthConfig.AuthScopes))
+      val newPaths = base.paths.map {
+        case (pathStr, pathItem) =>
+          if (pathStr.startsWith("/api/")) {
+            val newItem = pathItem.copy(
+              get = pathItem.get.map(_.copy(security = pathSecurity)),
+              put = pathItem.put.map(_.copy(security = pathSecurity)),
+              post = pathItem.post.map(_.copy(security = pathSecurity)),
+              delete = pathItem.delete.map(_.copy(security = pathSecurity)),
+              options = pathItem.options.map(_.copy(security = pathSecurity)),
+              head = pathItem.head.map(_.copy(security = pathSecurity)),
+              patch = pathItem.patch.map(_.copy(security = pathSecurity)),
+              trace = pathItem.trace.map(_.copy(security = pathSecurity))
+            )
+            (pathStr, newItem)
+          } else {
+            (pathStr, pathItem)
+          }
+      }
+
+      base.copy(components = newComponents, paths = newPaths)
     }
   }
 

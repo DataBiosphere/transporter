@@ -18,5 +18,5 @@ object OAuthConfig {
   val AuthName = "googleoauth"
 
   /** OAuth scopes which Swagger should request from Google. */
-  val AuthScopes = List("openid", "email", "profile")
+  val AuthScopes = Vector("openid", "email", "profile")
 }
