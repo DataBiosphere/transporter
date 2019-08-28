@@ -137,18 +137,6 @@ class WebApi(
         )
     }
 
-  private val singleRequestBase = requestsBase
-    .in(path[UUID]("request-id"))
-    .errorOut(
-      oneOf(
-        statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-        statusMapping(
-          StatusCodes.InternalServerError,
-          jsonBody[ApiError.UnhandledError]
-        )
-      )
-    )
-
   private val batchSubmitRoute: Route[BulkRequest, ApiError, RequestAck] =
     requestsBase.post
       .in(jsonBody[BulkRequest])
@@ -168,6 +156,52 @@ class WebApi(
           transferController.recordRequest(request),
           "Failed to submit request"
         )
+      }
+
+  private val singleRequestBase = requestsBase
+    .in(path[UUID]("request-id"))
+    .errorOut(
+      oneOf(
+        statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+        statusMapping(
+          StatusCodes.InternalServerError,
+          jsonBody[ApiError.UnhandledError]
+        )
+      )
+    )
+
+  private val updateRequestPriorityRoute: Route[(UUID, Short), ApiError, RequestAck] =
+    singleRequestBase
+      .in("priority")
+      .in(query[Short]("priority"))
+      .put
+      .out(jsonBody[RequestAck])
+      .description("Update the priority of a particular request")
+      .serverLogic {
+        case (requestId, priority) =>
+          buildResponse(
+            transferController.updateRequestPriority(requestId, priority),
+            s"Failed to update priority for transfers under the request with ID $requestId"
+          )
+      }
+
+  private val updateTransferPriorityRoute: Route[
+    (UUID, UUID, Short),
+    ApiError,
+    RequestAck
+  ] =
+    singleRequestBase
+      .in("detail" / path[UUID]("transfer-id") / "priority")
+      .in(query[Short]("priority"))
+      .put
+      .out(jsonBody[RequestAck])
+      .description("Update the priority of a particular request")
+      .serverLogic {
+        case (requestId, transferId, priority) =>
+          buildResponse(
+            transferController.updateTransferPriority(requestId, transferId, priority),
+            s"Failed to update priority for transfer with request ID $requestId and transfer ID $transferId"
+          )
       }
 
   private val requestStatusRoute: Route[UUID, ApiError, RequestSummary] =
@@ -282,6 +316,8 @@ class WebApi(
     versionRoute,
     lookupRequestsRoute,
     batchSubmitRoute,
+    updateRequestPriorityRoute,
+    updateTransferPriorityRoute,
     requestStatusRoute,
     requestOutputsRoute,
     requestFailuresRoute,

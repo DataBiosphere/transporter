@@ -1,6 +1,6 @@
 package org.broadinstitute.transporter.transfer.api
 
-import io.circe.{Decoder, Encoder, Json}
+import io.circe.{Decoder, Encoder}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
 
 /**
@@ -9,8 +9,12 @@ import io.circe.derivation.{deriveDecoder, deriveEncoder}
   * @param transfers individual transfer descriptions to track under the request submission.
   *                  The exact schema of each transfer is set in the manager's config on deploy,
   *                  and validated at runtime.
+  * @param defaults  optional TransferRequest that sets defaults for all transfers under a request.
   */
-case class BulkRequest(transfers: List[Json])
+case class BulkRequest(
+  transfers: List[TransferRequest],
+  defaults: Option[TransferRequest] = None
+)
 
 object BulkRequest {
   implicit val decoder: Decoder[BulkRequest] = deriveDecoder

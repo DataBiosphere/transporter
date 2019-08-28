@@ -43,6 +43,7 @@ Paths below prefixed with `/api/transporter/v1`.
 | GET | `/transfers/{request-id}/outputs` | Get agent-reported outputs of transfers that succeeded within a request. |
 | GET | `/transfers/{request-id}/failures` | Get agent-reported error messages of transfers that failed within a request. |
 | PUT | `/transfers/{request-id}/reconsider` | Reset the state of all failed transfers in a request to 'Pending'. |
+| PUT | `/transfers/{request-id}/priority` | Update the priority of all pending transfers in a request. |
 
 ### Transfer-level
 Paths below prefixed with `/api/transporter/v1/transfers/{request-id}`.
@@ -52,6 +53,8 @@ Paths below prefixed with `/api/transporter/v1/transfers/{request-id}`.
 | PUT | `/detail/{transfer-id}/reconsider` | Reset the state of a specific failed transfer in a request to 'Pending'. |
 | GET | `/detail/{transfer-id}` | Get all information stored by the Manager about a specific transfer under a bulk request. |
 | GET | `/list-transfers` | Get the transfer IDs for a given request ID which fall within a specified page range. |
+| PUT | `/detail/{transfer-id}/priority` | Update the priority of a pending transfer in a request. |
+
 
 ## Running Locally
 To run the Manager locally:

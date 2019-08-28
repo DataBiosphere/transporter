@@ -28,6 +28,15 @@ object ApiError {
   implicit val nsrDecoder: Decoder[NotFound] = deriveDecoder
   implicit val nsrEncoder: Encoder[NotFound] = deriveEncoder
 
+  /**
+    * Exception used to mark when a user attempts to modify a resource
+    * but the request could not be completed due to a conflict with the current state of the resource.
+    */
+  case class Conflict(requestId: UUID, transferId: Option[UUID] = None) extends ApiError
+
+  implicit val cDecoder: Decoder[Conflict] = deriveDecoder
+  implicit val cEncoder: Encoder[Conflict] = deriveEncoder
+
   /** Catch-all error model used to wrap unhandled exceptions from business logic. */
   case class UnhandledError(message: String) extends ApiError
 
