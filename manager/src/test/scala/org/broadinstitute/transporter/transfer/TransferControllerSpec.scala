@@ -8,6 +8,7 @@ import cats.effect.{Clock, IO}
 import cats.implicits._
 import doobie._
 import doobie.implicits._
+import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.error.ApiError._
@@ -129,6 +130,50 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         ackOrErr.left.value shouldBe an[InvalidRequest]
         postRequests shouldBe 0
         postTransfers shouldBe 0
+      }
+  }
+
+  it should "merge defaults correctly into transfer requests" in withController {
+    (tx, controller) =>
+      val transferCount = 10
+      val j = 2
+      val altJ = 5
+      val k = 3
+      val pri = 3.toShort
+      val altPri = 2.toShort
+      val request = BulkRequest(
+        List.tabulate(transferCount)(
+          i =>
+            TransferRequest(
+              if (i % 2 == 0) json"""{ "i": $i, "j": $j }""" else json"""{ "i": $i }""",
+              if (i % 2 == 0) Some(pri) else None
+            )
+        ),
+        Some(TransferRequest(json"""{ "j": $altJ, "k": $k }""", Some(altPri)))
+      )
+
+      for {
+        _ <- controller.recordRequest(request)
+        transfers <- sql"""select body from transfers""".query[Json].to[List].transact(tx)
+        priorities <- sql"""select priority from transfers"""
+          .query[Int]
+          .to[List]
+          .transact(tx)
+      } yield {
+        transfers.zipWithIndex.foreach {
+          case (transfer, i) =>
+            if (i % 2 == 0)
+              transfer shouldBe json"""{ "i": $i, "j": $j, "k": $k }"""
+            else
+              transfer shouldBe json"""{ "i": $i, "j": $altJ, "k": $k } """
+        }
+        priorities.zipWithIndex.foreach {
+          case (priority, i) =>
+            if (i % 2 == 0)
+              priority shouldBe priority
+            else
+              priority shouldBe altPri
+        }
       }
   }
 
