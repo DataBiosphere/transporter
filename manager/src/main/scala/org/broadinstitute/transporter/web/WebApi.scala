@@ -24,7 +24,7 @@ import tapir.{MediaType => _, _}
 import tapir.json.circe._
 import tapir.model.StatusCodes
 import tapir.docs.openapi._
-import tapir.openapi.{OAuthFlow, OAuthFlows, SecurityScheme}
+import tapir.openapi.{OAuthFlow, OAuthFlows, Operation, SecurityScheme}
 import tapir.server.ServerEndpoint
 import tapir.server.http4s._
 import tapir.openapi.circe.yaml._
@@ -324,18 +324,23 @@ class WebApi(
       }
 
       val pathSecurity = List(ListMap(OAuthConfig.AuthName -> OAuthConfig.AuthScopes))
+      def addSecurity(op: Option[Operation]): Option[Operation] =
+        op.map(_.copy(security = pathSecurity))
+
       val newPaths = base.paths.map {
         case (pathStr, pathItem) =>
+          // FIXME: It should be possible to add security scopes to the routes up-front before
+          // converting them to OpenAPI, so we don't have to do this brute-force hack.
           if (pathStr.startsWith("/api/")) {
             val newItem = pathItem.copy(
-              get = pathItem.get.map(_.copy(security = pathSecurity)),
-              put = pathItem.put.map(_.copy(security = pathSecurity)),
-              post = pathItem.post.map(_.copy(security = pathSecurity)),
-              delete = pathItem.delete.map(_.copy(security = pathSecurity)),
-              options = pathItem.options.map(_.copy(security = pathSecurity)),
-              head = pathItem.head.map(_.copy(security = pathSecurity)),
-              patch = pathItem.patch.map(_.copy(security = pathSecurity)),
-              trace = pathItem.trace.map(_.copy(security = pathSecurity))
+              get = addSecurity(pathItem.get),
+              put = addSecurity(pathItem.put),
+              post = addSecurity(pathItem.post),
+              delete = addSecurity(pathItem.delete),
+              options = addSecurity(pathItem.options),
+              head = addSecurity(pathItem.head),
+              patch = addSecurity(pathItem.patch),
+              trace = addSecurity(pathItem.trace)
             )
             (pathStr, newItem)
           } else {
