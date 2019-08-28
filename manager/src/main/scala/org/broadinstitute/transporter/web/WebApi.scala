@@ -24,7 +24,7 @@ import tapir.{MediaType => _, _}
 import tapir.json.circe._
 import tapir.model.StatusCodes
 import tapir.docs.openapi._
-import tapir.openapi.{OAuthFlow, OAuthFlows, SecurityScheme}
+import tapir.openapi.{OAuthFlow, OAuthFlows, Operation, SecurityScheme}
 import tapir.server.ServerEndpoint
 import tapir.server.http4s._
 import tapir.openapi.circe.yaml._
@@ -355,9 +355,36 @@ class WebApi(
       )
       val labeledScheme = ListMap(OAuthConfig.AuthName -> Right(scheme))
 
-      base.copy(components = base.components.map { components =>
+      val newComponents = base.components.map { components =>
         components.copy(securitySchemes = labeledScheme)
-      })
+      }
+
+      val pathSecurity = List(ListMap(OAuthConfig.AuthName -> OAuthConfig.AuthScopes))
+      def addSecurity(op: Option[Operation]): Option[Operation] =
+        op.map(_.copy(security = pathSecurity))
+
+      val newPaths = base.paths.map {
+        case (pathStr, pathItem) =>
+          // FIXME: It should be possible to add security scopes to the routes up-front before
+          // converting them to OpenAPI, so we don't have to do this brute-force hack.
+          if (pathStr.startsWith("/api/")) {
+            val newItem = pathItem.copy(
+              get = addSecurity(pathItem.get),
+              put = addSecurity(pathItem.put),
+              post = addSecurity(pathItem.post),
+              delete = addSecurity(pathItem.delete),
+              options = addSecurity(pathItem.options),
+              head = addSecurity(pathItem.head),
+              patch = addSecurity(pathItem.patch),
+              trace = addSecurity(pathItem.trace)
+            )
+            (pathStr, newItem)
+          } else {
+            (pathStr, pathItem)
+          }
+      }
+
+      base.copy(components = newComponents, paths = newPaths)
     }
   }
 
