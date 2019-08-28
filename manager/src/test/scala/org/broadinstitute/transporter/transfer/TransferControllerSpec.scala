@@ -142,38 +142,30 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       val pri = 3.toShort
       val altPri = 2.toShort
       val request = BulkRequest(
-        List.tabulate(transferCount)(
-          i =>
-            TransferRequest(
-              if (i % 2 == 0) json"""{ "i": $i, "j": $j }""" else json"""{ "i": $i }""",
-              if (i % 2 == 0) Some(pri) else None
-            )
-        ),
+        List.tabulate(transferCount) { i =>
+          TransferRequest(
+            if (i % 2 == 0) json"""{ "i": $i, "j": $j }""" else json"""{ "i": $i }""",
+            if (i % 2 == 0) Some(pri) else None
+          )
+        },
         Some(TransferRequest(json"""{ "j": $altJ, "k": $k }""", Some(altPri)))
       )
 
+      val expected = List.tabulate(transferCount) { i =>
+        if (i % 2 == 0)
+          (json"""{ "i": $i, "j": $j, "k": $k }""", pri)
+        else
+          (json"""{ "i": $i, "j": $altJ, "k": $k }""", altPri)
+      }
+
       for {
         _ <- controller.recordRequest(request)
-        transfers <- sql"""select body from transfers""".query[Json].to[List].transact(tx)
-        priorities <- sql"""select priority from transfers"""
-          .query[Int]
+        actual <- sql"""select body, priority from transfers"""
+          .query[(Json, Int)]
           .to[List]
           .transact(tx)
       } yield {
-        transfers.zipWithIndex.foreach {
-          case (transfer, i) =>
-            if (i % 2 == 0)
-              transfer shouldBe json"""{ "i": $i, "j": $j, "k": $k }"""
-            else
-              transfer shouldBe json"""{ "i": $i, "j": $altJ, "k": $k } """
-        }
-        priorities.zipWithIndex.foreach {
-          case (priority, i) =>
-            if (i % 2 == 0)
-              priority shouldBe priority
-            else
-              priority shouldBe altPri
-        }
+        actual should contain theSameElementsAs expected
       }
   }
 
@@ -705,8 +697,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           .to[List]
           .transact(tx)
       } yield {
-        changePriorities.map { _ shouldBe 2 }
-        unchangedPriorities.map { _ shouldBe 0 }
+        changePriorities.foreach { _ shouldBe 2 }
+        unchangedPriorities.foreach { _ shouldBe 0 }
       }
   }
 
@@ -757,8 +749,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           .to[List]
           .transact(tx)
       } yield {
-        changedPriorities.map { _ shouldBe 2 }
-        unchangedPriorities.map { _ shouldBe 0 }
+        changedPriorities.foreach { _ shouldBe 2 }
+        unchangedPriorities.foreach { _ shouldBe 0 }
       }
   }
 

@@ -274,7 +274,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
       (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
 
       for {
-        _ <- sql"""update transfers set priority = 5 where id in ($tId0, $tId1, $tId2, $tId3, $tId4)""".update.run.void
+        _ <- sql"""update transfers set priority = 5 where id in ($tId0, $tId2, $tId3, $tId4)""".update.run.void
           .transact(tx)
         _ <- submitter.submitEligibleTransfers
         submitted <- sql"""select id, submitted_at
@@ -296,6 +296,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
             myTransfers should contain(id)
             submittedAt.isDefined shouldBe true
         }
+        submitted.foreach { _._1 should not be tId1 }
         totalSubmitted shouldBe submitted.length
       }
   }
