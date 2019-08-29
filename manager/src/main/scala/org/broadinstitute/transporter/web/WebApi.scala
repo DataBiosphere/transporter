@@ -108,7 +108,7 @@ class WebApi(
     (Long, Long, SortOrder),
     ApiError,
     Page[RequestSummary]
-  ] = requestsBase
+  ] = requestsBase.get
     .in(query[Long]("offset"))
     .in(query[Long]("limit"))
     .in(query[SortOrder]("sort"))
@@ -171,10 +171,9 @@ class WebApi(
     )
 
   private val updateRequestPriorityRoute: Route[(UUID, Short), ApiError, RequestAck] =
-    singleRequestBase
+    singleRequestBase.put
       .in("priority")
       .in(query[Short]("priority"))
-      .put
       .out(jsonBody[RequestAck])
       .description("Update the priority of a particular request")
       .serverLogic {
@@ -190,10 +189,9 @@ class WebApi(
     ApiError,
     RequestAck
   ] =
-    singleRequestBase
+    singleRequestBase.put
       .in("detail" / path[UUID]("transfer-id") / "priority")
       .in(query[Short]("priority"))
-      .put
       .out(jsonBody[RequestAck])
       .description("Update the priority of a particular request")
       .serverLogic {
@@ -205,7 +203,7 @@ class WebApi(
       }
 
   private val requestStatusRoute: Route[UUID, ApiError, RequestSummary] =
-    singleRequestBase
+    singleRequestBase.get
       .in("status")
       .out(jsonBody[RequestSummary])
       .description("Get the current summary status of a transfer request")
@@ -217,7 +215,7 @@ class WebApi(
       }
 
   private val requestOutputsRoute: Route[UUID, ApiError, RequestInfo] =
-    singleRequestBase
+    singleRequestBase.get
       .in("outputs")
       .out(jsonBody[RequestInfo])
       .description("Get the outputs of successful transfers from a request")
@@ -229,7 +227,7 @@ class WebApi(
       }
 
   private val requestFailuresRoute: Route[UUID, ApiError, RequestInfo] =
-    singleRequestBase
+    singleRequestBase.get
       .in("failures")
       .out(jsonBody[RequestInfo])
       .description("Get the outputs of failed transfers from a request")
@@ -244,7 +242,7 @@ class WebApi(
     (UUID, Long, Long, SortOrder),
     ApiError,
     Page[TransferDetails]
-  ] = singleRequestBase
+  ] = singleRequestBase.get
     .in("list-transfers")
     .in(query[Long]("offset"))
     .in(query[Long]("limit"))
@@ -269,9 +267,8 @@ class WebApi(
     }
 
   private val reconsiderRoute: Route[UUID, ApiError, RequestAck] =
-    singleRequestBase
+    singleRequestBase.put
       .in("reconsider")
-      .put
       .out(jsonBody[RequestAck])
       .description("Reset the state of all failed transfers in a request to 'pending'")
       .serverLogic { requestId =>
@@ -282,9 +279,8 @@ class WebApi(
       }
 
   private val reconsiderSingleTransferRoute: Route[(UUID, UUID), ApiError, RequestAck] =
-    singleRequestBase
+    singleRequestBase.put
       .in("detail" / path[UUID]("transfer-id") / "reconsider")
-      .put
       .out(jsonBody[RequestAck])
       .description(
         "Reset the state of a single failed transfer in a request to 'pending'"
@@ -298,7 +294,7 @@ class WebApi(
       }
 
   private val detailsRoute: Route[(UUID, UUID), ApiError, TransferDetails] =
-    singleRequestBase
+    singleRequestBase.get
       .in("detail" / path[UUID]("transfer-id"))
       .out(jsonBody[TransferDetails])
       .description("Get detailed info about a single transfer from a request")
