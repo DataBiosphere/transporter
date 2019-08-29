@@ -3,6 +3,7 @@ package org.broadinstitute.transporter.transfer
 import java.time.Instant
 import java.util.UUID
 
+import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.{Clock, IO}
 import cats.implicits._
@@ -17,6 +18,8 @@ import org.broadinstitute.transporter.db.{Constants, DbLogHandler, DoobieInstanc
 import org.broadinstitute.transporter.error.ApiError.{Conflict, InvalidRequest, NotFound}
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.config.TransferSchema
+
+import scala.collection.JavaConverters._
 
 /**
   * Component responsible for backing Transporter's transfer-level web APIs.
@@ -211,10 +214,14 @@ class TransferController(
       _ <- requests.traverse_(schema.validate(_).toValidatedNel) match {
         case Valid(_) => IO.unit
         case Invalid(errs) =>
-          logger
-            .error(s"Requests failed validation:")
-            .flatMap(_ => errs.traverse_(e => logger.error(e.getMessage)))
-            .flatMap(_ => IO.raiseError(InvalidRequest(errs.map(_.getMessage))))
+          NonEmptyList
+            .fromList(errs.toList.flatMap(_.getAllMessages.asScala.toList))
+            .fold(IO.unit) { msgs =>
+              logger
+                .error("Requests failed validation:")
+                .flatTap(_ => msgs.traverse_(logger.error(_)))
+                .flatMap(_ => IO.raiseError(InvalidRequest(msgs)))
+            }
       }
     } yield ()
 
