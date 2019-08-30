@@ -3,6 +3,7 @@ package org.broadinstitute.transporter.transfer
 import java.time.Instant
 import java.util.UUID
 
+import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.{Clock, IO}
 import cats.implicits._
@@ -17,6 +18,8 @@ import org.broadinstitute.transporter.db.{Constants, DbLogHandler, DoobieInstanc
 import org.broadinstitute.transporter.error.ApiError.{Conflict, InvalidRequest, NotFound}
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.config.TransferSchema
+
+import scala.collection.JavaConverters._
 
 /**
   * Component responsible for backing Transporter's transfer-level web APIs.
@@ -84,18 +87,19 @@ class TransferController(
       id => fr"where r.id = $id" ++ groupBy
     )
 
-    val tempTable = "id_status_summaries"
+    val tempTable =
+      s"id_status_summaries_${UUID.randomUUID().toString.replaceAll("-", "_")}"
 
     // The 'crosstab' function needs a real (if temporary) table to work.
     val createTempTable = List(
-      Fragment.const(s"create temporary table $tempTable as"),
+      Fragment.const(s"create temporary table $tempTable on commit drop as"),
       fr"select r.id as id, t.status as status, r.received_at as receive_t,",
       fr"min(t.submitted_at) as submit_t, max(t.updated_at) as update_t, count(t.id) as n",
       fr"from" ++ TransfersJoinTable,
       filterOrLimit
     ).combineAll
 
-    val pivotTable = "count_pivot"
+    val pivotTable = s"count_pivot_${UUID.randomUUID().toString.replaceAll("-", "_")}"
     val typedStatusColumns =
       Fragment.const(
         TransferStatus.values.map(s => s"${s.entryName} integer").mkString(", ")
@@ -107,7 +111,7 @@ class TransferController(
     )
 
     val buildPivot = List(
-      Fragment.const(s"create temporary table $pivotTable as"),
+      Fragment.const(s"create temporary table $pivotTable on commit drop as"),
       // crosstab lets us dynamically pivot the table from 3 columns of (id, status, count)
       // into N columns of (id, status1, status2, ...) with count values in the row cells.
       fr"select * from crosstab(",
@@ -218,10 +222,14 @@ class TransferController(
       _ <- requests.traverse_(schema.validate(_).toValidatedNel) match {
         case Valid(_) => IO.unit
         case Invalid(errs) =>
-          logger
-            .error(s"Requests failed validation:")
-            .flatMap(_ => errs.traverse_(e => logger.error(e.getMessage)))
-            .flatMap(_ => IO.raiseError(InvalidRequest(errs.map(_.getMessage))))
+          NonEmptyList
+            .fromList(errs.toList.flatMap(_.getAllMessages.asScala.toList))
+            .fold(IO.unit) { msgs =>
+              logger
+                .error("Requests failed validation:")
+                .flatTap(_ => msgs.traverse_(logger.error(_)))
+                .flatMap(_ => IO.raiseError(InvalidRequest(msgs)))
+            }
       }
     } yield ()
 

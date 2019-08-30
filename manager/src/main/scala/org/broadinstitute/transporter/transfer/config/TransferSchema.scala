@@ -6,7 +6,7 @@ import com.typesafe.config.{ConfigList, ConfigObject, ConfigValue, ConfigValueTy
 import io.circe.Decoder.Result
 import io.circe._
 import io.circe.syntax._
-import org.everit.json.schema.Schema
+import org.everit.json.schema.{Schema, ValidationException}
 import org.everit.json.schema.loader.SchemaLoader
 import org.json.{JSONArray, JSONObject, JSONTokener}
 import pureconfig.ConfigReader
@@ -31,10 +31,13 @@ class TransferSchema private (
 ) {
 
   /** Check if the given JSON conforms to this schema. */
-  def validate(json: Json): Validated[Throwable, Json] =
-    Validated.catchNonFatal {
-      validator.validate(TransferSchema.circeToEverit(json))
-    }.as(json)
+  def validate(json: Json): Validated[ValidationException, Json] =
+    Either
+      .catchOnly[ValidationException] {
+        validator.validate(TransferSchema.circeToEverit(json))
+      }
+      .toValidated
+      .as(json)
 
   /*
    * Delegate `hashCode` and `equals` to `json` for testing.
