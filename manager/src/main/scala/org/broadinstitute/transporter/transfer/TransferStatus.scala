@@ -49,4 +49,7 @@ object TransferStatus
 
   /** Status assigned to transfers which are reported to have completed successfully. */
   case object Succeeded extends TransferStatus
+
+  /** Status assigned to transfers which are expanded into multiple transfers. */
+  case object Expanded extends TransferStatus
 }

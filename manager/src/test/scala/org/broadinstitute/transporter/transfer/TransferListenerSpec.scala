@@ -13,6 +13,7 @@ import io.circe.Json
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.kafka.KafkaConsumer
+import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.EitherValues
 
@@ -26,6 +27,9 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
   private val progress = mock[KafkaConsumer[(Int, Json)]]
   private val results = mock[KafkaConsumer[(TransferResult, Json)]]
 
+  private val requestSchema =
+    json"""{ "type": "object" }""".as[TransferSchema].right.value
+
   private val request1Id = UUID.randomUUID()
   private val request1Transfers = List.tabulate(50) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
@@ -38,7 +42,12 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
   def withRequest(test: (Transactor[IO], TransferListener) => IO[Any]): Unit = {
     val tx = transactor
-    val listener = new TransferListener(tx, progress, results)
+    val listener = new TransferListener(
+      tx,
+      progress,
+      results,
+      new TransferController(requestSchema, tx)
+    )
 
     val setup = for {
       _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
@@ -90,6 +99,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
             res match {
               case TransferResult.Success      => TransferStatus.Succeeded
               case TransferResult.FatalFailure => TransferStatus.Failed
+              case TransferResult.Expanded     => TransferStatus.Expanded
             },
             info
           )

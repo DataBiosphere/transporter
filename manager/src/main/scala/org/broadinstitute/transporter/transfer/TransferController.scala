@@ -166,18 +166,25 @@ class TransferController(
       now <- clk
         .realTime(scala.concurrent.duration.MILLISECONDS)
         .map(Instant.ofEpochMilli)
-      ack <- recordTransferRequest(transfersWithDefaults, now).transact(dbClient)
+      requestId = UUID.randomUUID()
+      transferIds <- recordTransferRequest(
+        transfersWithDefaults,
+        now,
+        requestId,
+        0.toShort
+      ).transact(dbClient)
     } yield {
-      ack
+      RequestAck(requestId, transferIds.length)
     }
   }
 
   /** Record a batch of validated transfers with the given ID. */
-  private def recordTransferRequest(
+  private[transfer] def recordTransferRequest(
     transfers: List[TransferRequest],
-    now: Instant
-  ): ConnectionIO[RequestAck] = {
-    val requestId = UUID.randomUUID()
+    now: Instant,
+    requestId: UUID,
+    priority: Short
+  ): ConnectionIO[List[UUID]] = {
 
     val updateSql = List(
       Fragment.const(s"insert into $RequestsTable (id, received_at) values"),
@@ -193,14 +200,14 @@ class TransferController(
           TransferStatus.Pending: TransferStatus,
           transfer.payload,
           -1,
-          transfer.priority.getOrElse(0.toShort)
+          transfer.priority.getOrElse(priority)
         )
       }
-      transferCount <- Update[(UUID, UUID, TransferStatus, Json, Int, Short)](
+      _ <- Update[(UUID, UUID, TransferStatus, Json, Int, Short)](
         s"insert into $TransfersTable (id, request_id, status, body, steps_run, priority) values (?, ?, ?, ?, ?, ?)"
       ).updateMany(transferInfo)
     } yield {
-      RequestAck(requestId, transferCount)
+      transferInfo.map(_._1)
     }
   }
 
