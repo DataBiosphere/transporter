@@ -266,7 +266,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           TransferStatus.Submitted -> 3,
           TransferStatus.Failed -> 3,
           TransferStatus.Succeeded -> 2,
-          TransferStatus.InProgress -> 1
+          TransferStatus.InProgress -> 1,
+          TransferStatus.Expanded -> 0
         ),
         Some(OffsetDateTime.ofInstant(now.minusMillis(30000), ZoneId.of("UTC"))),
         Some(OffsetDateTime.ofInstant(now.plusMillis(10000), ZoneId.of("UTC")))
