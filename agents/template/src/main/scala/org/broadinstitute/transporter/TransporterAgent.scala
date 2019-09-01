@@ -5,8 +5,12 @@ import java.util.concurrent.{ExecutorService, Executors}
 import cats.effect._
 import io.circe.{Decoder, Encoder}
 import org.apache.kafka.streams.KafkaStreams
+import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.kafka.{KStreamsConfig, TransferStreamBuilder}
 import org.broadinstitute.transporter.transfer.TransferRunner
+import org.broadinstitute.transporter.web.WebApi
+import org.broadinstitute.transporter.web.config.WebConfig
+import org.http4s.server.blaze.BlazeServerBuilder
 import pureconfig.ConfigReader
 import pureconfig.module.catseffect._
 
@@ -47,26 +51,47 @@ abstract class TransporterAgent[
   final override def run(args: List[String]): IO[ExitCode] =
     loadConfigF[IO, AgentConfig[Config]]("org.broadinstitute.transporter").flatMap {
       config =>
-        runnerResource(config.runnerConfig).use(runStream(_, config.kafka))
+        runnerResource(config.runnerConfig).flatMap(streamResource(_, config.kafka)).use {
+          stream =>
+            runWebApi(new InfoController(stream), config.web)
+        }
     }
 
   /**
-    * Build and launch the Kafka stream which receives, processes, and reports
-    * on data transfer requests.
-    *
-    * This method should only return if the underlying stream is interrupted
-    * (i.e. by a Ctrl-C).
+    * Build a resource which will construct and launch a Kafka stream to
+    * receive, process, and report on data transfer requests.
     */
-  private def runStream(
+  private def streamResource(
     runner: TransferRunner[In, Progress, Out],
     kafkaConfig: KStreamsConfig
-  ): IO[ExitCode] =
-    for {
+  ): Resource[IO, KafkaStreams] = {
+    val setup = for {
       topology <- new TransferStreamBuilder(kafkaConfig.topics, runner).build
       stream <- IO.delay(new KafkaStreams(topology, kafkaConfig.asProperties))
       _ <- IO.delay(stream.start())
-      _ <- IO.cancelable[Unit](_ => IO.delay(stream.close()))
     } yield {
-      ExitCode.Success
+      stream
     }
+    Resource.make(setup)(stream => IO.delay(stream.close()))
+  }
+
+  /**
+    * Run a web server for REST queries to the agent.
+    *
+    * The returned `IO` will only complete if the process receives a stop/interrupt
+    * signal from the OS.
+    */
+  private def runWebApi(
+    controller: InfoController,
+    config: WebConfig
+  ): IO[ExitCode] = {
+    val api = new WebApi(controller)
+
+    BlazeServerBuilder[IO]
+      .withHttpApp(api.app)
+      .bindHttp(host = config.host, port = config.port)
+      .serve
+      .compile
+      .lastOrError
+  }
 }
