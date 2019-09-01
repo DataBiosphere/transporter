@@ -246,6 +246,26 @@ class TransferStreamBuilderSpec
     }
   }
 
+  it should "not crash on initialization failures with a null message" in {
+    val messages = List.tabulate(2) { i =>
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i))
+    }
+
+    val runner = mock[LoopRunner]
+    messages.foreach { msg =>
+      (runner.initialize _).expects(msg.message).throwing(new Exception)
+    }
+
+    val List(result1, result2) = roundTripTransfers(messages.map(_.asJson), runner)
+
+    result1.message._1 shouldBe TransferResult.FatalFailure
+    result2.message._1 shouldBe TransferResult.FatalFailure
+
+    List(result1.message._2, result2.message._2).foreach { jsonInfo =>
+      jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
+    }
+  }
+
   it should "push error results if processing a transfer fails" in {
     val messages = List.tabulate(2) { i =>
       TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i))
@@ -256,6 +276,28 @@ class TransferStreamBuilderSpec
       val zero = LoopProgress(0, msg.message.loopCount)
       (runner.initialize _).expects(msg.message).returning(Left(zero))
       (runner.step _).expects(zero).throwing(new Exception("OH NO"))
+    }
+
+    val List(result1, result2) = roundTripTransfers(messages.map(_.asJson), runner)
+
+    result1.message._1 shouldBe TransferResult.FatalFailure
+    result2.message._1 shouldBe TransferResult.FatalFailure
+
+    List(result1.message._2, result2.message._2).foreach { jsonInfo =>
+      jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
+    }
+  }
+
+  it should "not crash on step failures with a null message" in {
+    val messages = List.tabulate(2) { i =>
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i))
+    }
+
+    val runner = mock[LoopRunner]
+    messages.foreach { msg =>
+      val zero = LoopProgress(0, msg.message.loopCount)
+      (runner.initialize _).expects(msg.message).returning(Left(zero))
+      (runner.step _).expects(zero).throwing(new Exception)
     }
 
     val List(result1, result2) = roundTripTransfers(messages.map(_.asJson), runner)
