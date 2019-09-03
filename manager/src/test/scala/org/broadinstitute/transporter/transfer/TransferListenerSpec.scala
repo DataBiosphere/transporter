@@ -354,10 +354,10 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
           .to[List]
           .transact(tx)
       } yield {
-        val blah = newTransfers.map {
+        val finalTransfers = newTransfers.map {
           case (transfer, priority) => (json"""[$transfer]""", priority)
         }
-        blah should contain theSameElementsAs originalTransfers
+        finalTransfers should contain theSameElementsAs originalTransfers
       }
   }
 }
