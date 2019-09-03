@@ -90,7 +90,7 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
                     ids,
                     (
                       TransferResult.FatalFailure: TransferResult,
-                      UnhandledErrorInfo(message, err.getMessage)
+                      UnhandledErrorInfo(message, Option(err.getMessage))
                     ).asJson
                   )
                 }
@@ -159,7 +159,7 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
                     ids,
                     (
                       TransferResult.FatalFailure: TransferResult,
-                      UnhandledErrorInfo(message, err.getMessage)
+                      UnhandledErrorInfo(message, Option(err.getMessage))
                     ).asJson
                   )
                   Either.right(errSummary)
@@ -211,7 +211,7 @@ object TransferStreamBuilder {
   )
 
   /** Model used for capturing errors caught by the agent framework. */
-  private[kafka] case class UnhandledErrorInfo(message: String, detail: String)
+  private[kafka] case class UnhandledErrorInfo(message: String, detail: Option[String])
   private[kafka] implicit val encoder: Encoder[UnhandledErrorInfo] =
     io.circe.derivation.deriveEncoder
 }

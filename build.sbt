@@ -276,6 +276,9 @@ lazy val `transporter-agent-template` = project
     libraryDependencies ++= Seq(
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
+      "org.http4s" %% "http4s-blaze-server" % http4sVersion,
+      "org.http4s" %% "http4s-circe" % http4sVersion,
+      "org.http4s" %% "http4s-dsl" % http4sVersion,
       "org.log4s" %% "log4s" % log4sVersion
     ),
     libraryDependencies ++= Seq(
