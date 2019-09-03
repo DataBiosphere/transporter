@@ -504,13 +504,15 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Succeeded: TransferStatus},
                  updated_at = ${Timestamp.from(updated)},
-                 info = '{}'
+                 info = '{}',
+                 priority = 100
                  where id = $id""".update.run.void.transact(tx)
       updatedInfo <- controller.lookupTransferDetails(request1Id, id)
     } yield {
       initInfo shouldBe TransferDetails(
         id,
         TransferStatus.Pending,
+        0L,
         body,
         None,
         None,
@@ -519,6 +521,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       submittedInfo shouldBe TransferDetails(
         id,
         TransferStatus.Submitted,
+        0L,
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         None,
@@ -527,6 +530,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       updatedInfo shouldBe TransferDetails(
         id,
         TransferStatus.Succeeded,
+        100L,
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
@@ -569,7 +573,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       initInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Submitted: TransferStatus},
-                 submitted_at = ${Timestamp.from(submitted)}
+                 submitted_at = ${Timestamp.from(submitted)},
+                 priority = 10
                  where id = $id1""".update.run.void.transact(tx)
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Submitted: TransferStatus},
@@ -592,6 +597,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Pending,
+          0L,
           body1,
           None,
           None,
@@ -600,6 +606,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Pending,
+          0L,
           body2,
           None,
           None,
@@ -610,6 +617,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Submitted,
+          10L,
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
@@ -618,6 +626,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Submitted,
+          0L,
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
@@ -628,6 +637,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Succeeded,
+          10L,
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
@@ -636,6 +646,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Succeeded,
+          0L,
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),

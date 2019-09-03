@@ -381,7 +381,7 @@ class TransferController(
     checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
         Fragment.const(
-          s"select id, status, body, submitted_at, updated_at, info from $TransfersTable"
+          s"select id, status, priority, body, submitted_at, updated_at, info from $TransfersTable"
         ),
         Fragments.whereAnd(fr"request_id = $rId", fr"id = $tId")
       ).combineAll
@@ -414,7 +414,7 @@ class TransferController(
       val order = Fragment.const(if (sortDesc) "desc" else "asc")
       List(
         Fragment.const(
-          s"select id, status, body, submitted_at, updated_at, info from $TransfersTable"
+          s"select id, status, priority, body, submitted_at, updated_at, info from $TransfersTable"
         ),
         fr"where request_id = $rId order by id" ++ order ++ fr"limit $limit offset $offset"
       ).combineAll

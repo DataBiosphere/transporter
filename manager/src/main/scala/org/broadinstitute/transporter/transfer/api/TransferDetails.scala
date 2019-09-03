@@ -12,6 +12,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   *
   * @param id unique ID of the transfer within its enclosing request
   * @param status current status of the transfer
+  * @param priority the submission priority of the transfer
   * @param requestBody user-provided JSON payload describing the transfer
   * @param submittedAt time at which the transfer was pushed to agents
   * @param updatedAt time at which the latest status update was received for the transfer
@@ -20,6 +21,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
 case class TransferDetails(
   id: UUID,
   status: TransferStatus,
+  priority: Long,
   requestBody: Json,
   submittedAt: Option[OffsetDateTime],
   updatedAt: Option[OffsetDateTime],
