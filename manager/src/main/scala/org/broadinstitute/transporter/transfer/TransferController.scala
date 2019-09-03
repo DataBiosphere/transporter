@@ -170,43 +170,50 @@ class TransferController(
       now <- clk
         .realTime(scala.concurrent.duration.MILLISECONDS)
         .map(Instant.ofEpochMilli)
-      requestId = UUID.randomUUID()
-      transferIds <- recordTransferRequest(
-        transfersWithDefaults,
-        now,
-        requestId,
-        0.toShort
-      ).transact(dbClient)
+      ack <- storeRequest(now).flatMap { requestId =>
+        recordTransferRequest(
+          transfersWithDefaults,
+          requestId,
+          0.toShort
+        ).map { transferIds =>
+          RequestAck(requestId, transferIds.length)
+        }
+      }.transact(dbClient)
     } yield {
-      RequestAck(requestId, transferIds.length)
+      ack
+    }
+  }
+
+  private def storeRequest(now: Instant): ConnectionIO[UUID] = {
+    val rId = UUID.randomUUID()
+    val updateSql = List(
+      Fragment.const(s"insert into $RequestsTable (id, received_at) values"),
+      fr"($rId," ++ Fragment.const(timestampSql(now)) ++ fr")"
+    ).combineAll
+    for {
+      requestId <- updateSql.update.withUniqueGeneratedKeys[UUID]("id")
+    } yield {
+      requestId
     }
   }
 
   /** Record a batch of validated transfers with the given ID. */
   private[transfer] def recordTransferRequest(
     transfers: List[TransferRequest],
-    now: Instant,
     requestId: UUID,
     priority: Short
   ): ConnectionIO[List[UUID]] = {
-
-    val updateSql = List(
-      Fragment.const(s"insert into $RequestsTable (id, received_at) values"),
-      fr"($requestId," ++ Fragment.const(timestampSql(now)) ++ fr")"
-    ).combineAll
-
+    val transferInfo = transfers.map { transfer =>
+      (
+        UUID.randomUUID(),
+        requestId,
+        TransferStatus.Pending: TransferStatus,
+        transfer.payload,
+        -1,
+        transfer.priority.getOrElse(priority)
+      )
+    }
     for {
-      requestId <- updateSql.update.withUniqueGeneratedKeys[UUID]("id")
-      transferInfo = transfers.map { transfer =>
-        (
-          UUID.randomUUID(),
-          requestId,
-          TransferStatus.Pending: TransferStatus,
-          transfer.payload,
-          -1,
-          transfer.priority.getOrElse(priority)
-        )
-      }
       _ <- Update[(UUID, UUID, TransferStatus, Json, Int, Short)](
         s"insert into $TransfersTable (id, request_id, status, body, steps_run, priority) values (?, ?, ?, ?, ?, ?)"
       ).updateMany(transferInfo)

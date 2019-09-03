@@ -120,10 +120,10 @@ class TransferListener private[transfer] (
               Fragment.const(s"select priority from $TransfersTable"),
               fr"where id = $transferId"
             ).combineAll.query[Short].unique
-            transfers <- info.as[List[TransferRequest]].liftTo[ConnectionIO]
+            transfers <- info.as[List[Json]].liftTo[ConnectionIO]
+            transferRequests = transfers.map(TransferRequest(_, None))
             transferIds <- controller.recordTransferRequest(
-              transfers,
-              now,
+              transferRequests,
               requestId,
               priority
             )

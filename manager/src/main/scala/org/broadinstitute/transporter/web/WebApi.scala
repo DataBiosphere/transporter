@@ -160,21 +160,22 @@ class WebApi(
 
   private val singleRequestBase = requestsBase
     .in(path[UUID]("request-id"))
-    .errorOut(
-      oneOf(
-        statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-        statusMapping(
-          StatusCodes.InternalServerError,
-          jsonBody[ApiError.UnhandledError]
-        )
-      )
-    )
 
   private val updateRequestPriorityRoute: Route[(UUID, Short), ApiError, RequestAck] =
     singleRequestBase.put
       .in("priority")
       .in(query[Short]("priority"))
       .out(jsonBody[RequestAck])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(StatusCodes.Conflict, jsonBody[ApiError.Conflict]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Update the priority of a particular request")
       .serverLogic {
         case (requestId, priority) =>
@@ -193,6 +194,16 @@ class WebApi(
       .in("detail" / path[UUID]("transfer-id") / "priority")
       .in(query[Short]("priority"))
       .out(jsonBody[RequestAck])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(StatusCodes.Conflict, jsonBody[ApiError.Conflict]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Update the priority of a particular request")
       .serverLogic {
         case (requestId, transferId, priority) =>
@@ -206,6 +217,15 @@ class WebApi(
     singleRequestBase.get
       .in("status")
       .out(jsonBody[RequestSummary])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Get the current summary status of a transfer request")
       .serverLogic { requestId =>
         buildResponse(
@@ -218,6 +238,15 @@ class WebApi(
     singleRequestBase.get
       .in("outputs")
       .out(jsonBody[RequestInfo])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Get the outputs of successful transfers from a request")
       .serverLogic { requestId =>
         buildResponse(
@@ -230,6 +259,15 @@ class WebApi(
     singleRequestBase.get
       .in("failures")
       .out(jsonBody[RequestInfo])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Get the outputs of failed transfers from a request")
       .serverLogic { requestId =>
         buildResponse(
@@ -248,6 +286,15 @@ class WebApi(
     .in(query[Long]("limit"))
     .in(query[SortOrder]("sort"))
     .out(jsonBody[Page[TransferDetails]])
+    .errorOut(
+      oneOf(
+        statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+        statusMapping(
+          StatusCodes.InternalServerError,
+          jsonBody[ApiError.UnhandledError]
+        )
+      )
+    )
     .description(
       "Get transfer details for a given request"
     )
@@ -270,6 +317,15 @@ class WebApi(
     singleRequestBase.put
       .in("reconsider")
       .out(jsonBody[RequestAck])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Reset the state of all failed transfers in a request to 'pending'")
       .serverLogic { requestId =>
         buildResponse(
@@ -282,6 +338,15 @@ class WebApi(
     singleRequestBase.put
       .in("detail" / path[UUID]("transfer-id") / "reconsider")
       .out(jsonBody[RequestAck])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description(
         "Reset the state of a single failed transfer in a request to 'pending'"
       )
@@ -297,6 +362,15 @@ class WebApi(
     singleRequestBase.get
       .in("detail" / path[UUID]("transfer-id"))
       .out(jsonBody[TransferDetails])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
       .description("Get detailed info about a single transfer from a request")
       .serverLogic {
         case (requestId, transferId) =>
