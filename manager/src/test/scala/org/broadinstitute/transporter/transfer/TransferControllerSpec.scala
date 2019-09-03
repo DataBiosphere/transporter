@@ -178,31 +178,60 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller.countRequests.map(_ shouldBe 0)
   }
 
-  it should "get summaries for all tracked requests" in withRequest { (_, controller) =>
-    controller.listRequests(offset = 0, limit = 2, newestFirst = false).map { requests =>
-      requests should have length 2
-      val req1 = requests.head
-      val req2 = requests.last
+  it should "get summaries for all tracked requests in order" in withRequest {
+    (tx, controller) =>
+      for {
+        _ <- request1Transfers.zipWithIndex.traverse_ {
+          case ((id, _), i) =>
+            val status = TransferStatus.values(i % TransferStatus.values.length)
+            sql"update transfers set status = $status where id = $id".update.run
+        }.transact(tx)
+        _ <- request2Transfers.zipWithIndex.traverse_ {
+          case ((id, _), i) =>
+            val status = TransferStatus.values(i % TransferStatus.values.length)
+            sql"update transfers set status = $status where id = $id".update.run
+        }.transact(tx)
+        oldestToNewest <- controller.listRequests(
+          offset = 0,
+          limit = 2,
+          newestFirst = false
+        )
+        newestToOldest <- controller.listRequests(
+          offset = 0,
+          limit = 2,
+          newestFirst = true
+        )
+      } yield {
+        oldestToNewest should have length 2
+        newestToOldest should have length 2
+        oldestToNewest.reverse shouldBe newestToOldest
 
-      req1.id shouldBe request1Id
-      req2.id shouldBe request2Id
-    }
-  }
+        val req1 = oldestToNewest.head
+        val req2 = oldestToNewest.last
 
-  it should "order tracked summaries depending on user input" in withRequest {
-    (_, controller) =>
-      controller.listRequests(offset = 0, limit = 2, newestFirst = true).map { requests =>
-        requests should have length 2
-        val req1 = requests.head
-        val req2 = requests.last
-
-        req1.id shouldBe request2Id
-        req2.id shouldBe request1Id
+        req1.id shouldBe request1Id
+        req1.statusCounts shouldBe TransferStatus.values.map { status =>
+          status -> 2
+        }.toMap
+        req2.id shouldBe request2Id
+        req2.statusCounts shouldBe TransferStatus.values.map { status =>
+          status -> 4
+        }.toMap
       }
   }
 
-  it should "paginate list of tracked summaries" in withRequest { (_, controller) =>
+  it should "paginate list of tracked summaries" in withRequest { (tx, controller) =>
     for {
+      _ <- request1Transfers.zipWithIndex.traverse_ {
+        case ((id, _), i) =>
+          val status = TransferStatus.values(i % TransferStatus.values.length)
+          sql"update transfers set status = $status where id = $id".update.run
+      }.transact(tx)
+      _ <- request2Transfers.zipWithIndex.traverse_ {
+        case ((id, _), i) =>
+          val status = TransferStatus.values(i % TransferStatus.values.length)
+          sql"update transfers set status = $status where id = $id".update.run
+      }.transact(tx)
       // Order oldest to newest, skip the first one, expect to get the newest
       out1 <- controller.listRequests(offset = 1, limit = 10, newestFirst = false)
       // Order newest to oldest, skip the first one, expect to get the oldest
@@ -215,7 +244,13 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       out3 shouldBe empty
 
       out1.head.id shouldBe request2Id
+      out1.head.statusCounts shouldBe TransferStatus.values.map { status =>
+        status -> 4
+      }.toMap
       out2.head.id shouldBe request1Id
+      out2.head.statusCounts shouldBe TransferStatus.values.map { status =>
+        status -> 2
+      }.toMap
     }
   }
 
