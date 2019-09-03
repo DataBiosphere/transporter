@@ -345,16 +345,19 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
       for {
         _ <- listener.recordTransferResults(Chunk.seq(updates))
-        newTransfers <- sql"select id from transfers where request_id = $request3Id and id not in ($tId1, $tId2)"
-          .query[UUID]
+        newTransfers <- sql"select id, priority from transfers where request_id = $request3Id and id not in ($tId1, $tId2)"
+          .query[(UUID, Short)]
           .to[List]
           .transact(tx)
-        expanded <- sql"select info from transfers where status = ${TransferStatus.Expanded: TransferStatus}"
-          .query[Json]
+        originalTransfers <- sql"select info, priority from transfers where status = ${TransferStatus.Expanded: TransferStatus}"
+          .query[(Json, Short)]
           .to[List]
           .transact(tx)
       } yield {
-        newTransfers.map(transfer => json"""[$transfer]""") should contain theSameElementsAs expanded // If expanded can be converted to UUID...
+        val blah = newTransfers.map {
+          case (transfer, priority) => (json"""[$transfer]""", priority)
+        }
+        blah should contain theSameElementsAs originalTransfers
       }
   }
 }

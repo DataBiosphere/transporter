@@ -108,6 +108,7 @@ class TransferListener private[transfer] (
     }
   }
 
+  /** Expand transfers that need to be expanded and update the processed transfers. */
   private[transfer] def processUpdates(
     statusUpdates: Vector[(TransferStatus, Json, UUID, UUID)],
     now: Instant

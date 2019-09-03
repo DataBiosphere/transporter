@@ -184,6 +184,7 @@ class TransferController(
     }
   }
 
+  /** Generate and record a request ID for an incoming request of transfers. */
   private def storeRequest(now: Instant): ConnectionIO[UUID] = {
     val rId = UUID.randomUUID()
     val updateSql = List(
