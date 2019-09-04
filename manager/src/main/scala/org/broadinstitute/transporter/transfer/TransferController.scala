@@ -78,6 +78,7 @@ class TransferController(
 
     val order = Fragment.const(if (newestFirst) "desc" else "asc")
 
+    // TODO UPDATE SQL TO CAPITALIZE KEYWORDS
     val groupBy = fr"group by r.id, r.received_at, t.status"
     val filterOrLimit = paginationOrId.fold(
       {
@@ -202,7 +203,7 @@ class TransferController(
   private[transfer] def recordTransferRequest(
     transfers: List[TransferRequest],
     requestId: UUID,
-    priority: Short
+    fallbackPriority: Short
   ): ConnectionIO[List[UUID]] = {
     val transferInfo = transfers.map { transfer =>
       (
@@ -211,7 +212,7 @@ class TransferController(
         TransferStatus.Pending: TransferStatus,
         transfer.payload,
         -1,
-        transfer.priority.getOrElse(priority)
+        transfer.priority.getOrElse(fallbackPriority)
       )
     }
     for {

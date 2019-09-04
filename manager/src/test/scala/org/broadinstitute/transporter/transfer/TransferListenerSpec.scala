@@ -10,6 +10,7 @@ import doobie._
 import doobie.implicits._
 import fs2.Chunk
 import io.circe.Json
+import io.circe.syntax._
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.kafka.KafkaConsumer
@@ -355,7 +356,8 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
           .transact(tx)
       } yield {
         val finalTransfers = newTransfers.map {
-          case (transfer, priority) => (json"""[$transfer]""", priority)
+          case (transfer, priority) =>
+            (ExpandedTransferIds(List(transfer)).asJson, priority)
         }
         finalTransfers should contain theSameElementsAs originalTransfers
       }

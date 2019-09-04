@@ -15,6 +15,7 @@ import io.circe.syntax._
 import org.broadinstitute.transporter.db.{Constants, DoobieInstances}
 import org.broadinstitute.transporter.kafka.KafkaConsumer
 import org.broadinstitute.transporter.kafka.config.KafkaConfig
+import org.broadinstitute.transporter.transfer.api.TransferRequest
 
 /**
   * Component responsible for pulling transfer updates from Kafka.
@@ -117,12 +118,14 @@ class TransferListener private[transfer] (
       finalStatusUpdates <- statusUpdates.traverse {
         case (TransferStatus.Expanded, info, transferId, requestId) =>
           for {
+            // get the priorities associated with the expanded transfers
             priority <- List(
               Fragment.const(s"select priority from $TransfersTable"),
               fr"where id = $transferId"
             ).combineAll.query[Short].unique
             transfers <- info.as[List[Json]].liftTo[ConnectionIO]
             transferRequests = transfers.map(TransferRequest(_, None))
+            // create the new transfers under the original transfer requestId and priority
             transferIds <- controller.recordTransferRequest(
               transferRequests,
               requestId,
@@ -131,7 +134,7 @@ class TransferListener private[transfer] (
           } yield {
             (
               TransferStatus.Expanded: TransferStatus,
-              transferIds.asJson,
+              ExpandedTransferIds(transferIds).asJson,
               transferId,
               requestId
             )
@@ -175,8 +178,6 @@ class TransferListener private[transfer] (
             (status, info, ids.transfer, ids.request)
         }
 
-      // get the priorities associated with the expanded transfers; prolly don't want the IO lingering here
-      // create the new transfers under the original transfer requestId and under the original transfer's priority
       numUpdated <- processUpdates(statusUpdates, now)
     } yield {
       numUpdated
