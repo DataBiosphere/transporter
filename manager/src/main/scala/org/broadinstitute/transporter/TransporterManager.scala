@@ -43,11 +43,12 @@ object TransporterManager extends IOApp.WithContext {
           config.transfer,
           config.kafka
         )
-        listener <- TransferListener.resource(transactor, config.kafka)
+        controller = new TransferController(config.transfer.schema, transactor)
+        listener <- TransferListener.resource(transactor, config.kafka, controller)
       } yield {
         val appRoutes = new WebApi(
           new InfoController(BuildInfo.version, transactor),
-          new TransferController(config.transfer.schema, transactor),
+          controller,
           googleAuthConfig = config.web.googleOauth,
           blockingEc = blockingEc
         )

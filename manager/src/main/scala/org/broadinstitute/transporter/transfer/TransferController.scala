@@ -78,6 +78,7 @@ class TransferController(
 
     val order = Fragment.const(if (newestFirst) "desc" else "asc")
 
+    // TODO UPDATE SQL TO CAPITALIZE KEYWORDS
     val groupBy = fr"group by r.id, r.received_at, t.status"
     val filterOrLimit = paginationOrId.fold(
       {
@@ -170,41 +171,56 @@ class TransferController(
       now <- clk
         .realTime(scala.concurrent.duration.MILLISECONDS)
         .map(Instant.ofEpochMilli)
-      ack <- recordTransferRequest(transfersWithDefaults, now).transact(dbClient)
+      ack <- storeRequest(now).flatMap { requestId =>
+        recordTransferRequest(
+          transfersWithDefaults,
+          requestId,
+          0.toShort
+        ).map { transferIds =>
+          RequestAck(requestId, transferIds.length)
+        }
+      }.transact(dbClient)
     } yield {
       ack
     }
   }
 
-  /** Record a batch of validated transfers with the given ID. */
-  private def recordTransferRequest(
-    transfers: List[TransferRequest],
-    now: Instant
-  ): ConnectionIO[RequestAck] = {
-    val requestId = UUID.randomUUID()
-
+  /** Generate and record a request ID for an incoming request of transfers. */
+  private def storeRequest(now: Instant): ConnectionIO[UUID] = {
+    val rId = UUID.randomUUID()
     val updateSql = List(
       Fragment.const(s"insert into $RequestsTable (id, received_at) values"),
-      fr"($requestId," ++ Fragment.const(timestampSql(now)) ++ fr")"
+      fr"($rId," ++ Fragment.const(timestampSql(now)) ++ fr")"
     ).combineAll
-
     for {
       requestId <- updateSql.update.withUniqueGeneratedKeys[UUID]("id")
-      transferInfo = transfers.map { transfer =>
-        (
-          UUID.randomUUID(),
-          requestId,
-          TransferStatus.Pending: TransferStatus,
-          transfer.payload,
-          -1,
-          transfer.priority.getOrElse(0.toShort)
-        )
-      }
-      transferCount <- Update[(UUID, UUID, TransferStatus, Json, Int, Short)](
+    } yield {
+      requestId
+    }
+  }
+
+  /** Record a batch of validated transfers with the given ID. */
+  private[transfer] def recordTransferRequest(
+    transfers: List[TransferRequest],
+    requestId: UUID,
+    fallbackPriority: Short
+  ): ConnectionIO[List[UUID]] = {
+    val transferInfo = transfers.map { transfer =>
+      (
+        UUID.randomUUID(),
+        requestId,
+        TransferStatus.Pending: TransferStatus,
+        transfer.payload,
+        -1,
+        transfer.priority.getOrElse(fallbackPriority)
+      )
+    }
+    for {
+      _ <- Update[(UUID, UUID, TransferStatus, Json, Int, Short)](
         s"insert into $TransfersTable (id, request_id, status, body, steps_run, priority) values (?, ?, ?, ?, ?, ?)"
       ).updateMany(transferInfo)
     } yield {
-      RequestAck(requestId, transferCount)
+      transferInfo.map(_._1)
     }
   }
 

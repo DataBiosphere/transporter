@@ -10,9 +10,11 @@ import doobie._
 import doobie.implicits._
 import fs2.Chunk
 import io.circe.Json
+import io.circe.syntax._
 import io.circe.literal._
 import org.broadinstitute.transporter.PostgresSpec
 import org.broadinstitute.transporter.kafka.KafkaConsumer
+import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.EitherValues
 
@@ -26,6 +28,9 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
   private val progress = mock[KafkaConsumer[(Int, Json)]]
   private val results = mock[KafkaConsumer[(TransferResult, Json)]]
 
+  private val requestSchema =
+    json"""{ "type": "object" }""".as[TransferSchema].right.value
+
   private val request1Id = UUID.randomUUID()
   private val request1Transfers = List.tabulate(50) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
@@ -36,12 +41,22 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 
+  private val request3Id = UUID.randomUUID()
+  private val request3Transfers = List.tabulate(2) { i =>
+    UUID.randomUUID() -> json"""{ "i": $i }"""
+  }
+
   def withRequest(test: (Transactor[IO], TransferListener) => IO[Any]): Unit = {
     val tx = transactor
-    val listener = new TransferListener(tx, progress, results)
+    val listener = new TransferListener(
+      tx,
+      progress,
+      results,
+      new TransferController(requestSchema, tx)
+    )
 
     val setup = for {
-      _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
+      _ <- List(request1Id, request2Id, request3Id).zipWithIndex.traverse_ {
         case (id, i) =>
           val ts = Timestamp.from(Instant.ofEpochMilli(i.toLong))
           sql"insert into transfer_requests (id, received_at) values ($id, $ts)".update.run.void
@@ -59,6 +74,13 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
                   (id, request_id, body, status, steps_run, priority)
                   values
                   ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
+      }
+      _ <- request3Transfers.traverse_ {
+        case (id, body) =>
+          sql"""insert into transfers
+                  (id, request_id, body, status, steps_run, priority)
+                  values
+                  ($id, $request3Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 2)""".update.run.void
       }
     } yield ()
 
@@ -90,6 +112,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
             res match {
               case TransferResult.Success      => TransferStatus.Succeeded
               case TransferResult.FatalFailure => TransferStatus.Failed
+              case TransferResult.Expanded     => TransferStatus.Expanded
             },
             info
           )
@@ -302,5 +325,41 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     } yield {
       statuses shouldBe ids.length
     }
+  }
+
+  it should "create new transfers from an expanded transfer request, using its request ID and priority" in withRequest {
+    (tx, listener) =>
+      val updates = request3Transfers.zipWithIndex.collect {
+        case ((id, _), i) =>
+          val result =
+            if (i < 3) TransferResult.Expanded
+            else if (i == 10) TransferResult.FatalFailure
+            else TransferResult.Success
+          TransferMessage(
+            TransferIds(request3Id, id),
+            result -> json"""[{ "i+1": $i }]"""
+          )
+      }
+
+      val (tId1, _) = request3Transfers.head
+      val (tId2, _) = request3Transfers(1)
+
+      for {
+        _ <- listener.recordTransferResults(Chunk.seq(updates))
+        newTransfers <- sql"select id, priority from transfers where request_id = $request3Id and id not in ($tId1, $tId2)"
+          .query[(UUID, Short)]
+          .to[List]
+          .transact(tx)
+        originalTransfers <- sql"select info, priority from transfers where status = ${TransferStatus.Expanded: TransferStatus}"
+          .query[(Json, Short)]
+          .to[List]
+          .transact(tx)
+      } yield {
+        val finalTransfers = newTransfers.map {
+          case (transfer, priority) =>
+            (ExpandedTransferIds(List(transfer)).asJson, priority)
+        }
+        finalTransfers should contain theSameElementsAs originalTransfers
+      }
   }
 }

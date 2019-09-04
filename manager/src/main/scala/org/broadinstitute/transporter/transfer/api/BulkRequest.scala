@@ -1,7 +1,7 @@
 package org.broadinstitute.transporter.transfer.api
 
-import io.circe.{Decoder, Encoder}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
+import io.circe.{Decoder, Encoder}
 
 /**
   * A request to launch some number of data transfers.

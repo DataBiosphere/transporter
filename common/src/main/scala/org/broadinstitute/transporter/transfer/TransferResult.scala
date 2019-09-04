@@ -21,6 +21,9 @@ object TransferResult
   /** Signal for transfers that completed successfully. */
   case object Success extends TransferResult
 
+  /** Signal for transfers that need to be expanded into multiple transfers. */
+  case object Expanded extends TransferResult
+
   /**
     * Signal for transfers that failed and are likely / guaranteed
     * to fail again if resubmitted.

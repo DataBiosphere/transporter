@@ -3,7 +3,7 @@ package org.broadinstitute.transporter.transfer
 import java.time.Instant
 import java.util.UUID
 
-import cats.effect.{Clock, ContextShift, IO, Resource, Timer}
+import cats.effect.{Async, Clock, ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import doobie._
 import doobie.implicits._
@@ -11,9 +11,11 @@ import fs2.kafka.CommittableOffsetBatch
 import fs2.{Chunk, Stream}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.Json
+import io.circe.syntax._
 import org.broadinstitute.transporter.db.{Constants, DoobieInstances}
 import org.broadinstitute.transporter.kafka.KafkaConsumer
 import org.broadinstitute.transporter.kafka.config.KafkaConfig
+import org.broadinstitute.transporter.transfer.api.TransferRequest
 
 /**
   * Component responsible for pulling transfer updates from Kafka.
@@ -27,7 +29,8 @@ import org.broadinstitute.transporter.kafka.config.KafkaConfig
 class TransferListener private[transfer] (
   dbClient: Transactor[IO],
   progressConsumer: KafkaConsumer[(Int, Json)],
-  resultConsumer: KafkaConsumer[(TransferResult, Json)]
+  resultConsumer: KafkaConsumer[(TransferResult, Json)],
+  controller: TransferController
 )(implicit cs: ContextShift[IO], clk: Clock[IO]) {
   import Constants._
   import DoobieInstances._
@@ -106,6 +109,54 @@ class TransferListener private[transfer] (
     }
   }
 
+  /** Expand transfers that need to be expanded and update the processed transfers. */
+  private[transfer] def processUpdates(
+    statusUpdates: Vector[(TransferStatus, Json, UUID, UUID)],
+    now: Instant
+  ): IO[Int] = {
+    val transaction = for {
+      finalStatusUpdates <- statusUpdates.traverse {
+        case (TransferStatus.Expanded, info, transferId, requestId) =>
+          for {
+            // get the priorities associated with the expanded transfers
+            priority <- List(
+              Fragment.const(s"select priority from $TransfersTable"),
+              fr"where id = $transferId"
+            ).combineAll.query[Short].unique
+            transfers <- info.as[List[Json]].liftTo[ConnectionIO]
+            transferRequests = transfers.map(TransferRequest(_, None))
+            // create the new transfers under the original transfer requestId and priority
+            transferIds <- controller.recordTransferRequest(
+              transferRequests,
+              requestId,
+              priority
+            )
+          } yield {
+            (
+              TransferStatus.Expanded: TransferStatus,
+              ExpandedTransferIds(transferIds).asJson,
+              transferId,
+              requestId
+            )
+          }
+        case other =>
+          Async[ConnectionIO].pure(other)
+      }
+
+      numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
+        s"""update $TransfersTable
+           |set status = ?, info = ?, updated_at = ${timestampSql(now)}
+           |from $RequestsTable
+           |where $TransfersTable.request_id = $RequestsTable.id
+           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
+      ).updateMany(finalStatusUpdates)
+
+    } yield {
+      numUpdated
+    }
+    transaction.transact(dbClient)
+  }
+
   /**
     * Update Transporter's view of a set of transfers based on
     * terminal results collected from Kafka.
@@ -122,16 +173,12 @@ class TransferListener private[transfer] (
             val status = result match {
               case TransferResult.Success      => TransferStatus.Succeeded
               case TransferResult.FatalFailure => TransferStatus.Failed
+              case TransferResult.Expanded     => TransferStatus.Expanded
             }
             (status, info, ids.transfer, ids.request)
         }
-      numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
-        s"""update $TransfersTable
-           |set status = ?, info = ?, updated_at = ${timestampSql(now)}
-           |from $RequestsTable
-           |where $TransfersTable.request_id = $RequestsTable.id
-           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
-      ).updateMany(statusUpdates).transact(dbClient)
+
+      numUpdated <- processUpdates(statusUpdates, now)
     } yield {
       numUpdated
     }
@@ -149,7 +196,8 @@ object TransferListener {
     */
   def resource(
     dbClient: Transactor[IO],
-    kafkaConfig: KafkaConfig
+    kafkaConfig: KafkaConfig,
+    controller: TransferController
   )(implicit cs: ContextShift[IO], t: Timer[IO]): Resource[IO, TransferListener] =
     for {
       progressConsumer <- KafkaConsumer.ofTopic[(Int, Json)](
@@ -163,6 +211,6 @@ object TransferListener {
         kafkaConfig.consumer
       )
     } yield {
-      new TransferListener(dbClient, progressConsumer, resultConsumer)
+      new TransferListener(dbClient, progressConsumer, resultConsumer, controller)
     }
 }
