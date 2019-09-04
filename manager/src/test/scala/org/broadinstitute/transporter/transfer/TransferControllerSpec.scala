@@ -567,7 +567,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       initInfo shouldBe TransferDetails(
         id,
         TransferStatus.Pending,
-        0L,
+        0.toShort,
         body,
         None,
         None,
@@ -576,7 +576,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       submittedInfo shouldBe TransferDetails(
         id,
         TransferStatus.Submitted,
-        0L,
+        0.toShort,
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         None,
@@ -585,7 +585,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       updatedInfo shouldBe TransferDetails(
         id,
         TransferStatus.Succeeded,
-        100L,
+        100.toShort,
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
@@ -652,7 +652,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Pending,
-          0L,
+          0.toShort,
           body1,
           None,
           None,
@@ -661,7 +661,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Pending,
-          0L,
+          0.toShort,
           body2,
           None,
           None,
@@ -672,7 +672,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Submitted,
-          10L,
+          10.toShort,
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
@@ -681,7 +681,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Submitted,
-          0L,
+          0.toShort,
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
@@ -692,7 +692,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Succeeded,
-          10L,
+          10.toShort,
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
@@ -701,7 +701,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Succeeded,
-          0L,
+          0.toShort,
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),

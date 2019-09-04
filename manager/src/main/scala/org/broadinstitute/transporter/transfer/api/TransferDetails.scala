@@ -21,7 +21,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
 case class TransferDetails(
   id: UUID,
   status: TransferStatus,
-  priority: Long,
+  priority: Short,
   requestBody: Json,
   submittedAt: Option[OffsetDateTime],
   updatedAt: Option[OffsetDateTime],
