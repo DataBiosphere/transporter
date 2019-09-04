@@ -1,6 +1,6 @@
 package org.broadinstitute.transporter.transfer
 
-import java.time.Instant
+import java.time.{Instant, OffsetDateTime}
 import java.util.UUID
 
 import cats.data.NonEmptyList
@@ -28,6 +28,8 @@ import scala.collection.JavaConverters._
   * We introduce an async delay between those two steps to allow for backpressure /
   * priority queueing within the manager, since Kafka doesn't have native support
   * for that functionality.
+  *
+  * FIXME UPDATE SQL TO CAPITALIZE KEYWORDS
   *
   * @param schema JSON schema that transfer requests handled by this controller
   *               must match in order to be recorded for later submission
@@ -60,9 +62,28 @@ class TransferController(
     offset: Long,
     limit: Long,
     newestFirst: Boolean
-  ): IO[List[RequestSummary]] =
-    lookupSummaries(Left((offset, limit)), newestFirst)
-      .transact(dbClient)
+  ): IO[List[RequestSummary]] = {
+    val query = for {
+      ids <- List(
+        Fragment.const(s"select id from $RequestsTable order by received_at"),
+        Fragment.const(if (newestFirst) "desc" else "asc"),
+        fr"limit $limit offset $offset"
+      ).combineAll.query[UUID].to[List]
+      summaries <- lookupSummaries(ids)
+    } yield {
+      summaries
+    }
+
+    query.transact(dbClient).map { summaries =>
+      if (newestFirst) {
+        summaries.sortBy(_.receivedAt)(Ordering[OffsetDateTime].reverse)
+      } else {
+        summaries.sortBy(_.receivedAt)
+      }
+    }
+  }
+
+  private val baselineStatusCounts = TransferStatus.values.map(_ -> 0L).toMap
 
   /**
     * Fetch summaries of either:
@@ -71,76 +92,42 @@ class TransferController(
     *
     * Batch requests are ordered by their IDs for now.
     */
-  private def lookupSummaries(
-    paginationOrId: Either[(Long, Long), UUID],
-    newestFirst: Boolean = true
-  ): ConnectionIO[List[RequestSummary]] = {
-
-    val order = Fragment.const(if (newestFirst) "desc" else "asc")
-
-    // TODO UPDATE SQL TO CAPITALIZE KEYWORDS
-    val groupBy = fr"group by r.id, r.received_at, t.status"
-    val filterOrLimit = paginationOrId.fold(
-      {
-        case (offset, limit) =>
-          groupBy ++ fr"order by r.received_at" ++ order ++ fr"limit $limit offset $offset"
-      },
-      id => fr"where r.id = $id" ++ groupBy
-    )
-
-    val tempTable =
-      s"id_status_summaries_${UUID.randomUUID().toString.replaceAll("-", "_")}"
-
-    // The 'crosstab' function needs a real (if temporary) table to work.
-    val createTempTable = List(
-      Fragment.const(s"create temporary table $tempTable on commit drop as"),
-      fr"select r.id as id, t.status as status, r.received_at as receive_t,",
-      fr"min(t.submitted_at) as submit_t, max(t.updated_at) as update_t, count(t.id) as n",
-      fr"from" ++ TransfersJoinTable,
-      filterOrLimit
-    ).combineAll
-
-    val pivotTable = s"count_pivot_${UUID.randomUUID().toString.replaceAll("-", "_")}"
-    val typedStatusColumns =
-      Fragment.const(
-        TransferStatus.values.map(s => s"${s.entryName} integer").mkString(", ")
-      )
-    val statusKvPairs = Fragment.const(
-      TransferStatus.values
-        .flatMap(s => Vector(s"'${s.entryName}'", s"coalesce(${s.entryName}, 0)"))
-        .mkString(", ")
-    )
-
-    val buildPivot = List(
-      Fragment.const(s"create temporary table $pivotTable on commit drop as"),
-      // crosstab lets us dynamically pivot the table from 3 columns of (id, status, count)
-      // into N columns of (id, status1, status2, ...) with count values in the row cells.
-      fr"select * from crosstab(",
-      Fragment.const(s"'select id, status, n from $tempTable order by 1, 2',"),
-      Fragment.const(s"'select unnest(enum_range(NULL::transfer_status)) order by 1'"),
-      fr") as final_result(id uuid," ++ typedStatusColumns ++ fr")"
-    ).combineAll
-
-    val getSummaryInfo = List(
-      fr"select id, received_at, json_build_object(" ++ statusKvPairs ++ fr"), first_submit, last_update from",
-      Fragment.const(
-        s"""(
-           |  select id, receive_t as received_at, min(submit_t) as first_submit, max(update_t) as last_update
-           |  from $tempTable group by id, receive_t
-           |) as times""".stripMargin
-      ),
-      Fragment.const(s"left join $pivotTable using (id)"),
-      fr"order by received_at" ++ order
-    ).combineAll
-
+  private def lookupSummaries(ids: List[UUID]): ConnectionIO[List[RequestSummary]] =
     for {
-      _ <- createTempTable.update.run
-      _ <- buildPivot.update.run
-      summaries <- getSummaryInfo.query[RequestSummary].to[List]
+      countsPerStatusPerRequest <- List(
+        fr"select r.id as id, t.status as status, count(t.id) as n",
+        fr"from" ++ TransfersJoinTable,
+        fr"where r.id = any($ids) group by r.id, t.status, r.received_at"
+      ).combineAll.query[(UUID, TransferStatus, Long)].to[List].map { perStateCounts =>
+        perStateCounts.foldLeft(Map.empty[UUID, Map[TransferStatus, Long]]) {
+          case (acc, (id, status, count)) =>
+            val newCounts = acc.get(id) match {
+              case None           => baselineStatusCounts.updated(status, count)
+              case Some(existing) => existing.updated(status, existing(status) + count)
+            }
+            acc.updated(id, newCounts)
+        }
+      }
+      summaries <- List(
+        fr"select r.id, r.received_at, min(t.submitted_at), max(t.updated_at)",
+        fr"from" ++ TransfersJoinTable,
+        fr"where r.id = any($ids) group by r.id, r.received_at"
+      ).combineAll
+        .query[(UUID, OffsetDateTime, Option[OffsetDateTime], Option[OffsetDateTime])]
+        .map {
+          case (id, receivedAt, submittedAt, updatedAt) =>
+            RequestSummary(
+              id,
+              receivedAt,
+              countsPerStatusPerRequest(id),
+              submittedAt,
+              updatedAt
+            )
+        }
+        .to[List]
     } yield {
       summaries
     }
-  }
 
   /**
     * Record a new batch of transfers.
@@ -298,7 +285,7 @@ class TransferController(
 
   /** Get the current summary-level status for a request. */
   def lookupRequestStatus(requestId: UUID): IO[RequestSummary] =
-    checkAndExec(requestId)(rId => lookupSummaries(Right(rId)).map(_.head))
+    checkAndExec(requestId)(rId => lookupSummaries(List(rId)).map(_.head))
 
   /**
     * Get the JSON payloads returned by agents for successfully-completed transfers
@@ -381,7 +368,7 @@ class TransferController(
     checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
         Fragment.const(
-          s"select id, status, body, submitted_at, updated_at, info from $TransfersTable"
+          s"select id, status, priority, body, submitted_at, updated_at, info from $TransfersTable"
         ),
         Fragments.whereAnd(fr"request_id = $rId", fr"id = $tId")
       ).combineAll
@@ -414,7 +401,7 @@ class TransferController(
       val order = Fragment.const(if (sortDesc) "desc" else "asc")
       List(
         Fragment.const(
-          s"select id, status, body, submitted_at, updated_at, info from $TransfersTable"
+          s"select id, status, priority, body, submitted_at, updated_at, info from $TransfersTable"
         ),
         fr"where request_id = $rId order by id" ++ order ++ fr"limit $limit offset $offset"
       ).combineAll

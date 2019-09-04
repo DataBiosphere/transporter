@@ -178,31 +178,70 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       controller.countRequests.map(_ shouldBe 0)
   }
 
-  it should "get summaries for all tracked requests" in withRequest { (_, controller) =>
-    controller.listRequests(offset = 0, limit = 2, newestFirst = false).map { requests =>
-      requests should have length 2
-      val req1 = requests.head
-      val req2 = requests.last
+  it should "get summaries for all tracked requests in order" in withRequest {
+    (tx, controller) =>
+      for {
+        _ <- request1Transfers.zipWithIndex.traverse_ {
+          case ((id, _), i) =>
+            val status = TransferStatus.values(i % TransferStatus.values.length)
+            sql"update transfers set status = $status where id = $id".update.run
+        }.transact(tx)
+        _ <- request2Transfers.zipWithIndex.traverse_ {
+          case ((id, _), i) =>
+            val status = TransferStatus.values(i % TransferStatus.values.length)
+            sql"update transfers set status = $status where id = $id".update.run
+        }.transact(tx)
+        oldestToNewest <- controller.listRequests(
+          offset = 0,
+          limit = 2,
+          newestFirst = false
+        )
+        newestToOldest <- controller.listRequests(
+          offset = 0,
+          limit = 2,
+          newestFirst = true
+        )
+      } yield {
+        oldestToNewest should have length 2
+        newestToOldest should have length 2
+        oldestToNewest.reverse shouldBe newestToOldest
 
-      req1.id shouldBe request1Id
-      req2.id shouldBe request2Id
-    }
-  }
+        val req1 = oldestToNewest.head
+        val req2 = oldestToNewest.last
 
-  it should "order tracked summaries depending on user input" in withRequest {
-    (_, controller) =>
-      controller.listRequests(offset = 0, limit = 2, newestFirst = true).map { requests =>
-        requests should have length 2
-        val req1 = requests.head
-        val req2 = requests.last
-
-        req1.id shouldBe request2Id
-        req2.id shouldBe request1Id
+        req1.id shouldBe request1Id
+        req1.statusCounts shouldBe Map(
+          TransferStatus.Pending -> 2,
+          TransferStatus.Submitted -> 2,
+          TransferStatus.InProgress -> 2,
+          TransferStatus.Failed -> 2,
+          TransferStatus.Succeeded -> 1,
+          TransferStatus.Expanded -> 1
+        )
+        req2.id shouldBe request2Id
+        req2.statusCounts shouldBe Map(
+          TransferStatus.Pending -> 4,
+          TransferStatus.Submitted -> 4,
+          TransferStatus.InProgress -> 3,
+          TransferStatus.Succeeded -> 3,
+          TransferStatus.Failed -> 3,
+          TransferStatus.Expanded -> 3
+        )
       }
   }
 
-  it should "paginate list of tracked summaries" in withRequest { (_, controller) =>
+  it should "paginate list of tracked summaries" in withRequest { (tx, controller) =>
     for {
+      _ <- request1Transfers.zipWithIndex.traverse_ {
+        case ((id, _), i) =>
+          val status = TransferStatus.values(i % TransferStatus.values.length)
+          sql"update transfers set status = $status where id = $id".update.run
+      }.transact(tx)
+      _ <- request2Transfers.zipWithIndex.traverse_ {
+        case ((id, _), i) =>
+          val status = TransferStatus.values(i % TransferStatus.values.length)
+          sql"update transfers set status = $status where id = $id".update.run
+      }.transact(tx)
       // Order oldest to newest, skip the first one, expect to get the newest
       out1 <- controller.listRequests(offset = 1, limit = 10, newestFirst = false)
       // Order newest to oldest, skip the first one, expect to get the oldest
@@ -215,7 +254,23 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       out3 shouldBe empty
 
       out1.head.id shouldBe request2Id
+      out1.head.statusCounts shouldBe Map(
+        TransferStatus.Pending -> 4,
+        TransferStatus.Submitted -> 4,
+        TransferStatus.InProgress -> 3,
+        TransferStatus.Succeeded -> 3,
+        TransferStatus.Failed -> 3,
+        TransferStatus.Expanded -> 3
+      )
       out2.head.id shouldBe request1Id
+      out2.head.statusCounts shouldBe Map(
+        TransferStatus.Pending -> 2,
+        TransferStatus.Submitted -> 2,
+        TransferStatus.InProgress -> 2,
+        TransferStatus.Failed -> 2,
+        TransferStatus.Succeeded -> 1,
+        TransferStatus.Expanded -> 1
+      )
     }
   }
 
@@ -504,13 +559,15 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Succeeded: TransferStatus},
                  updated_at = ${Timestamp.from(updated)},
-                 info = '{}'
+                 info = '{}',
+                 priority = 100
                  where id = $id""".update.run.void.transact(tx)
       updatedInfo <- controller.lookupTransferDetails(request1Id, id)
     } yield {
       initInfo shouldBe TransferDetails(
         id,
         TransferStatus.Pending,
+        0.toShort,
         body,
         None,
         None,
@@ -519,6 +576,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       submittedInfo shouldBe TransferDetails(
         id,
         TransferStatus.Submitted,
+        0.toShort,
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         None,
@@ -527,6 +585,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       updatedInfo shouldBe TransferDetails(
         id,
         TransferStatus.Succeeded,
+        100.toShort,
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
@@ -569,7 +628,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       initInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Submitted: TransferStatus},
-                 submitted_at = ${Timestamp.from(submitted)}
+                 submitted_at = ${Timestamp.from(submitted)},
+                 priority = 10
                  where id = $id1""".update.run.void.transact(tx)
       _ <- sql"""update transfers set
                  status = ${TransferStatus.Submitted: TransferStatus},
@@ -592,6 +652,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Pending,
+          0.toShort,
           body1,
           None,
           None,
@@ -600,6 +661,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Pending,
+          0.toShort,
           body2,
           None,
           None,
@@ -610,6 +672,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Submitted,
+          10.toShort,
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
@@ -618,6 +681,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Submitted,
+          0.toShort,
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
@@ -628,6 +692,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id1,
           TransferStatus.Succeeded,
+          10.toShort,
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
@@ -636,6 +701,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         TransferDetails(
           id2,
           TransferStatus.Succeeded,
+          0.toShort,
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),

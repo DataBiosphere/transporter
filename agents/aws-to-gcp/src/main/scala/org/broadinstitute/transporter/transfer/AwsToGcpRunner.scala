@@ -117,7 +117,7 @@ class AwsToGcpRunner(
             contentType = s3Metadata.contentType.getOrElse(
               `Content-Type`(MediaType.application.`octet-stream`)
             ),
-            data = allBytes
+            data = Stream.chunk(allBytes)
           )
         } yield {
           Right(AwsToGcpOutput(request.gcsBucket, request.gcsPath))
@@ -287,51 +287,52 @@ class AwsToGcpRunner(
     path: String,
     contentType: `Content-Type`,
     expectedMd5: Option[String],
-    data: Chunk[Byte]
+    data: Stream[IO, Byte]
   ): IO[Unit] = {
     val multipartBoundary = Boundary.create
     val objectMetadata = buildGcsUploadMetadata(path, expectedMd5)
 
-    val dataHeader =
-      s"""--${multipartBoundary.value}
-         |${`Content-Type`(MediaType.application.json, Charset.`UTF-8`).renderString}
-         |
-         |${objectMetadata.noSpaces}
-         |
-         |--${multipartBoundary.value}
-         |${contentType.renderString}
-         |""".stripMargin.getBytes
+    val delimiter = s"--${multipartBoundary.value}"
+    val end = s"$delimiter--"
 
-    val dataFooter =
-      s"""
-         |--${multipartBoundary.value}--""".stripMargin.getBytes
+    val dataHeader = List(
+      delimiter,
+      `Content-Type`(MediaType.application.json, Charset.`UTF-8`).renderString,
+      "",
+      objectMetadata.noSpaces,
+      "",
+      delimiter,
+      contentType.renderString,
+      ""
+    ).mkString("", Boundary.CRLF, Boundary.CRLF)
+
+    val dataFooter = List("", end).mkString(Boundary.CRLF)
 
     val fullBody = Stream
-      .emits(dataHeader)
-      .append(Stream.chunk(data))
-      .append(Stream.emits(dataFooter))
+      .emits(dataHeader.getBytes)
+      .append(data)
+      .append(Stream.emits(dataFooter.getBytes))
 
-    val fullSize = dataHeader.size + data.size + dataFooter.size
+    fullBody.compile.toChunk.flatMap { chunk =>
+      val fullHeaders = Headers.of(
+        `Content-Type`(MediaType.multipartType("related", Some(multipartBoundary.value))),
+        `Content-Length`.unsafeFromLong(chunk.size.toLong)
+      )
 
-    val fullHeaders = Headers.of(
-      `Content-Type`(MediaType.multipartType("related", Some(multipartBoundary.value))),
-      `Content-Length`.unsafeFromLong(fullSize.toLong)
-    )
+      val gcsReq = Request[IO](
+        method = Method.POST,
+        uri = baseGcsUploadUri(bucket, "multipart"),
+        headers = fullHeaders,
+        body = Stream.chunk(chunk)
+      )
 
-    for {
-      gcsReq <- IO.delay {
-        Request[IO](
-          method = Method.POST,
-          uri = baseGcsUploadUri(bucket, "multipart"),
-          headers = fullHeaders,
-          body = fullBody
-        )
-      }
-      uploadSuccessful <- httpClient.successful(googleAuth.addAuth(gcsReq))
-      _ <- IO
-        .raiseError(new RuntimeException(s"Failed to upload bytes to $path in $bucket"))
-        .whenA(!uploadSuccessful)
-    } yield ()
+      for {
+        uploadSuccessful <- httpClient.successful(googleAuth.addAuth(gcsReq))
+        _ <- IO
+          .raiseError(new RuntimeException(s"Failed to upload bytes to $path in $bucket"))
+          .whenA(!uploadSuccessful)
+      } yield ()
+    }
   }
 
   /** Send a request to delete an object in GCS. */
