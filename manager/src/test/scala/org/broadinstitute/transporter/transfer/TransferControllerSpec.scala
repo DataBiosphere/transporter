@@ -210,13 +210,23 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         val req2 = oldestToNewest.last
 
         req1.id shouldBe request1Id
-        req1.statusCounts shouldBe TransferStatus.values.map { status =>
-          status -> 2
-        }.toMap
+        req1.statusCounts shouldBe Map(
+          TransferStatus.Pending -> 2,
+          TransferStatus.Submitted -> 2,
+          TransferStatus.InProgress -> 2,
+          TransferStatus.Failed -> 2,
+          TransferStatus.Succeeded -> 1,
+          TransferStatus.Expanded -> 1
+        )
         req2.id shouldBe request2Id
-        req2.statusCounts shouldBe TransferStatus.values.map { status =>
-          status -> 4
-        }.toMap
+        req2.statusCounts shouldBe Map(
+          TransferStatus.Pending -> 4,
+          TransferStatus.Submitted -> 4,
+          TransferStatus.InProgress -> 3,
+          TransferStatus.Succeeded -> 3,
+          TransferStatus.Failed -> 3,
+          TransferStatus.Expanded -> 3
+        )
       }
   }
 
@@ -244,13 +254,23 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       out3 shouldBe empty
 
       out1.head.id shouldBe request2Id
-      out1.head.statusCounts shouldBe TransferStatus.values.map { status =>
-        status -> 4
-      }.toMap
+      out1.head.statusCounts shouldBe Map(
+        TransferStatus.Pending -> 4,
+        TransferStatus.Submitted -> 4,
+        TransferStatus.InProgress -> 3,
+        TransferStatus.Succeeded -> 3,
+        TransferStatus.Failed -> 3,
+        TransferStatus.Expanded -> 3
+      )
       out2.head.id shouldBe request1Id
-      out2.head.statusCounts shouldBe TransferStatus.values.map { status =>
-        status -> 2
-      }.toMap
+      out2.head.statusCounts shouldBe Map(
+        TransferStatus.Pending -> 2,
+        TransferStatus.Submitted -> 2,
+        TransferStatus.InProgress -> 2,
+        TransferStatus.Failed -> 2,
+        TransferStatus.Succeeded -> 1,
+        TransferStatus.Expanded -> 1
+      )
     }
   }
 
