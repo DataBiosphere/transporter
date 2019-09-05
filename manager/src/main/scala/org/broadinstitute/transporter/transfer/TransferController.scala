@@ -47,7 +47,7 @@ class TransferController(
   /** Get the total number of transfer requests stored by Transporter. */
   def countRequests: IO[Long] =
     Fragment
-      .const(s"SELECT COUNT(1) from $RequestsTable")
+      .const(s"SELECT COUNT(1) FROM $RequestsTable")
       .query[Long]
       .unique
       .transact(dbClient)
