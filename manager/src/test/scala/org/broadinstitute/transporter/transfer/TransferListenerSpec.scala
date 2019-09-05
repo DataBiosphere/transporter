@@ -59,27 +59,27 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       _ <- List(request1Id, request2Id, request3Id).zipWithIndex.traverse_ {
         case (id, i) =>
           val ts = Timestamp.from(Instant.ofEpochMilli(i.toLong))
-          sql"insert into transfer_requests (id, received_at) values ($id, $ts)".update.run.void
+          sql"INSERT INTO transfer_requests (id, received_at) VALUES ($id, $ts)".update.run.void
       }
       _ <- request1Transfers.traverse_ {
         case (id, body) =>
-          sql"""insert into transfers
+          sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
-                  values
+                  VALUES
                   ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
       _ <- request2Transfers.traverse_ {
         case (id, body) =>
-          sql"""insert into transfers
+          sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
-                  values
+                  VALUES
                   ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
       _ <- request3Transfers.traverse_ {
         case (id, body) =>
-          sql"""insert into transfers
+          sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
-                  values
+                  VALUES
                   ($id, $request3Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 2)""".update.run.void
       }
     } yield ()
@@ -100,7 +100,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
     for {
       _ <- listener.recordTransferResults(Chunk.seq(updates))
-      updated <- sql"select id, status, info from transfers where updated_at is not null"
+      updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at IS NOT NULL"
         .query[(UUID, TransferStatus, Json)]
         .to[List]
         .transact(tx)
@@ -130,7 +130,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
     for {
       _ <- listener.recordTransferResults(Chunk.seq(updates))
-      updated <- sql"select id, status, info from transfers where updated_at is not null"
+      updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at IS NOT NULL"
         .query[(UUID, TransferStatus, Json)]
         .to[List]
         .transact(tx)
@@ -148,11 +148,13 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     for {
       _ <- updates.traverse_ {
         case TransferMessage(ids, _) =>
-          sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
+          sql"""UPDATE transfers
+                SET status = ${TransferStatus.Submitted: TransferStatus}
+                WHERE id = ${ids.transfer}""".update.run.void
             .transact(tx)
       }
       numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
-      updated <- sql"select id, status, info from transfers where updated_at is not null"
+      updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at IS NOT NULL"
         .query[(UUID, TransferStatus, Json)]
         .to[List]
         .transact(tx)
@@ -175,15 +177,15 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       for {
         _ <- updates.traverse_ {
           case TransferMessage(ids, _) =>
-            sql"""update transfers set
-                  status = 'inprogress',
+            sql"""UPDATE transfers SET
+                  status = ${TransferStatus.InProgress: TransferStatus},
                   updated_at = TO_TIMESTAMP(0),
                   info = '{}'
-                  where id = ${ids.transfer}""".update.run.void
+                  WHERE id = ${ids.transfer}""".update.run.void
               .transact(tx)
         }
         numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
-        updated <- sql"select id, status, info from transfers where updated_at > TO_TIMESTAMP(0)"
+        updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at > TO_TIMESTAMP(0)"
           .query[(UUID, TransferStatus, Json)]
           .to[List]
           .transact(tx)
@@ -206,11 +208,13 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       for {
         _ <- updates.traverse_ {
           case TransferMessage(ids, _) =>
-            sql"update transfers set status = 'succeeded' where id = ${ids.transfer}".update.run.void
+            sql"""UPDATE transfers
+                  SET status = ${TransferStatus.Succeeded: TransferStatus}
+                  WHERE id = ${ids.transfer}""".update.run.void
               .transact(tx)
         }
         numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
+        updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at IS NOT NULL"
           .query[(UUID, TransferStatus, Json)]
           .to[List]
           .transact(tx)
@@ -230,11 +234,13 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       for {
         _ <- updates.traverse_ {
           case TransferMessage(ids, _) =>
-            sql"update transfers set status = 'submitted' where id = ${ids.transfer}".update.run.void
+            sql"""UPDATE transfers
+                  SET status = ${TransferStatus.Submitted: TransferStatus}
+                  WHERE id = ${ids.transfer}""".update.run.void
               .transact(tx)
         }
         numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
-        updated <- sql"select id, status, info from transfers where updated_at is not null"
+        updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at IS NOT NULL"
           .query[(UUID, TransferStatus, Json)]
           .to[List]
           .transact(tx)
@@ -255,10 +261,10 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       }
 
       for {
-        _ <- sql"update transfers set status = 'submitted' where id = $id".update.run
+        _ <- sql"UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE id = $id".update.run
           .transact(tx)
         numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
-        recorded <- sql"select info from transfers where id = $id"
+        recorded <- sql"SELECT info FROM transfers WHERE id = $id"
           .query[Json]
           .unique
           .transact(tx)
@@ -280,12 +286,12 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       }
 
       for {
-        _ <- sql"update transfers set status = 'submitted' where id = $id".update.run
+        _ <- sql"UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE id = $id".update.run
           .transact(tx)
         _ <- updates.parTraverse_ { message =>
           listener.markTransfersInProgress(Chunk.singleton(message))
         }
-        recorded <- sql"select info from transfers where id = $id"
+        recorded <- sql"SELECT info FROM transfers WHERE id = $id"
           .query[Json]
           .unique
           .transact(tx)
@@ -315,10 +321,10 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
     for {
       _ <- ids.traverse_ { id =>
-        sql"update transfers set status = 'submitted' where id = $id".update.run
+        sql"UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE id = $id".update.run
       }.transact(tx)
       _ <- List(doUpdate, doRecord, doRecord, doUpdate, doRecord, doUpdate).parSequence_
-      statuses <- sql"select count(1) from transfers where status = 'succeeded'"
+      statuses <- sql"SELECT COUNT(1) FROM transfers WHERE status = ${TransferStatus.Succeeded: TransferStatus}"
         .query[Long]
         .unique
         .transact(tx)
@@ -346,11 +352,13 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
       for {
         _ <- listener.recordTransferResults(Chunk.seq(updates))
-        newTransfers <- sql"select id, priority from transfers where request_id = $request3Id and id not in ($tId1, $tId2)"
+        newTransfers <- sql"""SELECT id, priority FROM transfers
+                WHERE request_id = $request3Id AND id NOT IN ($tId1, $tId2)"""
           .query[(UUID, Short)]
           .to[List]
           .transact(tx)
-        originalTransfers <- sql"select info, priority from transfers where status = ${TransferStatus.Expanded: TransferStatus}"
+        originalTransfers <- sql"""SELECT info, priority FROM transfers
+                WHERE status = ${TransferStatus.Expanded: TransferStatus}"""
           .query[(Json, Short)]
           .to[List]
           .transact(tx)

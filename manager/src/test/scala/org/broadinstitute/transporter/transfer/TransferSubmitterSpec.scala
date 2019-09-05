@@ -48,20 +48,20 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
       _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
         case (id, i) =>
           val ts = Timestamp.from(Instant.ofEpochMilli(i.toLong))
-          sql"insert into transfer_requests (id, received_at) values ($id, $ts)".update.run.void
+          sql"INSERT INTO transfer_requests (id, received_at) VALUES ($id, $ts)".update.run.void
       }
       _ <- request1Transfers.traverse_ {
         case (id, body) =>
-          sql"""insert into transfers
+          sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
-                  values
+                  VALUES
                   ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
       _ <- request2Transfers.traverse_ {
         case (id, body) =>
-          sql"""insert into transfers
+          sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
-                  values
+                  VALUES
                   ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
     } yield ()
@@ -88,15 +88,15 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
 
       for {
         _ <- submitter.submitEligibleTransfers
-        submitted <- sql"""select id, submitted_at
-                           from transfers
-                           where status = ${TransferStatus.Submitted: TransferStatus}"""
+        submitted <- sql"""SELECT id, submitted_at
+                           FROM transfers
+                           WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[(UUID, Option[OffsetDateTime])]
           .to[List]
           .transact(tx)
         _ <- submitter.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+        totalSubmitted <- sql"""SELECT COUNT(*) FROM transfers
+                                WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[Long]
           .unique
           .transact(tx)
@@ -118,8 +118,8 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
 
       for {
         attempt <- controller.submitEligibleTransfers.attempt
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+        totalSubmitted <- sql"""SELECT count(*) FROM transfers
+                                WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[Long]
           .unique
           .transact(tx)
@@ -140,14 +140,14 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
 
       for {
         _ <- List.fill(3)(controller.submitEligibleTransfers).parSequence_
-        submitted <- sql"""select id, submitted_at
-                           from transfers
-                           where status = ${TransferStatus.Submitted: TransferStatus}"""
+        submitted <- sql"""SELECT id, submitted_at
+                           FROM transfers
+                           WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[(UUID, Option[OffsetDateTime])]
           .to[List]
           .transact(tx)
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+        totalSubmitted <- sql"""SELECT COUNT(*) FROM transfers
+                                WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[Long]
           .unique
           .transact(tx)
@@ -170,13 +170,13 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
 
       for {
         _ <- preSubmitted.traverse_ { id =>
-          sql"""update transfers
-                set status = ${TransferStatus.Submitted: TransferStatus}
-                where id = $id""".update.run.void
+          sql"""UPDATE transfers
+                SET status = ${TransferStatus.Submitted: TransferStatus}
+                WHERE id = $id""".update.run.void
         }.transact(tx)
         _ <- controller.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+        totalSubmitted <- sql"""SELECT COUNT(*) FROM transfers
+                                WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[Long]
           .unique
           .transact(tx)
@@ -193,13 +193,13 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
 
       for {
         _ <- inProgress.traverse_ { id =>
-          sql"""update transfers
-              set status = ${TransferStatus.InProgress: TransferStatus}
-              where id = $id""".update.run.void
+          sql"""UPDATE transfers
+              SET status = ${TransferStatus.InProgress: TransferStatus}
+              WHERE id = $id""".update.run.void
         }.transact(tx)
         _ <- controller.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*) from transfers
-                             where status = ${TransferStatus.Submitted: TransferStatus}"""
+        totalSubmitted <- sql"""SELECT COUNT(*) FROM transfers
+                             WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[Long]
           .unique
           .transact(tx)
@@ -224,22 +224,22 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
     (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
 
     for {
-      _ <- sql"""update transfers set priority = 3 where id = $tId3""".update.run.void
+      _ <- sql"""UPDATE transfers SET priority = 3 WHERE id = $tId3""".update.run.void
         .transact(tx)
-      _ <- sql"""update transfers set priority = 4 where id = $tId2""".update.run.void
+      _ <- sql"""UPDATE transfers SET priority = 4 WHERE id = $tId2""".update.run.void
         .transact(tx)
-      _ <- sql"""update transfers set priority = 5 where id = $tId1""".update.run.void
+      _ <- sql"""UPDATE transfers SET priority = 5 WHERE id = $tId1""".update.run.void
         .transact(tx)
       _ <- submitter.submitEligibleTransfers
-      submitted <- sql"""select id, submitted_at
-                           from transfers
-                           where status = ${TransferStatus.Submitted: TransferStatus}"""
+      submitted <- sql"""SELECT id, submitted_at
+                           FROM transfers
+                           WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
         .query[(UUID, Option[OffsetDateTime])]
         .to[List]
         .transact(tx)
       _ <- submitter.submitEligibleTransfers
-      totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+      totalSubmitted <- sql"""SELECT COUNT(*) FROM transfers
+                                WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
         .query[Long]
         .unique
         .transact(tx)
@@ -277,15 +277,15 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
         _ <- sql"""update transfers set priority = 5 where id in ($tId0, $tId2, $tId3, $tId4)""".update.run.void
           .transact(tx)
         _ <- submitter.submitEligibleTransfers
-        submitted <- sql"""select id, submitted_at
-                           from transfers
-                           where status = ${TransferStatus.Submitted: TransferStatus}"""
+        submitted <- sql"""SELECT id, submitted_at
+                           FROM transfers
+                           WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[(UUID, Option[OffsetDateTime])]
           .to[List]
           .transact(tx)
         _ <- submitter.submitEligibleTransfers
-        totalSubmitted <- sql"""select count(*) from transfers
-                                where status = ${TransferStatus.Submitted: TransferStatus}"""
+        totalSubmitted <- sql"""SELECT count(*) FROM transfers
+                                WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
           .query[Long]
           .unique
           .transact(tx)

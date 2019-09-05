@@ -45,7 +45,7 @@ class InfoController(
       // TODO: It should be possible to distinguish "no such table" errors
       // from "can't connect to DB" errors, and give different messages.
       _ <- tables.traverse { t =>
-        (fr"select 1 from" ++ t ++ fr"limit 1").query[Int].option
+        (fr"SELECT 1 FROM" ++ t ++ fr"LIMIT 1").query[Int].option
       }.transact(dbClient)
       _ <- logger.debug("Table check succeeded")
     } yield {
