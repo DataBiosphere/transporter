@@ -29,8 +29,6 @@ import scala.collection.JavaConverters._
   * priority queueing within the manager, since Kafka doesn't have native support
   * for that functionality.
   *
-  * FIXME UPDATE SQL TO CAPITALIZE KEYWORDS
-  *
   * @param schema JSON schema that transfer requests handled by this controller
   *               must match in order to be recorded for later submission
   * @param dbClient client which can interact with Transporter's backing DB

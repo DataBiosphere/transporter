@@ -148,7 +148,9 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     for {
       _ <- updates.traverse_ {
         case TransferMessage(ids, _) =>
-          sql"UPDATE transfers SET status = 'submitted' WHERE id = ${ids.transfer}".update.run.void
+          sql"""UPDATE transfers
+                SET status = ${TransferStatus.Submitted: TransferStatus}
+                WHERE id = ${ids.transfer}""".update.run.void
             .transact(tx)
       }
       numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
@@ -176,7 +178,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
         _ <- updates.traverse_ {
           case TransferMessage(ids, _) =>
             sql"""UPDATE transfers SET
-                  status = 'inprogress',
+                  status = ${TransferStatus.InProgress: TransferStatus},
                   updated_at = TO_TIMESTAMP(0),
                   info = '{}'
                   WHERE id = ${ids.transfer}""".update.run.void
@@ -206,7 +208,9 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       for {
         _ <- updates.traverse_ {
           case TransferMessage(ids, _) =>
-            sql"UPDATE transfers SET status = 'succeeded' WHERE id = ${ids.transfer}".update.run.void
+            sql"""UPDATE transfers
+                  SET status = ${TransferStatus.Succeeded: TransferStatus}
+                  WHERE id = ${ids.transfer}""".update.run.void
               .transact(tx)
         }
         numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
@@ -230,7 +234,9 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       for {
         _ <- updates.traverse_ {
           case TransferMessage(ids, _) =>
-            sql"UPDATE transfers SET status = 'submitted' WHERE id = ${ids.transfer}".update.run.void
+            sql"""UPDATE transfers
+                  SET status = ${TransferStatus.Submitted: TransferStatus}
+                  WHERE id = ${ids.transfer}""".update.run.void
               .transact(tx)
         }
         numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
@@ -255,7 +261,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       }
 
       for {
-        _ <- sql"UPDATE transfers SET status = 'submitted' WHERE id = $id".update.run
+        _ <- sql"UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE id = $id".update.run
           .transact(tx)
         numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
         recorded <- sql"SELECT info FROM transfers WHERE id = $id"
@@ -280,7 +286,7 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
       }
 
       for {
-        _ <- sql"UPDATE transfers SET status = 'submitted' WHERE id = $id".update.run
+        _ <- sql"UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE id = $id".update.run
           .transact(tx)
         _ <- updates.parTraverse_ { message =>
           listener.markTransfersInProgress(Chunk.singleton(message))
@@ -315,10 +321,10 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
     for {
       _ <- ids.traverse_ { id =>
-        sql"UPDATE transfers SET status = 'submitted' WHERE id = $id".update.run
+        sql"UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE id = $id".update.run
       }.transact(tx)
       _ <- List(doUpdate, doRecord, doRecord, doUpdate, doRecord, doUpdate).parSequence_
-      statuses <- sql"SELECT COUNT(1) FROM transfers WHERE status = 'succeeded'"
+      statuses <- sql"SELECT COUNT(1) FROM transfers WHERE status = ${TransferStatus.Succeeded: TransferStatus}"
         .query[Long]
         .unique
         .transact(tx)
@@ -346,11 +352,13 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
       for {
         _ <- listener.recordTransferResults(Chunk.seq(updates))
-        newTransfers <- sql"SELECT id, priority FROM transfers WHERE request_id = $request3Id AND id NOT IN ($tId1, $tId2)"
+        newTransfers <- sql"""SELECT id, priority FROM transfers
+                WHERE request_id = $request3Id AND id NOT IN ($tId1, $tId2)"""
           .query[(UUID, Short)]
           .to[List]
           .transact(tx)
-        originalTransfers <- sql"SELECT info, priority FROM transfers WHERE status = ${TransferStatus.Expanded: TransferStatus}"
+        originalTransfers <- sql"""SELECT info, priority FROM transfers
+                WHERE status = ${TransferStatus.Expanded: TransferStatus}"""
           .query[(Json, Short)]
           .to[List]
           .transact(tx)

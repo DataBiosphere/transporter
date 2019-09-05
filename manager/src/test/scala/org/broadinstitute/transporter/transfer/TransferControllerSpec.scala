@@ -527,7 +527,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     (tx, controller) =>
       val (id, _) = request1Transfers.head
       for {
-        _ <- sql"UPDATE transfers SET status = ${TransferStatus.InProgress: TransferStatus} WHERE id = $id".update.run.void
+        _ <- sql"""UPDATE transfers
+                SET status = ${TransferStatus.InProgress: TransferStatus}
+                WHERE id = $id""".update.run.void
           .transact(tx)
         before <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Pending: TransferStatus}"
           .query[Long]
@@ -781,7 +783,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   it should "fail to update the priority for transfers in a request if the transfers are no longer pending" in withRequest {
     (tx, controller) =>
       for {
-        _ <- sql"""UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE request_id = $request1Id""".update.run.void
+        _ <- sql"""UPDATE transfers
+                SET status = ${TransferStatus.Submitted: TransferStatus}
+                WHERE request_id = $request1Id""".update.run.void
           .transact(tx)
       } yield {
         controller
@@ -834,7 +838,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     val (tId, _) = request1Transfers.head
     (tx, controller) =>
       for {
-        _ <- sql"""UPDATE transfers SET status = ${TransferStatus.Submitted: TransferStatus} WHERE request_id = $request1Id AND id = $tId""".update.run.void
+        _ <- sql"""UPDATE transfers
+                SET status = ${TransferStatus.Submitted: TransferStatus}
+                WHERE request_id = $request1Id AND id = $tId""".update.run.void
           .transact(tx)
       } yield {
         controller
