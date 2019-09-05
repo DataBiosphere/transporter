@@ -49,7 +49,7 @@ class TransferController(
   /** Get the total number of transfer requests stored by Transporter. */
   def countRequests: IO[Long] =
     Fragment
-      .const(s"select count(1) from $RequestsTable")
+      .const(s"SELECT COUNT(1) from $RequestsTable")
       .query[Long]
       .unique
       .transact(dbClient)
@@ -65,9 +65,9 @@ class TransferController(
   ): IO[List[RequestSummary]] = {
     val query = for {
       ids <- List(
-        Fragment.const(s"select id from $RequestsTable order by received_at"),
-        Fragment.const(if (newestFirst) "desc" else "asc"),
-        fr"limit $limit offset $offset"
+        Fragment.const(s"SELECT id FROM $RequestsTable ORDER BY received_at"),
+        Fragment.const(if (newestFirst) "DESC" else "ASC"),
+        fr"LIMIT $limit OFFSET $offset"
       ).combineAll.query[UUID].to[List]
       summaries <- lookupSummaries(ids)
     } yield {
@@ -95,9 +95,9 @@ class TransferController(
   private def lookupSummaries(ids: List[UUID]): ConnectionIO[List[RequestSummary]] =
     for {
       countsPerStatusPerRequest <- List(
-        fr"select r.id as id, t.status as status, count(t.id) as n",
-        fr"from" ++ TransfersJoinTable,
-        fr"where r.id = any($ids) group by r.id, t.status, r.received_at"
+        fr"SELECT r.id AS id, t.status AS status, COUNT(t.id) AS n",
+        fr"FROM" ++ TransfersJoinTable,
+        fr"WHERE r.id = ANY($ids) GROUP BY r.id, t.status, r.received_at"
       ).combineAll.query[(UUID, TransferStatus, Long)].to[List].map { perStateCounts =>
         perStateCounts.foldLeft(Map.empty[UUID, Map[TransferStatus, Long]]) {
           case (acc, (id, status, count)) =>
@@ -109,9 +109,9 @@ class TransferController(
         }
       }
       summaries <- List(
-        fr"select r.id, r.received_at, min(t.submitted_at), max(t.updated_at)",
-        fr"from" ++ TransfersJoinTable,
-        fr"where r.id = any($ids) group by r.id, r.received_at"
+        fr"SELECT r.id, r.received_at, MIN(t.submitted_at), MAX(t.updated_at)",
+        fr"FROM" ++ TransfersJoinTable,
+        fr"WHERE r.id = ANY($ids) GROUP BY r.id, r.received_at"
       ).combineAll
         .query[(UUID, OffsetDateTime, Option[OffsetDateTime], Option[OffsetDateTime])]
         .map {
@@ -176,7 +176,7 @@ class TransferController(
   private def storeRequest(now: Instant): ConnectionIO[UUID] = {
     val rId = UUID.randomUUID()
     val updateSql = List(
-      Fragment.const(s"insert into $RequestsTable (id, received_at) values"),
+      Fragment.const(s"INSERT INTO $RequestsTable (id, received_at) VALUES"),
       fr"($rId," ++ Fragment.const(timestampSql(now)) ++ fr")"
     ).combineAll
     for {
@@ -204,7 +204,7 @@ class TransferController(
     }
     for {
       _ <- Update[(UUID, UUID, TransferStatus, Json, Int, Short)](
-        s"insert into $TransfersTable (id, request_id, status, body, steps_run, priority) values (?, ?, ?, ?, ?, ?)"
+        s"INSERT INTO $TransfersTable (id, request_id, status, body, steps_run, priority) VALUES (?, ?, ?, ?, ?, ?)"
       ).updateMany(transferInfo)
     } yield {
       transferInfo.map(_._1)
@@ -239,8 +239,8 @@ class TransferController(
   ): IO[Out] = {
     val transaction = for {
       requestRow <- List(
-        Fragment.const(s"select 1 from $RequestsTable"),
-        fr"where id = $requestId limit 1"
+        Fragment.const(s"SELECT 1 FROM $RequestsTable"),
+        fr"WHERE id = $requestId LIMIT 1"
       ).combineAll
         .query[Long]
         .option
@@ -266,7 +266,7 @@ class TransferController(
   ): IO[Out] = {
     val transaction = for {
       requestRow <- List(
-        Fragment.const(s"select 1 from $TransfersTable"),
+        Fragment.const(s"SELECT 1 FROM $TransfersTable"),
         Fragments.whereAnd(fr"request_id = $requestId", fr"id = $transferId")
       ).combineAll
         .query[Long]
@@ -311,12 +311,12 @@ class TransferController(
   ): IO[RequestInfo] =
     checkAndExec(requestId) { rId =>
       List(
-        fr"select t.id, t.info from",
+        fr"SELECT t.id, t.info FROM",
         TransfersJoinTable,
         Fragments.whereAnd(
           fr"r.id = $rId",
           fr"t.status = $status",
-          fr"t.info is not null"
+          fr"t.info IS NOT NULL"
         )
       ).combineAll
         .query[TransferInfo]
@@ -330,8 +330,8 @@ class TransferController(
   def reconsiderRequest(requestId: UUID): IO[RequestAck] =
     checkAndExec(requestId) { rId =>
       List(
-        Fragment.const(s"update $TransfersTable t"),
-        fr"set status = ${TransferStatus.Pending: TransferStatus} from",
+        Fragment.const(s"UPDATE $TransfersTable t"),
+        fr"SET status = ${TransferStatus.Pending: TransferStatus} FROM",
         Fragment.const(s"$RequestsTable r"),
         Fragments.whereAnd(
           fr"t.request_id = r.id",
@@ -348,8 +348,8 @@ class TransferController(
   def reconsiderSingleTransfer(requestId: UUID, transferId: UUID): IO[RequestAck] =
     checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
-        Fragment.const(s"update $TransfersTable t"),
-        fr"set status = ${TransferStatus.Pending: TransferStatus}",
+        Fragment.const(s"UPDATE $TransfersTable t"),
+        fr"SET status = ${TransferStatus.Pending: TransferStatus}",
         Fragments.whereAnd(
           fr"t.request_id = $rId",
           fr"t.id = $tId",
@@ -368,7 +368,7 @@ class TransferController(
     checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
         Fragment.const(
-          s"select id, status, priority, body, submitted_at, updated_at, info from $TransfersTable"
+          s"SELECT id, status, priority, body, submitted_at, updated_at, info FROM $TransfersTable"
         ),
         Fragments.whereAnd(fr"request_id = $rId", fr"id = $tId")
       ).combineAll
@@ -379,9 +379,9 @@ class TransferController(
   /** Get the total number of transfers stored by Transporter. */
   def countTransfers(requestId: UUID): IO[Long] =
     List(
-      fr"select count(1) from",
+      fr"SELECT COUNT(1) FROM",
       Fragment.const(TransfersTable),
-      fr"where request_id = $requestId"
+      fr"WHERE request_id = $requestId"
     ).combineAll
       .query[Long]
       .unique
@@ -401,9 +401,9 @@ class TransferController(
       val order = Fragment.const(if (sortDesc) "desc" else "asc")
       List(
         Fragment.const(
-          s"select id, status, priority, body, submitted_at, updated_at, info from $TransfersTable"
+          s"SELECT id, status, priority, body, submitted_at, updated_at, info FROM $TransfersTable"
         ),
-        fr"where request_id = $rId order by id" ++ order ++ fr"limit $limit offset $offset"
+        fr"WHERE request_id = $rId ORDER BY id" ++ order ++ fr"LIMIT $limit OFFSET $offset"
       ).combineAll
         .query[TransferDetails]
         .to[List]
@@ -418,7 +418,7 @@ class TransferController(
     checkAndExec(requestId) { rId =>
       for {
         checkRows <- List(
-          Fragment.const(s"select count(1) from $TransfersTable"),
+          Fragment.const(s"SELECT COUNT(1) FROM $TransfersTable"),
           Fragments.whereAnd(
             fr"request_id = $rId",
             fr"status = ${TransferStatus.Pending: TransferStatus}"
@@ -429,8 +429,8 @@ class TransferController(
           .whenA(checkRows == 0)
           .to[ConnectionIO]
         updatedRows <- List(
-          Fragment.const(s"update $TransfersTable t"),
-          fr"set priority = $priority",
+          Fragment.const(s"UPDATE $TransfersTable t"),
+          fr"SET priority = $priority",
           Fragments.whereAnd(
             fr"t.request_id = $rId",
             fr"t.priority != $priority",
@@ -453,7 +453,7 @@ class TransferController(
     checkAndExec(requestId, transferId) { (rId, tId) =>
       for {
         checkRows <- List(
-          Fragment.const(s"select count(1) from $TransfersTable"),
+          Fragment.const(s"SELECT COUNT(1) FROM $TransfersTable"),
           Fragments.whereAnd(
             fr"id = $tId",
             fr"status = ${TransferStatus.Pending: TransferStatus}"
@@ -464,7 +464,7 @@ class TransferController(
           .whenA(checkRows == 0)
           .to[ConnectionIO]
         updatedRows <- List(
-          Fragment.const(s"update $TransfersTable set priority = $priority"),
+          Fragment.const(s"UPDATE $TransfersTable SET priority = $priority"),
           Fragments.whereAnd(
             fr"id = $tId",
             fr"priority != $priority",
