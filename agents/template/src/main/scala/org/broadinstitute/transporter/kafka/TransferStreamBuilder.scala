@@ -11,7 +11,6 @@ import org.apache.kafka.common.errors.SerializationException
 import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.Topology
 import org.apache.kafka.streams.scala.{StreamsBuilder, Serdes => KSerdes}
-import org.broadinstitute.transporter.kafka
 import org.broadinstitute.transporter.kafka.config.TopicConfig
 import org.broadinstitute.transporter.transfer.{
   TransferMessage,
@@ -81,44 +80,23 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
               initialized
             }
 
-            initializedOrError.fold(
-              err => {
-                val message =
-                  s"Failed to initialize transfer ${ids.transfer} from request ${ids.request}"
-                logger.error(err)(message)
-                Right {
-                  TransferMessage(
-                    ids,
-                    (
-                      TransferResult.FatalFailure: TransferResult,
-                      UnhandledErrorInfo(message, Option(err.getMessage))
-                    ).asJson
-                  )
-                }
-              },
-              initialized => {
-                initialized match {
-                  case Progress(value) => {
-                    logger.info(s"Enqueueing zero progress for transfer ${ids.transfer}")
-                    TransferMessage(ids, (0, initialized.message))
-                  }
-                  case Done(value) => {
-                    logger.info(s"Returning early for transfer ${ids.transfer}")
-                    TransferMessage(ids, initialized.message)
-                  }
-                  case Expanded(value) => {
-                    logger
-                      .info(s"Expanding transfer ${ids.transfer} into multiple transfers")
-                    TransferMessage(ids, initialized.message)
-                  }
-                }
-              }
+            ids -> initializedOrError.fold(
+              err => Failure(err),
+              identity
             )
           }
-          .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
+          .branch((_, attempt) => !attempt._2.isDone, (_, attempt) => attempt._2.isDone)
       }
-      _ <- IO.delay(zeros.mapValues(_.left.get.asJson).to(topics.progressTopic))
-      _ <- IO.delay(earlyExits.mapValues(_.right.get.asJson).to(topics.resultTopic))
+      _ <- IO.delay(
+        zeros
+          .mapValues(notDone => TransferMessage(notDone._1, notDone._2.message))
+          .to(topics.progressTopic)
+      )
+      _ <- IO.delay(
+        earlyExits
+          .mapValues(done => TransferMessage(done._1, done._2.message))
+          .to(topics.resultTopic)
+      )
     } yield {
       builder
     }

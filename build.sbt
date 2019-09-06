@@ -118,7 +118,6 @@ lazy val transporter = project
     `transporter-common`,
     `transporter-manager`,
     `transporter-agent-template`,
-    `transporter-echo-agent`,
     `transporter-aws-to-gcp-agent`
   )
 
@@ -297,13 +296,6 @@ lazy val `transporter-agent-template` = project
       "org.typelevel" %% "cats-effect" % catsEffectVersion
     )
   )
-
-/** Dummy agent to test framework plumbing. */
-lazy val `transporter-echo-agent` = project
-  .in(file("./agents/echo"))
-  .enablePlugins(TransporterDockerPlugin)
-  .dependsOn(`transporter-agent-template`)
-  .settings(commonSettings)
 
 /** Agent which can transfer files from AWS to GCP. */
 lazy val `transporter-aws-to-gcp-agent` = project

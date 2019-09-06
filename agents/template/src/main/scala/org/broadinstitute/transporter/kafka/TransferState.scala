@@ -14,7 +14,7 @@ final case class Progress[P: Encoder](value: P)
     extends TransferState[Nothing, P, Nothing] {
   def isDone = false
 
-  def message: Json = value.asJson
+  def message: Json = (0, value).asJson
 }
 
 final case class Done[O: Encoder](value: O) extends TransferState[Nothing, Nothing, O] {
