@@ -1,5 +1,7 @@
 package org.broadinstitute.transporter.transfer
 
+import org.broadinstitute.transporter.kafka.TransferState
+
 /**
   * Component capable of actually running data transfers.
   *
@@ -12,7 +14,7 @@ trait TransferRunner[In, Progress, Out] {
     * Initialize the transfer described by the given request, and
     * emit enough information to push the first chunk of data.
     */
-  def initialize(request: In): Either[Progress, Out]
+  def initialize(request: In): TransferState[In, Progress, Out]
 
   /**
     * Push the next chunk of data into an initialized transfer, either

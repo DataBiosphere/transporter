@@ -11,6 +11,7 @@ import org.apache.kafka.common.errors.SerializationException
 import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.Topology
 import org.apache.kafka.streams.scala.{StreamsBuilder, Serdes => KSerdes}
+import org.broadinstitute.transporter.kafka
 import org.broadinstitute.transporter.kafka.config.TopicConfig
 import org.broadinstitute.transporter.transfer.{
   TransferMessage,
@@ -18,9 +19,9 @@ import org.broadinstitute.transporter.transfer.{
   TransferRunner
 }
 
-class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encoder](
+class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
   topics: TopicConfig,
-  runner: TransferRunner[In, Progress, Out]
+  runner: TransferRunner[I, P, O]
 ) {
   import org.apache.kafka.streams.scala.ImplicitConversions._
   import KSerdes._
@@ -71,7 +72,7 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
             )
 
             val initializedOrError = for {
-              input <- payload.as[In]
+              input <- payload.as[I]
               _ = logger.info(
                 s"Initializing transfer ${ids.transfer} from request ${ids.request}"
               )
@@ -96,20 +97,21 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
                 }
               },
               initialized => {
-                initialized.bimap(
-                  zero => {
+                initialized match {
+                  case Progress(value) => {
                     logger.info(s"Enqueueing zero progress for transfer ${ids.transfer}")
-                    TransferMessage(ids, (0, zero.asJson))
-                  },
-                  earlyExit => {
-                    logger.info(s"Returning early for transfer ${ids.transfer}")
-                    TransferMessage(
-                      ids,
-                      (TransferResult.Success: TransferResult, earlyExit).asJson
-                    )
+                    TransferMessage(ids, (0, initialized.message))
                   }
-                )
-
+                  case Done(value) => {
+                    logger.info(s"Returning early for transfer ${ids.transfer}")
+                    TransferMessage(ids, initialized.message)
+                  }
+                  case Expanded(value) => {
+                    logger
+                      .info(s"Expanding transfer ${ids.transfer} into multiple transfers")
+                    TransferMessage(ids, initialized.message)
+                  }
+                }
               }
             )
           }
@@ -148,7 +150,7 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
             val (stepsSoFar, message) = progress.message
 
             message
-              .as[Progress]
+              .as[P]
               .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
               .fold(
                 err => {
