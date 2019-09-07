@@ -74,7 +74,8 @@ val googleAuthVersion = "0.16.2"
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val http4sVersion = "0.20.9"
+val storageLibsVersion = "0.3.0-M1"
+val http4sVersion = "0.20.6"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.23.5"
 val tapirVersion = "0.9.3"
@@ -90,6 +91,10 @@ val testcontainersScalaVersion = "0.29.0"
 // Can't be applied at the build level because of scoping rules.
 val commonSettings = Seq(
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % betterMonadicForVersion),
+  resolvers ++= Seq(
+    "Broad Artifactory Releases" at "https://broadinstitute.jfrog.io/broadinstitute/libs-release/",
+    "Broad Artifactory Snapshots" at "https://broadinstitute.jfrog.io/broadinstitute/libs-snapshot/"
+  ),
   Compile / console / scalacOptions := (Compile / scalacOptions).value.filterNot(
     Set(
       "-Xfatal-warnings",
@@ -118,7 +123,8 @@ lazy val transporter = project
     `transporter-common`,
     `transporter-manager`,
     `transporter-agent-template`,
-    `transporter-aws-to-gcp-agent`
+    `transporter-aws-to-gcp-agent`,
+    `transporter-gcs-to-gcs-agent`
   )
 
 /** Definitions used by both the manager and agents. */
@@ -315,5 +321,16 @@ lazy val `transporter-aws-to-gcp-agent` = project
     dependencyOverrides := Seq(
       "co.fs2" %% "fs2-core" % fs2Version,
       "co.fs2" %% "fs2-io" % fs2Version
+    )
+  )
+
+lazy val `transporter-gcs-to-gcs-agent` = project
+  .in(file("./agents/gcs-to-gcs"))
+  .enablePlugins(TransporterDeployPlugin)
+  .dependsOn(`transporter-agent-template`)
+  .settings(commonSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.broadinstitute.monster" %% "gcs-lib" % storageLibsVersion
     )
   )
