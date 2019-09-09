@@ -18,9 +18,9 @@ import org.broadinstitute.transporter.transfer.{
   TransferRunner
 }
 
-class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encoder](
+class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
   topics: TopicConfig,
-  runner: TransferRunner[In, Progress, Out]
+  runner: TransferRunner[I, P, O]
 ) {
   import org.apache.kafka.streams.scala.ImplicitConversions._
   import KSerdes._
@@ -71,7 +71,7 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
             )
 
             val initializedOrError = for {
-              input <- payload.as[In]
+              input <- payload.as[I]
               _ = logger.info(
                 s"Initializing transfer ${ids.transfer} from request ${ids.request}"
               )
@@ -80,43 +80,23 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
               initialized
             }
 
-            initializedOrError.fold(
-              err => {
-                val message =
-                  s"Failed to initialize transfer ${ids.transfer} from request ${ids.request}"
-                logger.error(err)(message)
-                Right {
-                  TransferMessage(
-                    ids,
-                    (
-                      TransferResult.FatalFailure: TransferResult,
-                      UnhandledErrorInfo(message, Option(err.getMessage))
-                    ).asJson
-                  )
-                }
-              },
-              initialized => {
-                initialized.bimap(
-                  zero => {
-                    logger.info(s"Enqueueing zero progress for transfer ${ids.transfer}")
-                    TransferMessage(ids, (0, zero.asJson))
-                  },
-                  earlyExit => {
-                    logger.info(s"Returning early for transfer ${ids.transfer}")
-                    TransferMessage(
-                      ids,
-                      (TransferResult.Success: TransferResult, earlyExit).asJson
-                    )
-                  }
-                )
-
-              }
+            ids -> initializedOrError.fold(
+              err => Failure(err),
+              identity
             )
           }
-          .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
+          .branch((_, attempt) => !attempt._2.isDone, (_, attempt) => attempt._2.isDone)
       }
-      _ <- IO.delay(zeros.mapValues(_.left.get.asJson).to(topics.progressTopic))
-      _ <- IO.delay(earlyExits.mapValues(_.right.get.asJson).to(topics.resultTopic))
+      _ <- IO.delay(
+        zeros
+          .mapValues(notDone => TransferMessage(notDone._1, (0, notDone._2.message)))
+          .to(topics.progressTopic)
+      )
+      _ <- IO.delay(
+        earlyExits
+          .mapValues(done => TransferMessage(done._1, done._2.message))
+          .to(topics.resultTopic)
+      )
     } yield {
       builder
     }
@@ -148,7 +128,7 @@ class TransferStreamBuilder[In: Decoder, Progress: Encoder: Decoder, Out: Encode
             val (stepsSoFar, message) = progress.message
 
             message
-              .as[Progress]
+              .as[P]
               .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
               .fold(
                 err => {

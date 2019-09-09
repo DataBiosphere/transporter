@@ -8,6 +8,7 @@ import io.circe.jawn.JawnParser
 import io.circe.syntax._
 import org.apache.commons.codec.binary.{Base64, Hex}
 import org.broadinstitute.transporter.config.RunnerConfig
+import org.broadinstitute.transporter.kafka.{Done, Progress, TransferStep}
 import org.broadinstitute.transporter.transfer.auth.{GcsAuthProvider, S3AuthProvider}
 import org.http4s._
 import org.http4s.client.Client
@@ -39,7 +40,7 @@ class AwsToGcpRunner(
 
   override def initialize(
     request: AwsToGcpRequest
-  ): Either[AwsToGcpProgress, AwsToGcpOutput] = {
+  ): TransferStep[AwsToGcpRequest, AwsToGcpProgress, AwsToGcpOutput] = {
 
     val forceTransfer = request.force.getOrElse(false)
 
@@ -83,7 +84,7 @@ class AwsToGcpRunner(
 
       out <- if (md5sMatch && !forceTransfer) {
         // If there's already a GCS object with the md5 we want, we can short-circuit.
-        IO.pure(Right(AwsToGcpOutput(request.gcsBucket, request.gcsPath)))
+        IO.pure(Done(AwsToGcpOutput(request.gcsBucket, request.gcsPath)))
       } else if (gcsExists && !forceTransfer) {
         /*
          * If there's already a GCS object, but it doesn't have the md5 we expect,
@@ -120,7 +121,7 @@ class AwsToGcpRunner(
             data = Stream.chunk(allBytes)
           )
         } yield {
-          Right(AwsToGcpOutput(request.gcsBucket, request.gcsPath))
+          Done(AwsToGcpOutput(request.gcsBucket, request.gcsPath))
         }
       } else {
         // Finally, if we haven't found a reason to bail out early, we begin a GCS upload.
@@ -130,7 +131,7 @@ class AwsToGcpRunner(
           s3Metadata = s3Metadata,
           expectedMd5 = request.expectedMd5
         ).map { uploadToken =>
-          Left {
+          Progress {
             AwsToGcpProgress(
               s3Bucket = request.s3Bucket,
               s3Region = request.s3Region,

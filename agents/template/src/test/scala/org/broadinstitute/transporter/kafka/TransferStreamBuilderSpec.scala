@@ -128,7 +128,7 @@ class TransferStreamBuilderSpec
       TransferMessage(ids, (TransferResult.Success, LoopOutput(3).asJson))
 
     val runner = mock[LoopRunner]
-    (runner.initialize _).expects(request.message).returning(Left(LoopProgress(0, 3)))
+    (runner.initialize _).expects(request.message).returning(Progress(LoopProgress(0, 3)))
     (0 until 3).foreach { i =>
       (runner.step _)
         .expects(LoopProgress(i, 3 - i))
@@ -157,10 +157,10 @@ class TransferStreamBuilderSpec
     inSequence {
       (runner.initialize _)
         .expects(longRunning.message)
-        .returning(Left(LoopProgress(0, longRunningCount)))
+        .returning(Progress(LoopProgress(0, longRunningCount)))
       (runner.initialize _)
         .expects(quick.message)
-        .returning(Left(LoopProgress(0, quickCount)))
+        .returning(Progress(LoopProgress(0, quickCount)))
     }
 
     List(0 until longRunningCount, 0 until quickCount).foreach { range =>
@@ -209,7 +209,7 @@ class TransferStreamBuilderSpec
     )
 
     val runner = mock[LoopRunner]
-    (runner.initialize _).expects(LoopRequest(0)).returning(Left(LoopProgress(0, 0)))
+    (runner.initialize _).expects(LoopRequest(0)).returning(Progress(LoopProgress(0, 0)))
     (runner.step _).expects(LoopProgress(0, 0)).returning(Right(LoopOutput(0)))
 
     val List(result1, result2) =
@@ -274,7 +274,7 @@ class TransferStreamBuilderSpec
     val runner = mock[LoopRunner]
     messages.foreach { msg =>
       val zero = LoopProgress(0, msg.message.loopCount)
-      (runner.initialize _).expects(msg.message).returning(Left(zero))
+      (runner.initialize _).expects(msg.message).returning(Progress(zero))
       (runner.step _).expects(zero).throwing(new Exception("OH NO"))
     }
 
@@ -296,7 +296,7 @@ class TransferStreamBuilderSpec
     val runner = mock[LoopRunner]
     messages.foreach { msg =>
       val zero = LoopProgress(0, msg.message.loopCount)
-      (runner.initialize _).expects(msg.message).returning(Left(zero))
+      (runner.initialize _).expects(msg.message).returning(Progress(zero))
       (runner.step _).expects(zero).throwing(new Exception)
     }
 
@@ -310,11 +310,26 @@ class TransferStreamBuilderSpec
     }
   }
 
+  it should "support expansion of single transfer requests into multiple transfer requests" in {
+    val message = TransferMessage(ids, LoopRequest(0))
+
+    val runner = mock[LoopRunner]
+    (runner.initialize _)
+      .expects(message.message)
+      .returning(Expanded(List(LoopRequest(0), LoopRequest(1))))
+
+    val out = roundTripTransfers(List(message.asJson), runner)
+    out should contain only TransferMessage(
+      ids,
+      (TransferResult.Expanded, List(LoopRequest(0), LoopRequest(1)).asJson)
+    )
+  }
+
   it should "support early exits from runner initialization" in {
     val message = TransferMessage(ids, LoopRequest(0))
 
     val runner = mock[LoopRunner]
-    (runner.initialize _).expects(message.message).returning(Right(LoopOutput(0)))
+    (runner.initialize _).expects(message.message).returning(Done(LoopOutput(0)))
 
     val out = roundTripTransfers(List(message.asJson), runner)
     out should contain only TransferMessage(
