@@ -14,9 +14,9 @@ object Constants {
   /** SQL fragment linking transfer-level information to request-level information. */
   val TransfersJoinTable: Fragment = List(
     Fragment.const(TransfersTable),
-    fr"t join",
+    fr"t JOIN",
     Fragment.const(RequestsTable),
-    fr"r on t.request_id = r.id"
+    fr"r ON t.request_id = r.id"
   ).combineAll
 
   def timestampSql(now: Instant): String =

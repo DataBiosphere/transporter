@@ -53,20 +53,20 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
           case (id, i) =>
             val ts = Timestamp.from(Instant.ofEpochMilli(nowMillis + i))
-            sql"insert into transfer_requests (id, received_at) values ($id, $ts)".update.run.void
+            sql"INSERT INTO transfer_requests (id, received_at) VALUES ($id, $ts)".update.run.void
         }
         _ <- request1Transfers.traverse_ {
           case (id, body) =>
-            sql"""insert into transfers
+            sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
-                  values
+                  VALUES
                   ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
         }
         _ <- request2Transfers.traverse_ {
           case (id, body) =>
-            sql"""insert into transfers
+            sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
-                  values
+                  VALUES
                   ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
         }
       } yield ()
@@ -74,8 +74,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       setup.transact(tx).flatMap(_ => test(tx, controller))
     }
 
-  private val countRequests = fr"select count(*) from transfer_requests"
-  private val countTransfers = fr"select count(*) from transfers"
+  private val countRequests = fr"SELECT COUNT(*) FROM transfer_requests"
+  private val countTransfers = fr"SELECT COUNT(*) FROM transfers"
 
   behavior of "TransferController"
 
@@ -93,10 +93,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         ).tupled.transact(tx)
         ack <- controller.recordRequest(request)
         (postRequests, postTransfers) <- (
-          (countRequests ++ fr"where id = ${ack.id}")
+          (countRequests ++ fr"WHERE id = ${ack.id}")
             .query[Long]
             .unique,
-          (countTransfers ++ fr"where request_id = ${ack.id}").query[Long].unique
+          (countTransfers ++ fr"WHERE request_id = ${ack.id}").query[Long].unique
         ).tupled.transact(tx)
       } yield {
         initRequests shouldBe 0
@@ -160,7 +160,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- controller.recordRequest(request)
-        actual <- sql"""select body, priority from transfers"""
+        actual <- sql"""SELECT body, priority FROM transfers"""
           .query[(Json, Int)]
           .to[List]
           .transact(tx)
@@ -184,12 +184,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         _ <- request1Transfers.zipWithIndex.traverse_ {
           case ((id, _), i) =>
             val status = TransferStatus.values(i % TransferStatus.values.length)
-            sql"update transfers set status = $status where id = $id".update.run
+            sql"UPDATE transfers SET status = $status WHERE id = $id".update.run
         }.transact(tx)
         _ <- request2Transfers.zipWithIndex.traverse_ {
           case ((id, _), i) =>
             val status = TransferStatus.values(i % TransferStatus.values.length)
-            sql"update transfers set status = $status where id = $id".update.run
+            sql"UPDATE transfers SET status = $status WHERE id = $id".update.run
         }.transact(tx)
         oldestToNewest <- controller.listRequests(
           offset = 0,
@@ -235,12 +235,12 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       _ <- request1Transfers.zipWithIndex.traverse_ {
         case ((id, _), i) =>
           val status = TransferStatus.values(i % TransferStatus.values.length)
-          sql"update transfers set status = $status where id = $id".update.run
+          sql"UPDATE transfers SET status = $status WHERE id = $id".update.run
       }.transact(tx)
       _ <- request2Transfers.zipWithIndex.traverse_ {
         case ((id, _), i) =>
           val status = TransferStatus.values(i % TransferStatus.values.length)
-          sql"update transfers set status = $status where id = $id".update.run
+          sql"UPDATE transfers SET status = $status WHERE id = $id".update.run
       }.transact(tx)
       // Order oldest to newest, skip the first one, expect to get the newest
       out1 <- controller.listRequests(offset = 1, limit = 10, newestFirst = false)
@@ -283,29 +283,29 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
     val transaction = for {
       _ <- fakeSubmitted.traverse_ { id =>
-        sql"""update transfers set
+        sql"""UPDATE transfers SET
                 status = ${TransferStatus.Submitted: TransferStatus},
                 submitted_at = ${Timestamp.from(now)}
-                where id = $id""".update.run
+                WHERE id = $id""".update.run
       }
-      _ <- sql"""update transfers set
+      _ <- sql"""UPDATE transfers SET
                    status = ${TransferStatus.InProgress: TransferStatus},
                    submitted_at = ${Timestamp.from(now)},
                    updated_at = ${Timestamp.from(now.plusMillis(10000))}
-                   where id = $fakeInProgress""".update.run
+                   WHERE id = $fakeInProgress""".update.run
       _ <- fakeSucceeded.traverse_ { id =>
-        sql"""update transfers set
+        sql"""UPDATE transfers SET
                 status = ${TransferStatus.Succeeded: TransferStatus},
                 submitted_at = ${Timestamp.from(now.minusMillis(30000))},
                 updated_at = ${Timestamp.from(now)}
-                where id = $id""".update.run
+                WHERE id = $id""".update.run
       }
       _ <- fakeFailed.traverse_ { id =>
-        sql"""update transfers set
+        sql"""UPDATE transfers SET
                 status = ${TransferStatus.Failed: TransferStatus},
                 submitted_at = ${Timestamp.from(now.plusMillis(30000))},
                 updated_at = ${Timestamp.from(now.minusMillis(30000))}
-                where id = $id""".update.run
+                WHERE id = $id""".update.run
       }
     } yield ()
 
@@ -373,17 +373,17 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       val transaction = for {
         _ <- toUpdate.traverse_ {
           case (id, info) =>
-            sql"""update transfers set
+            sql"""UPDATE transfers SET
                   info = $info,
                   status = ${TransferStatus.Succeeded: TransferStatus}
-                  where id = $id""".update.run.void
+                  WHERE id = $id""".update.run.void
         }
         _ <- request1Transfers.takeRight(5).traverse_ {
           case (id, _) =>
-            sql"""update transfers set
+            sql"""UPDATE transfers SET
                 status = ${TransferStatus.Failed: TransferStatus},
                 info = '[]'
-                where id = $id""".update.run.void
+                WHERE id = $id""".update.run.void
         }
       } yield ()
 
@@ -414,17 +414,17 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       val transaction = for {
         _ <- toUpdate.traverse_ {
           case (id, info) =>
-            sql"""update transfers set
+            sql"""UPDATE transfers SET
                   info = $info,
                   status = ${TransferStatus.Failed: TransferStatus}
-                  where id = $id""".update.run.void
+                  WHERE id = $id""".update.run.void
         }
         _ <- request1Transfers.takeRight(5).traverse_ {
           case (id, _) =>
-            sql"""update transfers set
+            sql"""UPDATE transfers SET
                 status = ${TransferStatus.Succeeded: TransferStatus},
                 info = '[]'
-                where id = $id""".update.run.void
+                WHERE id = $id""".update.run.void
         }
       } yield ()
 
@@ -455,10 +455,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- failed.traverse_ { id =>
-          sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void
+          sql"UPDATE transfers SET status = ${TransferStatus.Failed: TransferStatus} WHERE id = $id".update.run.void
         }.transact(tx)
         ack <- controller.reconsiderRequest(request1Id)
-        n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        n <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Failed: TransferStatus}"
           .query[Long]
           .unique
           .transact(tx)
@@ -484,10 +484,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- failed.traverse_ { id =>
-          sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void
+          sql"UPDATE transfers SET status = ${TransferStatus.Failed: TransferStatus} WHERE id = $id".update.run.void
         }.transact(tx)
         ack <- controller.reconsiderRequest(request2Id)
-        n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        n <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Failed: TransferStatus}"
           .query[Long]
           .unique
           .transact(tx)
@@ -501,10 +501,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     (tx, controller) =>
       val (id, _) = request1Transfers.head
       for {
-        _ <- sql"update transfers set status = ${TransferStatus.Failed: TransferStatus} where id = $id".update.run.void
+        _ <- sql"UPDATE transfers SET status = ${TransferStatus.Failed: TransferStatus} WHERE id = $id".update.run.void
           .transact(tx)
         ack <- controller.reconsiderSingleTransfer(request1Id, id)
-        n <- sql"select count(*) from transfers where status = ${TransferStatus.Failed: TransferStatus}"
+        n <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Failed: TransferStatus}"
           .query[Long]
           .unique
           .transact(tx)
@@ -527,14 +527,16 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     (tx, controller) =>
       val (id, _) = request1Transfers.head
       for {
-        _ <- sql"update transfers set status = ${TransferStatus.InProgress: TransferStatus} where id = $id".update.run.void
+        _ <- sql"""UPDATE transfers
+                SET status = ${TransferStatus.InProgress: TransferStatus}
+                WHERE id = $id""".update.run.void
           .transact(tx)
-        before <- sql"select count(*) from transfers where status = ${TransferStatus.Pending: TransferStatus}"
+        before <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Pending: TransferStatus}"
           .query[Long]
           .unique
           .transact(tx)
         ack <- controller.reconsiderSingleTransfer(request1Id, id)
-        after <- sql"select count(*) from transfers where status = ${TransferStatus.Pending: TransferStatus}"
+        after <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Pending: TransferStatus}"
           .query[Long]
           .unique
           .transact(tx)
@@ -551,17 +553,17 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
     for {
       initInfo <- controller.lookupTransferDetails(request1Id, id)
-      _ <- sql"""update transfers set
+      _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Submitted: TransferStatus},
                  submitted_at = ${Timestamp.from(submitted)}
-                 where id = $id""".update.run.void.transact(tx)
+                 WHERE id = $id""".update.run.void.transact(tx)
       submittedInfo <- controller.lookupTransferDetails(request1Id, id)
-      _ <- sql"""update transfers set
+      _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Succeeded: TransferStatus},
                  updated_at = ${Timestamp.from(updated)},
                  info = '{}',
                  priority = 100
-                 where id = $id""".update.run.void.transact(tx)
+                 WHERE id = $id""".update.run.void.transact(tx)
       updatedInfo <- controller.lookupTransferDetails(request1Id, id)
     } yield {
       initInfo shouldBe TransferDetails(
@@ -626,26 +628,26 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
     for {
       initInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
-      _ <- sql"""update transfers set
+      _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Submitted: TransferStatus},
                  submitted_at = ${Timestamp.from(submitted)},
                  priority = 10
-                 where id = $id1""".update.run.void.transact(tx)
-      _ <- sql"""update transfers set
+                 WHERE id = $id1""".update.run.void.transact(tx)
+      _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Submitted: TransferStatus},
                  submitted_at = ${Timestamp.from(submitted)}
-                 where id = $id2""".update.run.void.transact(tx)
+                 WHERE id = $id2""".update.run.void.transact(tx)
       submittedInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
-      _ <- sql"""update transfers set
+      _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Succeeded: TransferStatus},
                  updated_at = ${Timestamp.from(updated)},
                  info = '{}'
-                 where id = $id1""".update.run.void.transact(tx)
-      _ <- sql"""update transfers set
+                 WHERE id = $id1""".update.run.void.transact(tx)
+      _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Succeeded: TransferStatus},
                  updated_at = ${Timestamp.from(updated)},
                  info = '{}'
-                 where id = $id2""".update.run.void.transact(tx)
+                 WHERE id = $id2""".update.run.void.transact(tx)
       updatedInfo <- controller.listTransfers(request1Id, 2, 2, sortDesc = false)
     } yield {
       initInfo shouldBe List(
@@ -716,10 +718,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     val submitted = Instant.now()
 
     for {
-      _ <- sql"""update transfers set
+      _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Submitted: TransferStatus},
                  submitted_at = ${Timestamp.from(submitted)}
-                 where id = $id1""".update.run.void.transact(tx)
+                 WHERE id = $id1""".update.run.void.transact(tx)
       theInfo <- controller.listTransfers(request1Id, 2, 0, sortDesc = false)
     } yield {
       theInfo shouldBe List()
@@ -732,10 +734,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       val submitted = Instant.now()
 
       for {
-        _ <- sql"""update transfers set
+        _ <- sql"""UPDATE transfers SET
                  status = ${TransferStatus.Submitted: TransferStatus},
                  submitted_at = ${Timestamp.from(submitted)}
-                 where id = $id1""".update.run.void.transact(tx)
+                 WHERE id = $id1""".update.run.void.transact(tx)
         theInfo <- controller.listTransfers(request1Id, 100, 2, sortDesc = false)
       } yield {
         theInfo shouldBe List()
@@ -755,11 +757,11 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     (tx, controller) =>
       for {
         _ <- controller.updateRequestPriority(request1Id, 2)
-        changePriorities <- sql"""select priority from transfers where request_id = $request1Id"""
+        changePriorities <- sql"""SELECT priority FROM transfers WHERE request_id = $request1Id"""
           .query[Short]
           .to[List]
           .transact(tx)
-        unchangedPriorities <- sql"""select priority from transfers where request_id != $request1Id"""
+        unchangedPriorities <- sql"""SELECT priority FROM transfers WHERE request_id != $request1Id"""
           .query[Short]
           .to[List]
           .transact(tx)
@@ -781,7 +783,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   it should "fail to update the priority for transfers in a request if the transfers are no longer pending" in withRequest {
     (tx, controller) =>
       for {
-        _ <- sql"""update transfers set status = ${TransferStatus.Submitted: TransferStatus} where request_id = $request1Id""".update.run.void
+        _ <- sql"""UPDATE transfers
+                SET status = ${TransferStatus.Submitted: TransferStatus}
+                WHERE request_id = $request1Id""".update.run.void
           .transact(tx)
       } yield {
         controller
@@ -794,7 +798,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   it should "return 0 rows updated if the priority updater no-ops on transfers under a request" in withRequest {
     (tx, controller) =>
       for {
-        _ <- sql"""update transfers set priority = 5 where request_id = $request1Id""".update.run.void
+        _ <- sql"""UPDATE transfers SET priority = 5 WHERE request_id = $request1Id""".update.run.void
           .transact(tx)
         myOutput <- controller.updateRequestPriority(request1Id, 5)
       } yield {
@@ -807,11 +811,11 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       val (tId, _) = request1Transfers.head
       for {
         _ <- controller.updateTransferPriority(request1Id, tId, 2)
-        changedPriorities <- sql"""select priority from transfers where request_id = $request1Id and id = $tId"""
+        changedPriorities <- sql"""SELECT priority FROM transfers WHERE request_id = $request1Id AND id = $tId"""
           .query[Short]
           .to[List]
           .transact(tx)
-        unchangedPriorities <- sql"""select priority from transfers where id != $tId"""
+        unchangedPriorities <- sql"""SELECT priority FROM transfers WHERE id != $tId"""
           .query[Short]
           .to[List]
           .transact(tx)
@@ -834,7 +838,9 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     val (tId, _) = request1Transfers.head
     (tx, controller) =>
       for {
-        _ <- sql"""update transfers set status = ${TransferStatus.Submitted: TransferStatus} where request_id = $request1Id and id = $tId""".update.run.void
+        _ <- sql"""UPDATE transfers
+                SET status = ${TransferStatus.Submitted: TransferStatus}
+                WHERE request_id = $request1Id AND id = $tId""".update.run.void
           .transact(tx)
       } yield {
         controller
@@ -848,7 +854,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     val (tId, _) = request1Transfers.head
     (tx, controller) =>
       for {
-        _ <- sql"""update transfers set priority = 5 where id = $tId""".update.run.void
+        _ <- sql"""UPDATE transfers SET priority = 5 WHERE id = $tId""".update.run.void
           .transact(tx)
         myOutput <- controller.updateTransferPriority(request1Id, tId, 5)
       } yield {
