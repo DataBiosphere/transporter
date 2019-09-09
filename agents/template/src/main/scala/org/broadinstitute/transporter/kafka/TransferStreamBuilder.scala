@@ -122,18 +122,15 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
             )
 
             val (stepsSoFar, message) = progress.message
+            val theMessage = message
+              .as[P]
+              .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
+              .fold(
+                err => Failure(err),
+                identity
+              )
 
-            (
-              ids,
-              stepsSoFar + 1,
-              message
-                .as[P]
-                .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
-                .fold(
-                  err => Failure(err),
-                  identity
-                )
-            )
+            (ids, stepsSoFar + 1, theMessage)
           }
           .branch((_, attempt) => !attempt._3.isDone, (_, attempt) => attempt._3.isDone)
       }
