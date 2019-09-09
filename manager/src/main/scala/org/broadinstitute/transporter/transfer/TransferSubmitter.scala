@@ -89,7 +89,7 @@ class TransferSubmitter private[transfer] (
        * multiple times on concurrent access from multiple manager apps.
        */
       _ <- Fragment
-        .const(s"lock table $TransfersTable in share row exclusive mode")
+        .const(s"LOCK TABLE $TransfersTable IN SHARE ROW EXCLUSIVE MODE")
         .update
         .run
       submittableCount <- currentSubmittableCount
@@ -109,9 +109,9 @@ class TransferSubmitter private[transfer] (
     */
   private def currentSubmittableCount: ConnectionIO[Long] =
     List(
-      fr"select t.status, count(t.status) from",
-      TransfersJoinTable,
-      fr"group by t.status"
+      fr"SELECT status, COUNT(1) FROM",
+      Fragment.const(TransfersTable),
+      fr"GROUP BY status"
     ).combineAll
       .query[(TransferStatus, Long)]
       .to[List]
@@ -131,24 +131,24 @@ class TransferSubmitter private[transfer] (
     now: Instant
   ): ConnectionIO[List[TransferMessage[Json]]] = {
     val batchSelect = List(
-      fr"select t.body, t.id, r.id as request_id from",
+      fr"SELECT t.body, t.id, r.id AS request_id FROM",
       TransfersJoinTable,
       Fragments.whereAnd(
         fr"t.status = ${TransferStatus.Pending: TransferStatus}"
       ),
-      fr"order by priority desc limit $batchLimit"
+      fr"ORDER BY PRIORITY DESC LIMIT $batchLimit"
     ).combineAll
 
     List(
-      fr"with batch as",
+      fr"WITH batch AS",
       Fragments.parentheses(batchSelect),
-      Fragment.const(s"update $TransfersTable"),
+      Fragment.const(s"UPDATE $TransfersTable"),
       Fragments.set(
         fr"status = ${TransferStatus.Submitted: TransferStatus}",
         fr"submitted_at =" ++ Fragment.const(timestampSql(now))
       ),
-      Fragment.const(s"from batch where $TransfersTable.id = batch.id"),
-      fr"returning batch.request_id, batch.id, batch.body"
+      Fragment.const(s"FROM batch WHERE $TransfersTable.id = batch.id"),
+      fr"RETURNING batch.request_id, batch.id, batch.body"
     ).combineAll.update
       .withGeneratedKeys[TransferMessage[Json]](
         "request_id",

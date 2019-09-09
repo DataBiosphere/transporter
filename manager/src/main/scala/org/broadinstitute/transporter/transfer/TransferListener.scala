@@ -95,14 +95,15 @@ class TransferListener private[transfer] (
     for {
       now <- getNow
       numUpdated <- Update[(Json, Int, UUID, UUID, Int)](
-        s"""update $TransfersTable
-           |set status = '${TransferStatus.InProgress.entryName}',
+        s"""UPDATE $TransfersTable
+           |SET status = '${TransferStatus.InProgress.entryName}',
            |updated_at = ${timestampSql(now)}, info = ?, steps_run = ?
-           |from $RequestsTable
-           |where $TransfersTable.request_id = $RequestsTable.id
-           |and $TransfersTable.status in $statuses
-           |and $TransfersTable.id = ? and $RequestsTable.id = ?
-           |and steps_run < ?""".stripMargin
+           |FROM $RequestsTable
+           |WHERE $TransfersTable.request_id = $RequestsTable.id
+           |AND $TransfersTable.status IN $statuses
+           |AND $TransfersTable.id = ?
+           |AND $RequestsTable.id = ?
+           |AND steps_run < ?""".stripMargin
       ).updateMany(statusUpdates).transact(dbClient)
     } yield {
       numUpdated
@@ -120,8 +121,8 @@ class TransferListener private[transfer] (
           for {
             // get the priorities associated with the expanded transfers
             priority <- List(
-              Fragment.const(s"select priority from $TransfersTable"),
-              fr"where id = $transferId"
+              Fragment.const(s"SELECT priority FROM $TransfersTable"),
+              fr"WHERE id = $transferId"
             ).combineAll.query[Short].unique
             transfers <- info.as[List[Json]].liftTo[ConnectionIO]
             transferRequests = transfers.map(TransferRequest(_, None))
@@ -144,11 +145,12 @@ class TransferListener private[transfer] (
       }
 
       numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
-        s"""update $TransfersTable
-           |set status = ?, info = ?, updated_at = ${timestampSql(now)}
-           |from $RequestsTable
-           |where $TransfersTable.request_id = $RequestsTable.id
-           |and $TransfersTable.id = ? and $RequestsTable.id = ?""".stripMargin
+        s"""UPDATE $TransfersTable
+           |SET status = ?, info = ?, updated_at = ${timestampSql(now)}
+           |FROM $RequestsTable
+           |WHERE $TransfersTable.request_id = $RequestsTable.id
+           |AND $TransfersTable.id = ?
+           |AND $RequestsTable.id = ?""".stripMargin
       ).updateMany(finalStatusUpdates)
 
     } yield {
