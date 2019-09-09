@@ -12,11 +12,7 @@ import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.Topology
 import org.apache.kafka.streams.scala.{StreamsBuilder, Serdes => KSerdes}
 import org.broadinstitute.transporter.kafka.config.TopicConfig
-import org.broadinstitute.transporter.transfer.{
-  TransferMessage,
-  TransferResult,
-  TransferRunner
-}
+import org.broadinstitute.transporter.transfer.{TransferMessage, TransferRunner}
 
 class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
   topics: TopicConfig,
@@ -127,42 +123,32 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
 
             val (stepsSoFar, message) = progress.message
 
-            message
-              .as[P]
-              .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
-              .fold(
-                err => {
-                  val message =
-                    s"Failed to run step on transfer ${ids.transfer} from request ${ids.request}"
-                  logger.error(err)(message)
-                  val errSummary = TransferMessage(
-                    ids,
-                    (
-                      TransferResult.FatalFailure: TransferResult,
-                      UnhandledErrorInfo(message, Option(err.getMessage))
-                    ).asJson
-                  )
-                  Either.right(errSummary)
-                },
-                nextStepOrOutput => {
-                  logger.info(
-                    s"Successfully ran transfer step for ${ids.transfer} from request ${ids.request}"
-                  )
-                  nextStepOrOutput.bimap(
-                    nextStep => TransferMessage(ids, (stepsSoFar + 1) -> nextStep.asJson),
-                    output =>
-                      TransferMessage(
-                        ids,
-                        (TransferResult.Success: TransferResult, output).asJson
-                      )
-                  )
-                }
-              )
+            (
+              ids,
+              stepsSoFar + 1,
+              message
+                .as[P]
+                .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
+                .fold(
+                  err => Failure(err),
+                  identity
+                )
+            )
           }
-          .branch((_, attempt) => attempt.isLeft, (_, attempt) => attempt.isRight)
+          .branch((_, attempt) => !attempt._3.isDone, (_, attempt) => attempt._3.isDone)
       }
-      _ <- IO.delay(progresses.mapValues(_.left.get.asJson).to(topics.progressTopic))
-      _ <- IO.delay(summaries.mapValues(_.right.get.asJson).to(topics.resultTopic))
+      _ <- IO.delay(
+        progresses
+          .mapValues(
+            notDone => TransferMessage(notDone._1, (notDone._2, notDone._3.message))
+          )
+          .to(topics.progressTopic)
+      )
+      _ <- IO.delay(
+        summaries
+          .mapValues(done => TransferMessage(done._1, done._3.message))
+          .to(topics.resultTopic)
+      )
     } yield {
       builder
     }

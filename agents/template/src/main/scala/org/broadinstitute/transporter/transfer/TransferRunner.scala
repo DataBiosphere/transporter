@@ -21,5 +21,5 @@ trait TransferRunner[I, P, O] {
     * completing the transfer or emitting enough information to push the
     * following chunk.
     */
-  def step(progress: P): Either[P, O]
+  def step(progress: P): TransferStep[Nothing, P, O]
 }

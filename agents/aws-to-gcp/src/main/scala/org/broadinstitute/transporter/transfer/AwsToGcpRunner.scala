@@ -402,7 +402,7 @@ class AwsToGcpRunner(
 
   override def step(
     progress: AwsToGcpProgress
-  ): Either[AwsToGcpProgress, AwsToGcpOutput] = {
+  ): TransferStep[Nothing, AwsToGcpProgress, AwsToGcpOutput] = {
     val doStep = for {
       chunk <- getS3Chunk(
         bucket = progress.s3Bucket,
@@ -421,9 +421,10 @@ class AwsToGcpRunner(
         chunk = chunk
       )
     } yield {
-      nextOrDone.bimap(
-        bytesUploaded => progress.copy(bytesUploaded = bytesUploaded),
-        _ => AwsToGcpOutput(gcsBucket = progress.gcsBucket, gcsPath = progress.gcsPath)
+      nextOrDone.fold(
+        bytesUploaded => Progress(progress.copy(bytesUploaded = bytesUploaded)),
+        _ =>
+          Done(AwsToGcpOutput(gcsBucket = progress.gcsBucket, gcsPath = progress.gcsPath))
       )
     }
 
