@@ -9,31 +9,28 @@ import org.http4s.client.middleware.{Logger, Retry, RetryPolicy}
 
 import scala.concurrent.ExecutionContext
 
-class GcsToGcsRunner private (api: GcsApi)
+class GcsToGcsRunner private[transfer] (api: GcsApi)
     extends TransferRunner[GcsToGcsRequest, GcsToGcsProgress, GcsToGcsOutput] {
 
   override def initialize(
     request: GcsToGcsRequest
   ): Either[GcsToGcsProgress, GcsToGcsOutput] =
     api
-      .copyObject(
+      .initializeCopy(
         request.sourceBucket,
         request.sourcePath,
         request.targetBucket,
-        request.targetPath,
-        forceCompletion = false,
-        None
+        request.targetPath
       )
       .unsafeRunSync()
       .bimap(
-        id =>
-          GcsToGcsProgress(
-            request.sourceBucket,
-            request.sourcePath,
-            request.targetBucket,
-            request.targetPath,
-            id
-          ),
+        GcsToGcsProgress(
+          request.sourceBucket,
+          request.sourcePath,
+          request.targetBucket,
+          request.targetPath,
+          _
+        ),
         _ => GcsToGcsOutput(request.targetBucket, request.targetPath)
       )
 
@@ -41,24 +38,22 @@ class GcsToGcsRunner private (api: GcsApi)
     progress: GcsToGcsProgress
   ): Either[GcsToGcsProgress, GcsToGcsOutput] =
     api
-      .copyObject(
+      .incrementCopy(
         progress.sourceBucket,
         progress.sourcePath,
         progress.targetBucket,
         progress.targetPath,
-        forceCompletion = false,
-        Some(progress.uploadId)
+        progress.uploadId
       )
       .unsafeRunSync()
       .bimap(
-        id =>
-          GcsToGcsProgress(
-            progress.sourceBucket,
-            progress.sourcePath,
-            progress.targetBucket,
-            progress.targetPath,
-            id
-          ),
+        GcsToGcsProgress(
+          progress.sourceBucket,
+          progress.sourcePath,
+          progress.targetBucket,
+          progress.targetPath,
+          _
+        ),
         _ => GcsToGcsOutput(progress.targetBucket, progress.targetPath)
       )
 }

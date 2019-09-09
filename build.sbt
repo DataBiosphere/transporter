@@ -43,11 +43,6 @@ val betterMonadicForVersion = "0.3.1"
 // Configuration.
 val pureConfigVersion = "0.11.1"
 
-// Data types & control flow.
-val catsVersion = "1.6.0"
-val catsEffectVersion = "1.2.0"
-val fs2Version = "1.0.4"
-
 // DB.
 val doobieVersion = "0.7.0"
 val postgresqlDriverVersion = "42.2.5"
@@ -74,8 +69,8 @@ val googleAuthVersion = "0.16.2"
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val storageLibsVersion = "0.3.0-M1"
-val http4sVersion = "0.20.6"
+val storageLibsVersion = "0.3.0"
+val http4sVersion = "0.20.10"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.23.5"
 val tapirVersion = "0.9.3"
@@ -153,11 +148,7 @@ lazy val `transporter-common` = project
       "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test),
     dependencyOverrides ++= Seq(
-      "co.fs2" %% "fs2-core" % fs2Version,
-      "co.fs2" %% "fs2-io" % fs2Version,
-      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
-      "org.typelevel" %% "cats-core" % catsVersion,
-      "org.typelevel" %% "cats-effect" % catsEffectVersion
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion
     )
   )
 
@@ -256,11 +247,7 @@ lazy val `transporter-manager` = project
       "org.testcontainers" % "postgresql" % testcontainersVersion
     ).map(_ % Test),
     dependencyOverrides := Seq(
-      "co.fs2" %% "fs2-core" % fs2Version,
-      "co.fs2" %% "fs2-io" % fs2Version,
       "org.postgresql" % "postgresql" % postgresqlDriverVersion,
-      "org.typelevel" %% "cats-core" % catsVersion,
-      "org.typelevel" %% "cats-effect" % catsEffectVersion,
       "org.testcontainers" % "testcontainers" % testcontainersVersion % Test
     ),
     // Inject version information into the app.
@@ -296,11 +283,7 @@ lazy val `transporter-agent-template` = project
       // See: https://github.com/sbt/sbt/issues/3618
       "io.github.embeddedkafka" %% "embedded-kafka-streams" % kafkaVersion exclude ("javax.ws.rs", "javax.ws.rs-api"),
       "jakarta.ws.rs" % "jakarta.ws.rs-api" % "2.1.5"
-    ).map(_ % Test),
-    dependencyOverrides := Seq(
-      "org.typelevel" %% "cats-core" % catsVersion,
-      "org.typelevel" %% "cats-effect" % catsEffectVersion
-    )
+    ).map(_ % Test)
   )
 
 /** Agent which can transfer files from AWS to GCP. */
@@ -317,11 +300,7 @@ lazy val `transporter-aws-to-gcp-agent` = project
     ),
     libraryDependencies ++= Seq(
       "org.scalatest" %% "scalatest" % scalaTestVersion
-    ).map(_ % Test),
-    dependencyOverrides := Seq(
-      "co.fs2" %% "fs2-core" % fs2Version,
-      "co.fs2" %% "fs2-io" % fs2Version
-    )
+    ).map(_ % Test)
   )
 
 lazy val `transporter-gcs-to-gcs-agent` = project
