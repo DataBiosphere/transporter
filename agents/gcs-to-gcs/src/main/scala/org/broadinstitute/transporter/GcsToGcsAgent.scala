@@ -14,6 +14,7 @@ import org.broadinstitute.transporter.transfer.{
 
 import scala.concurrent.ExecutionContext
 
+/** Transporter agent which can copy files from one location in GCS to another. */
 object GcsToGcsAgent extends TransporterAgent[RunnerConfig, In, Progress, Out] {
 
   /** Build a resource wrapping a single-threaded execution context. */

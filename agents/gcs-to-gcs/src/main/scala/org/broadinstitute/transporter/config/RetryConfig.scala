@@ -5,6 +5,7 @@ import pureconfig.generic.semiauto.deriveReader
 
 import scala.concurrent.duration.FiniteDuration
 
+/** Config determining retry behavior on failed HTTP requests in the GCS-internal agent. */
 case class RetryConfig(maxRetries: Int, maxDelay: FiniteDuration)
 
 object RetryConfig {

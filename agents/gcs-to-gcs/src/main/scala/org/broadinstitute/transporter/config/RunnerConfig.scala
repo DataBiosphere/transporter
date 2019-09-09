@@ -5,6 +5,7 @@ import java.nio.file.Path
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
+/** Top-level configuration for the GCS-internal Transporter agent. */
 case class RunnerConfig(
   serviceAccountJson: Option[Path],
   timeouts: TimeoutConfig,

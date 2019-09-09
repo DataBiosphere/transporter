@@ -5,6 +5,7 @@ import pureconfig.generic.semiauto.deriveReader
 
 import scala.concurrent.duration.FiniteDuration
 
+/** Config for HTTP timeouts in the GCS-internal agent. */
 case class TimeoutConfig(
   responseHeaderTimeout: FiniteDuration,
   requestTimeout: FiniteDuration
