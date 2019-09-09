@@ -4,6 +4,7 @@ import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import org.broadinstitute.monster.storage.gcs.GcsApi
 import org.broadinstitute.transporter.config.RunnerConfig
+import org.broadinstitute.transporter.kafka.{Done, Progress, TransferStep}
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.{Logger, Retry, RetryPolicy}
 
@@ -14,7 +15,7 @@ class GcsToGcsRunner private[transfer] (api: GcsApi)
 
   override def initialize(
     request: GcsToGcsRequest
-  ): Either[GcsToGcsProgress, GcsToGcsOutput] =
+  ): TransferStep[GcsToGcsRequest, GcsToGcsProgress, GcsToGcsOutput] =
     api
       .initializeCopy(
         request.sourceBucket,
@@ -23,15 +24,18 @@ class GcsToGcsRunner private[transfer] (api: GcsApi)
         request.targetPath
       )
       .unsafeRunSync()
-      .bimap(
-        GcsToGcsProgress(
-          request.sourceBucket,
-          request.sourcePath,
-          request.targetBucket,
-          request.targetPath,
-          _
-        ),
-        _ => GcsToGcsOutput(request.targetBucket, request.targetPath)
+      .fold(
+        id =>
+          Progress(
+            GcsToGcsProgress(
+              request.sourceBucket,
+              request.sourcePath,
+              request.targetBucket,
+              request.targetPath,
+              id
+            )
+          ),
+        _ => Done(GcsToGcsOutput(request.targetBucket, request.targetPath))
       )
 
   override def step(
