@@ -17,7 +17,7 @@ object TransporterDockerPlugin extends AutoPlugin with LinuxKeys with NativePack
 
   override def projectSettings: Seq[Def.Setting[_]] = Seq(
     dockerBaseImage := "openjdk:8",
-    dockerRepository := Some("broadinstitute"),
+    dockerRepository := Some("us.gcr.io/broad-dsp-gcr-public"),
     dockerExposedPorts := Seq(8080),
     dockerLabels := Map("TRANSPORTER_VERSION" -> version.value),
     Docker / defaultLinuxInstallLocation := "/app",
