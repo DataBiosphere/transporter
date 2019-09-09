@@ -76,6 +76,7 @@ object GcsToGcsRunner {
         val retryingClient = Retry(retryPolicy)(httpClient)
 
         GcsApi.build(
+          // Log bodies so we can see byte counts in responses.
           Logger(logHeaders = true, logBody = true)(retryingClient),
           config.serviceAccountJson
         )
