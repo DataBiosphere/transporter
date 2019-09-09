@@ -1,4 +1,4 @@
-package org.broadinstitute.transporter.transfer
+package org.broadinstitute.transporter.api
 
 import io.circe.Encoder
 import io.circe.derivation.deriveEncoder

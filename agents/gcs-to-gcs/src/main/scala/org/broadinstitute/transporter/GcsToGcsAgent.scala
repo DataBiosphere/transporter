@@ -3,14 +3,13 @@ package org.broadinstitute.transporter
 import java.util.concurrent.{ExecutorService, Executors}
 
 import cats.effect.{IO, Resource}
-import org.broadinstitute.transporter.config.RunnerConfig
-import org.broadinstitute.transporter.transfer.{
-  GcsToGcsRunner,
-  TransferRunner,
+import org.broadinstitute.transporter.api.{
   GcsToGcsOutput => Out,
   GcsToGcsProgress => Progress,
   GcsToGcsRequest => In
 }
+import org.broadinstitute.transporter.config.RunnerConfig
+import org.broadinstitute.transporter.transfer.{GcsToGcsRunner, TransferRunner}
 
 import scala.concurrent.ExecutionContext
 

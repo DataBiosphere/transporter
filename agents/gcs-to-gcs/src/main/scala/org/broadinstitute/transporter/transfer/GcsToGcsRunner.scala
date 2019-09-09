@@ -3,6 +3,7 @@ package org.broadinstitute.transporter.transfer
 import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import org.broadinstitute.monster.storage.gcs.GcsApi
+import org.broadinstitute.transporter.api.{GcsToGcsOutput, GcsToGcsProgress, GcsToGcsRequest}
 import org.broadinstitute.transporter.config.RunnerConfig
 import org.broadinstitute.transporter.kafka.{Done, Progress, TransferStep}
 import org.http4s.client.blaze.BlazeClientBuilder

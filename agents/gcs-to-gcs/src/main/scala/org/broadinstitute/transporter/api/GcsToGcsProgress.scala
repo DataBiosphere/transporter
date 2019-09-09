@@ -1,7 +1,7 @@
-package org.broadinstitute.transporter.transfer
+package org.broadinstitute.transporter.api
 
-import io.circe.{Decoder, Encoder}
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
+import io.circe.{Decoder, Encoder}
 
 /**
   * Incremental progress marker for a GCS-internal transfer.
