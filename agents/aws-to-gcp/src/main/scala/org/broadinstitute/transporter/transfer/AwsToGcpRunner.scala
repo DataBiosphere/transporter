@@ -8,7 +8,7 @@ import io.circe.jawn.JawnParser
 import io.circe.syntax._
 import org.apache.commons.codec.binary.{Base64, Hex}
 import org.broadinstitute.transporter.config.RunnerConfig
-import org.broadinstitute.transporter.kafka.{Done, Progress, TransferState}
+import org.broadinstitute.transporter.kafka.{Done, Progress, TransferStep}
 import org.broadinstitute.transporter.transfer.auth.{GcsAuthProvider, S3AuthProvider}
 import org.http4s._
 import org.http4s.client.Client
@@ -40,7 +40,7 @@ class AwsToGcpRunner(
 
   override def initialize(
     request: AwsToGcpRequest
-  ): TransferState[AwsToGcpRequest, AwsToGcpProgress, AwsToGcpOutput] = {
+  ): TransferStep[AwsToGcpRequest, AwsToGcpProgress, AwsToGcpOutput] = {
 
     val forceTransfer = request.force.getOrElse(false)
 

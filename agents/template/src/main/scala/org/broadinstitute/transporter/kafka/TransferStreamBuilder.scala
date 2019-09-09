@@ -89,7 +89,7 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
       }
       _ <- IO.delay(
         zeros
-          .mapValues(notDone => TransferMessage(notDone._1, notDone._2.message))
+          .mapValues(notDone => TransferMessage(notDone._1, (0, notDone._2.message)))
           .to(topics.progressTopic)
       )
       _ <- IO.delay(
