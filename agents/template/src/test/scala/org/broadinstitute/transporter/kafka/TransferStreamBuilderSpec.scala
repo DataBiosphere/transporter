@@ -132,9 +132,9 @@ class TransferStreamBuilderSpec
     (0 until 3).foreach { i =>
       (runner.step _)
         .expects(LoopProgress(i, 3 - i))
-        .returning(Left(LoopProgress(i + 1, 3 - i - 1)))
+        .returning(Progress(LoopProgress(i + 1, 3 - i - 1)))
     }
-    (runner.step _).expects(LoopProgress(3, 0)).returning(Right(LoopOutput(3)))
+    (runner.step _).expects(LoopProgress(3, 0)).returning(Done(LoopOutput(3)))
 
     val results = roundTripTransfers(List(request.asJson), runner)
     results shouldBe List(expectedResponse)
@@ -167,12 +167,12 @@ class TransferStreamBuilderSpec
       range.foreach { i =>
         (runner.step _)
           .expects(LoopProgress(i, range.end - i))
-          .returning(Left(LoopProgress(i + 1, range.end - i - 1)))
+          .returning(Progress(LoopProgress(i + 1, range.end - i - 1)))
       }
     }
 
-    (runner.step _).expects(LoopProgress(1, 0)).returning(Right(LoopOutput(1)))
-    (runner.step _).expects(LoopProgress(5, 0)).returning(Right(LoopOutput(5)))
+    (runner.step _).expects(LoopProgress(1, 0)).returning(Done(LoopOutput(1)))
+    (runner.step _).expects(LoopProgress(5, 0)).returning(Done(LoopOutput(5)))
 
     // The quick result should arrive before the long-running one.
     roundTripTransfers(messages.map(_.asJson), runner) shouldBe List(
@@ -210,7 +210,7 @@ class TransferStreamBuilderSpec
 
     val runner = mock[LoopRunner]
     (runner.initialize _).expects(LoopRequest(0)).returning(Progress(LoopProgress(0, 0)))
-    (runner.step _).expects(LoopProgress(0, 0)).returning(Right(LoopOutput(0)))
+    (runner.step _).expects(LoopProgress(0, 0)).returning(Done(LoopOutput(0)))
 
     val List(result1, result2) =
       roundTripTransfers(List(badSchema, goodSchema).map(_.asJson), runner)
