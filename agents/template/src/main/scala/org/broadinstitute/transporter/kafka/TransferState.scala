@@ -5,6 +5,7 @@ import io.circe.syntax._
 import org.broadinstitute.transporter.kafka.TransferStreamBuilder.UnhandledErrorInfo
 import org.broadinstitute.transporter.transfer.TransferResult
 
+/** The possible states of a transfer request as seen by an agent. */
 sealed abstract class TransferState[+I, +P, +O] extends Product with Serializable {
   def isDone: Boolean
   def message: Json
