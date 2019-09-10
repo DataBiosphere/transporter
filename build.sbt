@@ -311,5 +311,8 @@ lazy val `transporter-gcs-to-gcs-agent` = project
   .settings(
     libraryDependencies ++= Seq(
       "org.broadinstitute.monster" %% "gcs-lib" % storageLibsVersion
-    )
+    ),
+    libraryDependencies ++= Seq(
+      "org.scalatest" %% "scalatest" % scalaTestVersion
+    ).map(_ % Test)
   )
