@@ -329,6 +329,7 @@ lazy val `transporter-sftp-to-gcs-agent` = project
       "org.broadinstitute.monster" %% "sftp-lib" % storageLibsVersion
     ),
     libraryDependencies ++= Seq(
+      "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test)
   )
