@@ -69,7 +69,7 @@ val googleAuthVersion = "0.16.2"
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val storageLibsVersion = "0.3.0"
+val storageLibsVersion = "0.4.0"
 val http4sVersion = "0.20.10"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.23.5"
@@ -313,6 +313,7 @@ lazy val `transporter-gcs-to-gcs-agent` = project
       "org.broadinstitute.monster" %% "gcs-lib" % storageLibsVersion
     ),
     libraryDependencies ++= Seq(
+      "org.scalamock" %% "scalamock" % scalaMockVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion
     ).map(_ % Test)
   )

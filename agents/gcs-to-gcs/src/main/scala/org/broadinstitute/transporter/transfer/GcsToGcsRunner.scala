@@ -1,7 +1,7 @@
 package org.broadinstitute.transporter.transfer
 
 import cats.effect.{ContextShift, IO, Resource, Timer}
-import org.broadinstitute.monster.storage.gcs.GcsApi
+import org.broadinstitute.monster.storage.gcs.{GcsApi, JsonHttpGcsApi}
 import org.broadinstitute.transporter.api.{
   GcsToGcsOutput,
   GcsToGcsProgress,
@@ -113,7 +113,7 @@ object GcsToGcsRunner {
         )
         val retryingClient = Retry(retryPolicy)(httpClient)
 
-        GcsApi.build(
+        JsonHttpGcsApi.build(
           // Log bodies so we can see byte counts in responses.
           Logger(logHeaders = true, logBody = true)(retryingClient),
           config.serviceAccountJson
