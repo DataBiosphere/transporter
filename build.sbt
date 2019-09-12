@@ -119,7 +119,8 @@ lazy val transporter = project
     `transporter-manager`,
     `transporter-agent-template`,
     `transporter-aws-to-gcp-agent`,
-    `transporter-gcs-to-gcs-agent`
+    `transporter-gcs-to-gcs-agent`,
+    `transporter-sftp-to-gcs-agent`
   )
 
 /** Definitions used by both the manager and agents. */

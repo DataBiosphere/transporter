@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.transfer
 
 import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
+import org.broadinstitute.monster.storage.common.FileType
 import org.broadinstitute.monster.storage.gcs.{GcsApi, JsonHttpGcsApi}
 import org.broadinstitute.monster.storage.sftp.{SftpApi, SshjSftpApi}
 import org.broadinstitute.transporter.api.{
@@ -10,7 +11,7 @@ import org.broadinstitute.transporter.api.{
   SftpToGcsRequest
 }
 import org.broadinstitute.transporter.config.RunnerConfig
-import org.broadinstitute.transporter.kafka.{Done, Progress, TransferStep}
+import org.broadinstitute.transporter.kafka.{Done, Expanded, Progress, TransferStep}
 import org.http4s.MediaType
 import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.client.middleware.{Logger, Retry, RetryPolicy}
@@ -29,7 +30,41 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi)
 
   override def initialize(
     request: SftpToGcsRequest
-  ): TransferStep[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] =
+  ): TransferStep[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] = {
+    val result = if (request.isDirectory) {
+      expandDirectoryRequest(request)
+    } else {
+      initFileRequest(request)
+    }
+    result.unsafeRunSync()
+  }
+
+  /**
+    * Convert a request to recursively copy an SFTP directory into a list of requests
+    * to copy each entry in the directory.
+    */
+  private def expandDirectoryRequest(
+    request: SftpToGcsRequest
+  ): IO[Expanded[SftpToGcsRequest]] =
+    sftp
+      .listDirectory(request.sftpPath)
+      .map {
+        case (path, fileType) =>
+          SftpToGcsRequest(
+            path,
+            request.gcsBucket,
+            request.gcsPath + path.substring(request.sftpPath.length),
+            fileType == FileType.Directory
+          )
+      }
+      .compile
+      .toList
+      .map(Expanded(_))
+
+  /** Initialize the transfer of an SFTP file to GCS. */
+  private def initFileRequest(
+    request: SftpToGcsRequest
+  ): IO[TransferStep[Nothing, SftpToGcsProgress, SftpToGcsOutput]] =
     sftp
       .statFile(request.sftpPath)
       .flatMap {
@@ -71,7 +106,6 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi)
               }
           }
       }
-      .unsafeRunSync()
 
   override def step(
     progress: SftpToGcsProgress
