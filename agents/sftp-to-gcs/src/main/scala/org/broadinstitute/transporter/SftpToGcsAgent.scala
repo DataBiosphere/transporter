@@ -13,6 +13,7 @@ import org.broadinstitute.transporter.transfer.{SftpToGcsRunner, TransferRunner}
 
 import scala.concurrent.ExecutionContext
 
+/** Transporter agent which can copy files from an SFTP site into GCS. */
 object SftpToGcsAgent extends TransporterAgent[RunnerConfig, In, Progress, Out] {
 
   /** Build a resource wrapping a single-threaded execution context. */

@@ -6,6 +6,7 @@ import org.broadinstitute.monster.storage.sftp.SftpLoginInfo
 import pureconfig.ConfigReader
 import pureconfig.generic.semiauto.deriveReader
 
+/** Top-level configuration for the SFTP->GCS Transporter agent. */
 case class RunnerConfig(
   sftp: SftpLoginInfo,
   gcsServiceAccount: Option[Path],

@@ -18,6 +18,12 @@ import org.http4s.headers._
 
 import scala.concurrent.ExecutionContext
 
+/**
+  * Transfer runner which can copy files into GCS from an SFTP site.
+  *
+  * @param sftp client which can read data from a single SFTP site
+  * @param gcs client which can write data into GCS
+  */
 class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi)
     extends TransferRunner[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] {
 
