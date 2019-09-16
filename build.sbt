@@ -119,7 +119,8 @@ lazy val transporter = project
     `transporter-manager`,
     `transporter-agent-template`,
     `transporter-aws-to-gcp-agent`,
-    `transporter-gcs-to-gcs-agent`
+    `transporter-gcs-to-gcs-agent`,
+    `transporter-sftp-to-gcs-agent`
   )
 
 /** Definitions used by both the manager and agents. */
@@ -311,6 +312,22 @@ lazy val `transporter-gcs-to-gcs-agent` = project
   .settings(
     libraryDependencies ++= Seq(
       "org.broadinstitute.monster" %% "gcs-lib" % storageLibsVersion
+    ),
+    libraryDependencies ++= Seq(
+      "org.scalamock" %% "scalamock" % scalaMockVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion
+    ).map(_ % Test)
+  )
+
+lazy val `transporter-sftp-to-gcs-agent` = project
+  .in(file("./agents/sftp-to-gcs"))
+  .enablePlugins(TransporterDeployPlugin)
+  .dependsOn(`transporter-agent-template`)
+  .settings(commonSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.broadinstitute.monster" %% "gcs-lib" % storageLibsVersion,
+      "org.broadinstitute.monster" %% "sftp-lib" % storageLibsVersion
     ),
     libraryDependencies ++= Seq(
       "org.scalamock" %% "scalamock" % scalaMockVersion,
