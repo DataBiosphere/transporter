@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.implicits._
 import fs2.Stream
 import org.broadinstitute.monster.storage.common.{FileAttributes, FileType}
-import org.broadinstitute.monster.storage.gcs.{GcsApi, JsonHttpGcsApi}
+import org.broadinstitute.monster.storage.gcs.GcsApi
 import org.broadinstitute.monster.storage.sftp.SftpApi
 import org.broadinstitute.transporter.api.{
   SftpToGcsOutput,
@@ -27,6 +27,7 @@ class SftpToGcsRunnerSpec
   private val targetBucket = "the-bucket"
   private val targetPath = "gcs/path/to/thing"
   private val token = "the-token"
+  private val stepSize = 32
 
   behavior of "SftpToGcsRunner"
 
@@ -34,7 +35,7 @@ class SftpToGcsRunnerSpec
     val fakeSftp = mock[SftpApi]
     val fakeGcs = mock[GcsApi]
 
-    val expectedSize = JsonHttpGcsApi.DefaultWriteChunkSize / 2L
+    val expectedSize = stepSize / 2L
     val data = Stream.emits("test data".getBytes)
 
     (fakeSftp.statFile _)
@@ -43,17 +44,18 @@ class SftpToGcsRunnerSpec
         IO.pure(Some(FileAttributes(expectedSize, None)))
       )
     (fakeSftp.readFile _).expects(sourcePath, 0L, None).returning(data)
-    (fakeGcs.createObjectOneShot _)
+    (fakeGcs.createObject _)
       .expects(
         targetBucket,
         targetPath,
         `Content-Type`(MediaType.application.`octet-stream`),
+        expectedSize,
         None,
         data
       )
       .returning(IO.unit)
 
-    val out = new SftpToGcsRunner(fakeSftp, fakeGcs).initialize(
+    val out = new SftpToGcsRunner(fakeSftp, fakeGcs, stepSize).initialize(
       SftpToGcsRequest(sourcePath, targetBucket, targetPath, isDirectory = false)
     )
 
@@ -64,7 +66,7 @@ class SftpToGcsRunnerSpec
     val fakeSftp = mock[SftpApi]
     val fakeGcs = mock[GcsApi]
 
-    val expectedSize = JsonHttpGcsApi.DefaultWriteChunkSize * 2L
+    val expectedSize = stepSize * 2L
 
     (fakeSftp.statFile _)
       .expects(sourcePath)
@@ -81,7 +83,7 @@ class SftpToGcsRunnerSpec
       )
       .returning(IO.pure(token))
 
-    val out = new SftpToGcsRunner(fakeSftp, fakeGcs).initialize(
+    val out = new SftpToGcsRunner(fakeSftp, fakeGcs, stepSize).initialize(
       SftpToGcsRequest(sourcePath, targetBucket, targetPath, isDirectory = false)
     )
 
@@ -96,7 +98,7 @@ class SftpToGcsRunnerSpec
     (fakeSftp.statFile _).expects(sourcePath).returning(IO.pure(None))
 
     val out = Either.catchNonFatal {
-      new SftpToGcsRunner(fakeSftp, mock[GcsApi]).initialize(
+      new SftpToGcsRunner(fakeSftp, mock[GcsApi], stepSize).initialize(
         SftpToGcsRequest(sourcePath, targetBucket, targetPath, isDirectory = false)
       )
     }
@@ -120,7 +122,7 @@ class SftpToGcsRunnerSpec
         case (name, typ) => s"$sourcePath/$name" -> typ
       }))
 
-    val out = new SftpToGcsRunner(fakeSftp, mock[GcsApi]).initialize(
+    val out = new SftpToGcsRunner(fakeSftp, mock[GcsApi], stepSize).initialize(
       SftpToGcsRequest(sourcePath, targetBucket, targetPath, isDirectory = true)
     )
 
@@ -146,7 +148,7 @@ class SftpToGcsRunnerSpec
     val expectedData = Stream.emits("hello world".getBytes)
 
     (fakeSftp.readFile _)
-      .expects(sourcePath, start, Some(start + JsonHttpGcsApi.DefaultWriteChunkSize))
+      .expects(sourcePath, start, Some(start + stepSize))
       .returning(expectedData)
     (fakeGcs.uploadBytes _)
       .expects(targetBucket, token, start, expectedData)
@@ -158,9 +160,9 @@ class SftpToGcsRunnerSpec
       targetPath,
       token,
       start,
-      start + 2 * JsonHttpGcsApi.DefaultWriteChunkSize
+      start + 2 * stepSize
     )
-    val out = new SftpToGcsRunner(fakeSftp, fakeGcs).step(in)
+    val out = new SftpToGcsRunner(fakeSftp, fakeGcs, stepSize).step(in)
 
     out shouldBe Progress(in.copy(bytesUploaded = nextStart))
   }
@@ -170,24 +172,24 @@ class SftpToGcsRunnerSpec
     val fakeGcs = mock[GcsApi]
 
     val start = 12345L
-    val nextStart = 2 * start
+    val totalSize = start + stepSize - 1
     val expectedData = Stream.emits("hello world".getBytes)
 
     (fakeSftp.readFile _)
-      .expects(sourcePath, start, Some(nextStart))
+      .expects(sourcePath, start, Some(totalSize))
       .returning(expectedData)
     (fakeGcs.uploadBytes _)
       .expects(targetBucket, token, start, expectedData)
       .returning(IO.pure(Right(())))
 
-    val out = new SftpToGcsRunner(fakeSftp, fakeGcs).step(
+    val out = new SftpToGcsRunner(fakeSftp, fakeGcs, stepSize).step(
       SftpToGcsProgress(
         sourcePath,
         targetBucket,
         targetPath,
         token,
         start,
-        nextStart
+        totalSize
       )
     )
 

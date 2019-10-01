@@ -11,7 +11,8 @@ case class RunnerConfig(
   sftp: SftpLoginInfo,
   gcsServiceAccount: Option[Path],
   timeouts: TimeoutConfig,
-  retries: RetryConfig
+  retries: RetryConfig,
+  mibPerStep: Int
 )
 
 object RunnerConfig {
