@@ -22,9 +22,11 @@ org.broadinstitute.transporter {
     }
 
     runner-config {
+        mib-per-step = {{env "MIB_PER_TRANSFER_STEP"}}
+
         sftp {
             host = "{{env "SFTP_HOST"}}"
-            port = "{{env "SFTP_PORT"}}"
+            port = {{env "SFTP_PORT"}}
             username = "{{env "SFTP_USER"}}"
             password = "{{env "SFTP_PASSWORD"}}"
         }

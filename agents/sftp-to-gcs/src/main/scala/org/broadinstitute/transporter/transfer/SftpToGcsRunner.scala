@@ -25,7 +25,7 @@ import scala.concurrent.ExecutionContext
   * @param sftp client which can read data from a single SFTP site
   * @param gcs client which can write data into GCS
   */
-class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi)
+class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerStep: Int)
     extends TransferRunner[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] {
 
   override def initialize(
@@ -73,12 +73,13 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi)
             new RuntimeException(s"No SFTP file found at ${request.sftpPath}")
           )
         case Some(sourceAttrs) =>
-          if (sourceAttrs.size < JsonHttpGcsApi.DefaultWriteChunkSize) {
+          if (sourceAttrs.size < bytesPerStep) {
             gcs
-              .createObjectOneShot(
+              .createObject(
                 request.gcsBucket,
                 request.gcsPath,
                 `Content-Type`(MediaType.application.`octet-stream`),
+                sourceAttrs.size,
                 None,
                 sftp.readFile(request.sftpPath)
               )
@@ -111,7 +112,7 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi)
     progress: SftpToGcsProgress
   ): TransferStep[Nothing, SftpToGcsProgress, SftpToGcsOutput] = {
     val lastByte = math.min(
-      progress.bytesUploaded + JsonHttpGcsApi.DefaultWriteChunkSize,
+      progress.bytesUploaded + bytesPerStep,
       progress.totalBytes
     )
     val byteSlice =
@@ -132,6 +133,8 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi)
 }
 
 object SftpToGcsRunner {
+
+  private val bytesPerMib = 1024 * 1024
 
   def resource(config: RunnerConfig, ec: ExecutionContext)(
     implicit cs: ContextShift[IO],
@@ -161,6 +164,8 @@ object SftpToGcsRunner {
         )
       }
 
-    (sftp, gcs).mapN { case (s, g) => new SftpToGcsRunner(s, g) }
+    (sftp, gcs).mapN {
+      case (s, g) => new SftpToGcsRunner(s, g, config.mibPerStep * bytesPerMib)
+    }
   }
 }
