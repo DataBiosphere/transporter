@@ -61,14 +61,13 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
             logger.info(
               s"Received transfer ${ids.transfer} from request ${ids.request}"
             )
-
             logger.debug(
               s"Attempting to parse payload for ${ids.transfer} into expected model: ${payload.spaces2}"
             )
 
             val initializedOrError = for {
               input <- payload.as[I]
-              _ = logger.info(
+              _ = logger.debug(
                 s"Initializing transfer ${ids.transfer} from request ${ids.request}"
               )
               initialized <- Either.catchNonFatal(runner.initialize(input))
@@ -77,7 +76,12 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
             }
 
             ids -> initializedOrError.fold(
-              err => Failure(err),
+              err => {
+                logger.warn(err)(
+                  s"Unhandled error initializing transfer ${ids.transfer} from request ${ids.request}"
+                )
+                Failure(err)
+              },
               identity
             )
           }
@@ -124,9 +128,19 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
             val (stepsSoFar, message) = progress.message
             val theMessage = message
               .as[P]
-              .flatMap(parsed => Either.catchNonFatal(runner.step(parsed)))
+              .flatMap { parsed =>
+                logger.debug(
+                  s"Running next step for transfer ${ids.transfer} from request ${ids.request}"
+                )
+                Either.catchNonFatal(runner.step(parsed))
+              }
               .fold(
-                err => Failure(err),
+                err => {
+                  logger.warn(err)(
+                    s"Unhandled error running step on transfer ${ids.transfer} from request ${ids.request}"
+                  )
+                  Failure(err)
+                },
                 identity
               )
 

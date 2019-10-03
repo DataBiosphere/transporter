@@ -77,6 +77,7 @@ class TransferStreamBuilderSpec
     val config = KStreamsConfig(
       "test-app",
       List(s"localhost:${baseConfig.kafkaPort}"),
+      None,
       topics,
       tls = None,
       scram = None

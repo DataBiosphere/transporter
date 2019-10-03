@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.kafka
 
 import java.util.Properties
 
+import org.apache.kafka.clients.producer.ProducerConfig
 import org.apache.kafka.streams.StreamsConfig
 import org.apache.kafka.streams.errors.LogAndFailExceptionHandler
 import org.broadinstitute.transporter.kafka.config.{
@@ -19,6 +20,7 @@ import scala.collection.JavaConverters._
 case class KStreamsConfig(
   applicationId: String,
   bootstrapServers: List[String],
+  maxMessageSizeMib: Option[Int],
   topics: TopicConfig,
   tls: Option[TlsConfig],
   scram: Option[ScramConfig]
@@ -31,7 +33,9 @@ case class KStreamsConfig(
     * Properties generation on their own.
     */
   private[kafka] def asMap: Map[String, String] =
-    ConnectionConfig.securityProperties(tls, scram) ++ Map(
+    maxMessageSizeMib.fold(Map.empty[String, String]) { max =>
+      Map(ProducerConfig.MAX_REQUEST_SIZE_CONFIG -> (max * 1024 * 1024).toString)
+    } ++ ConnectionConfig.securityProperties(tls, scram) ++ Map(
       StreamsConfig.APPLICATION_ID_CONFIG -> applicationId,
       StreamsConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers.mkString(","),
       StreamsConfig.PROCESSING_GUARANTEE_CONFIG -> StreamsConfig.EXACTLY_ONCE,

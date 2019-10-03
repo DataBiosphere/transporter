@@ -3,6 +3,7 @@ org.broadinstitute.transporter {
     kafka {
         bootstrap-servers = ["{{env "KAFKA_BOOTSTRAP_URL"}}"]
         application-id = "{{env "KAFKA_APPLICATION_ID"}}"
+        max-message-size-mib = {{env "KAFKA_MAX_MESSAGE_SIZE_MIB"}}
 
         topics {
             request-topic = "{{env "REQUEST_TOPIC"}}"
