@@ -393,15 +393,22 @@ class TransferController(
     requestId: UUID,
     offset: Long,
     limit: Long,
-    sortDesc: Boolean
+    sortDesc: Boolean,
+    status: Option[TransferStatus]
   ): IO[List[TransferDetails]] =
     checkAndExec(requestId) { rId =>
       val order = Fragment.const(if (sortDesc) "desc" else "asc")
+      val statusFilter = status match {
+        case Some(actualStatus) => fr"AND status = $actualStatus"
+        case None               => fr""
+      }
       List(
         Fragment.const(
           s"SELECT id, status, priority, body, submitted_at, updated_at, info FROM $TransfersTable"
         ),
-        fr"WHERE request_id = $rId ORDER BY id" ++ order ++ fr"LIMIT $limit OFFSET $offset"
+        fr"WHERE request_id = $rId",
+        statusFilter,
+        fr"ORDER BY id" ++ order ++ fr"LIMIT $limit OFFSET $offset"
       ).combineAll
         .query[TransferDetails]
         .to[List]

@@ -11,7 +11,7 @@ import org.broadinstitute.transporter.BuildInfo
 import org.broadinstitute.transporter.error.ApiError
 import org.broadinstitute.transporter.info.{InfoController, ManagerStatus, ManagerVersion}
 import org.broadinstitute.transporter.transfer.api._
-import org.broadinstitute.transporter.transfer.TransferController
+import org.broadinstitute.transporter.transfer.{TransferController, TransferStatus}
 import org.broadinstitute.transporter.web.config.OAuthConfig
 import org.http4s.circe.CirceEntityEncoder
 import org.http4s.dsl.io._
@@ -277,7 +277,7 @@ class WebApi(
       }
 
   private val lookupTransfersRoute: Route[
-    (UUID, Long, Long, SortOrder),
+    (UUID, Long, Long, SortOrder, Option[TransferStatus]),
     ApiError,
     Page[TransferDetails]
   ] = singleRequestBase.get
@@ -285,6 +285,7 @@ class WebApi(
     .in(query[Long]("offset"))
     .in(query[Long]("limit"))
     .in(query[SortOrder]("sort"))
+    .in(query[Option[TransferStatus]]("status"))
     .out(jsonBody[Page[TransferDetails]])
     .errorOut(
       oneOf(
@@ -299,12 +300,13 @@ class WebApi(
       "Get transfer details for a given request"
     )
     .serverLogic {
-      case (requestId, offset, limit, sort) =>
+      case (requestId, offset, limit, sort, status) =>
         val getPage = transferController.listTransfers(
           requestId,
           offset,
           limit,
-          sortDesc = sort == SortOrder.Desc
+          sortDesc = sort == SortOrder.Desc,
+          status
         )
         val getTotal = transferController.countTransfers(requestId)
         buildResponse(
