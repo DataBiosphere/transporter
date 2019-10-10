@@ -394,7 +394,7 @@ class TransferController(
     offset: Long,
     limit: Long,
     sortDesc: Boolean,
-    status: Option[TransferStatus]
+    status: Option[TransferStatus] = None
   ): IO[List[TransferDetails]] =
     checkAndExec(requestId) { rId =>
       val order = Fragment.const(if (sortDesc) "desc" else "asc")

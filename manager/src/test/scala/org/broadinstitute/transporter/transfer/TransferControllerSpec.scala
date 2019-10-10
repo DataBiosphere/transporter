@@ -753,6 +753,30 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .map(_.left.value shouldBe NotFound(requestId))
   }
 
+  it should "only list transfers filtered to a specified status" in withRequest {
+    (_, controller) =>
+      val limit = 5
+      for {
+        info <- controller.listTransfers(
+          request1Id,
+          0,
+          limit.toLong,
+          sortDesc = false,
+          Option(TransferStatus.Pending)
+        )
+        emptyInfo <- controller.listTransfers(
+          request1Id,
+          0,
+          limit.toLong,
+          sortDesc = false,
+          Option(TransferStatus.Expanded)
+        )
+      } yield {
+        info.length shouldBe List(request1Transfers.length, limit).min
+        emptyInfo.isEmpty shouldBe true
+      }
+  }
+
   it should "update the priority for all transfers in a request" in withRequest {
     (tx, controller) =>
       for {
