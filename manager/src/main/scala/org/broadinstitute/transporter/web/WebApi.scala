@@ -234,48 +234,6 @@ class WebApi(
         )
       }
 
-  private val requestOutputsRoute: Route[UUID, ApiError, RequestInfo] =
-    singleRequestBase.get
-      .in("outputs")
-      .out(jsonBody[RequestInfo])
-      .errorOut(
-        oneOf(
-          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-          statusMapping(
-            StatusCodes.InternalServerError,
-            jsonBody[ApiError.UnhandledError]
-          )
-        )
-      )
-      .description("Get the outputs of successful transfers from a request")
-      .serverLogic { requestId =>
-        buildResponse(
-          transferController.lookupRequestOutputs(requestId),
-          s"Failed to look up outputs for $requestId"
-        )
-      }
-
-  private val requestFailuresRoute: Route[UUID, ApiError, RequestInfo] =
-    singleRequestBase.get
-      .in("failures")
-      .out(jsonBody[RequestInfo])
-      .errorOut(
-        oneOf(
-          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-          statusMapping(
-            StatusCodes.InternalServerError,
-            jsonBody[ApiError.UnhandledError]
-          )
-        )
-      )
-      .description("Get the outputs of failed transfers from a request")
-      .serverLogic { requestId =>
-        buildResponse(
-          transferController.lookupRequestFailures(requestId),
-          s"Failed to look up failures for $requestId"
-        )
-      }
-
   private val lookupTransfersRoute: Route[
     (UUID, Long, Long, SortOrder, Option[TransferStatus]),
     ApiError,
@@ -391,8 +349,6 @@ class WebApi(
     updateRequestPriorityRoute,
     updateTransferPriorityRoute,
     requestStatusRoute,
-    requestOutputsRoute,
-    requestFailuresRoute,
     lookupTransfersRoute,
     reconsiderRoute,
     reconsiderSingleTransferRoute,

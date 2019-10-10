@@ -40,8 +40,6 @@ Paths below prefixed with `/api/transporter/v1`.
 | POST | `/transfers` | Submit a new batch of transfer requests. Validates requests and records them in the DB, but _doesn't_ submit them to Kafka. |
 | GET | `/transfers` | Get summaries of all batch requests stored by Transporter which fall within a specified page range. |
 | GET | `/transfers/{request-id}/status` | Get summary-level status of a transfer request. |
-| GET | `/transfers/{request-id}/outputs` | Get agent-reported outputs of transfers that succeeded within a request. |
-| GET | `/transfers/{request-id}/failures` | Get agent-reported error messages of transfers that failed within a request. |
 | PUT | `/transfers/{request-id}/reconsider` | Reset the state of all failed transfers in a request to 'Pending'. |
 | PUT | `/transfers/{request-id}/priority` | Update the priority of all pending transfers in a request. |
 
