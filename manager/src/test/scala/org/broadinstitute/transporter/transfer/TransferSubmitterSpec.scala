@@ -19,6 +19,7 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
 class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherValues {
+
   import org.broadinstitute.transporter.db.DoobieInstances._
 
   private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
@@ -47,7 +48,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
     val setup = for {
       _ <- List(request1Id, request2Id).zipWithIndex.traverse_ {
         case (id, i) =>
-          val ts = Timestamp.from(Instant.ofEpochMilli(i.toLong))
+          val ts = Timestamp.from(Instant.ofEpochMilli((i + 1).toLong))
           sql"INSERT INTO transfer_requests (id, received_at) VALUES ($id, $ts)".update.run.void
       }
       _ <- request1Transfers.traverse_ {
@@ -55,7 +56,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
           sql"""INSERT INTO transfers
                   (id, request_id, body, status, steps_run, priority)
                   VALUES
-                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
+                  ($id, $request1Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 1)""".update.run.void
       }
       _ <- request2Transfers.traverse_ {
         case (id, body) =>
@@ -64,6 +65,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
                   VALUES
                   ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
+
     } yield ()
 
     setup.transact(tx).flatMap(_ => test(tx, submitter)).unsafeRunSync()
@@ -274,7 +276,7 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
       (kafka.submit _).expects(theTopic, Nil).returning(IO.unit)
 
       for {
-        _ <- sql"""update transfers set priority = 5 where id in ($tId0, $tId2, $tId3, $tId4)""".update.run.void
+        _ <- sql"""UPDATE transfers SET priority = 5 WHERE id in ($tId0, $tId2, $tId3, $tId4)""".update.run.void
           .transact(tx)
         _ <- submitter.submitEligibleTransfers
         submitted <- sql"""SELECT id, submitted_at
@@ -296,8 +298,55 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
             myTransfers should contain(id)
             submittedAt.isDefined shouldBe true
         }
-        submitted.foreach { _._1 should not be tId1 }
+        submitted.foreach {
+          _._1 should not be tId1
+        }
         totalSubmitted shouldBe submitted.length
       }
   }
+
+  it should "submit earlier eligible transfers of the same priority first" in withRequest {
+    val request3Id = UUID.randomUUID()
+    val ts = Timestamp.from(Instant.ofEpochMilli(0.toLong))
+    val request3Transfers = List.tabulate(3) { i =>
+      UUID.randomUUID() -> json"""{ "i": $i }"""
+    }
+
+    (tx, submitter) =>
+      (kafka.submit _)
+        .expects(where { (topic: String, submitted: List[TransferMessage[Json]]) =>
+          topic == theTopic &&
+          submitted.length == parallelism &&
+          submitted.forall {
+            message =>
+              // check to make sure that the request has request3Id and the transfers under it, as these are submitted
+              // "before" any other requests. If these show up, then we are correctly ordering transfers by priority AND
+              // THEN submission time
+              message.ids.request == request3Id &&
+              request3Transfers.contains(message.ids.transfer -> message.message)
+          }
+        })
+        .returning(IO.unit)
+      for {
+        _ <- sql"INSERT INTO transfer_requests (id, received_at) VALUES ($request3Id, $ts)".update.run.void
+          .transact(tx)
+        _ <- request3Transfers.traverse_ {
+          case (id, body) =>
+            sql"""INSERT INTO transfers
+                  (id, request_id, body, status, steps_run, priority)
+                  VALUES
+                  ($id, $request3Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 1)""".update.run.void
+              .transact(tx)
+        }
+        _ <- submitter.submitEligibleTransfers
+        submitted <- sql"""SELECT count(*) FROM transfers
+                                WHERE status = ${TransferStatus.Submitted: TransferStatus}"""
+          .query[Long]
+          .unique
+          .transact(tx)
+      } yield {
+        submitted shouldBe parallelism
+      }
+  }
+
 }

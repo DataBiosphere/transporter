@@ -136,7 +136,7 @@ class TransferSubmitter private[transfer] (
       Fragments.whereAnd(
         fr"t.status = ${TransferStatus.Pending: TransferStatus}"
       ),
-      fr"ORDER BY PRIORITY DESC LIMIT $batchLimit"
+      fr"ORDER BY priority DESC, r.received_at LIMIT $batchLimit"
     ).combineAll
 
     List(
