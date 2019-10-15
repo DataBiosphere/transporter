@@ -365,88 +365,6 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .map(_.left.value shouldBe NotFound(request1Id))
   }
 
-  it should "get outputs of successful transfers for a request" in withRequest {
-    (tx, controller) =>
-      val infos = List.tabulate(5)(i => json"""{ "i+1": ${i + 1} }""")
-      val toUpdate = request1Transfers.map(_._1).take(5).zip(infos)
-
-      val transaction = for {
-        _ <- toUpdate.traverse_ {
-          case (id, info) =>
-            sql"""UPDATE transfers SET
-                  info = $info,
-                  status = ${TransferStatus.Succeeded: TransferStatus}
-                  WHERE id = $id""".update.run.void
-        }
-        _ <- request1Transfers.takeRight(5).traverse_ {
-          case (id, _) =>
-            sql"""UPDATE transfers SET
-                status = ${TransferStatus.Failed: TransferStatus},
-                info = '[]'
-                WHERE id = $id""".update.run.void
-        }
-      } yield ()
-
-      for {
-        _ <- transaction.transact(tx)
-        outputs <- controller.lookupRequestOutputs(request1Id)
-      } yield {
-        outputs.id shouldBe request1Id
-        outputs.info should contain theSameElementsAs toUpdate.map {
-          case (id, info) => TransferInfo(id, info)
-        }
-      }
-  }
-
-  it should "fail to get outputs for nonexistent requests" in withController {
-    (_, controller) =>
-      controller
-        .lookupRequestOutputs(request1Id)
-        .attempt
-        .map(_.left.value shouldBe NotFound(request1Id))
-  }
-
-  it should "get outputs of failed transfers for a request" in withRequest {
-    (tx, controller) =>
-      val infos = List.tabulate(5)(i => json"""{ "i+1": ${i + 1} }""")
-      val toUpdate = request1Transfers.map(_._1).take(5).zip(infos)
-
-      val transaction = for {
-        _ <- toUpdate.traverse_ {
-          case (id, info) =>
-            sql"""UPDATE transfers SET
-                  info = $info,
-                  status = ${TransferStatus.Failed: TransferStatus}
-                  WHERE id = $id""".update.run.void
-        }
-        _ <- request1Transfers.takeRight(5).traverse_ {
-          case (id, _) =>
-            sql"""UPDATE transfers SET
-                status = ${TransferStatus.Succeeded: TransferStatus},
-                info = '[]'
-                WHERE id = $id""".update.run.void
-        }
-      } yield ()
-
-      for {
-        _ <- transaction.transact(tx)
-        outputs <- controller.lookupRequestFailures(request1Id)
-      } yield {
-        outputs.id shouldBe request1Id
-        outputs.info should contain theSameElementsAs toUpdate.map {
-          case (id, info) => TransferInfo(id, info)
-        }
-      }
-  }
-
-  it should "fail to get failures for nonexistent requests" in withController {
-    (_, controller) =>
-      controller
-        .lookupRequestFailures(request1Id)
-        .attempt
-        .map(_.left.value shouldBe NotFound(request1Id))
-  }
-
   it should "reconsider failed transfers in a request" in withRequest {
     (tx, controller) =>
       val failed = request1Transfers.zipWithIndex.collect {
@@ -466,14 +384,6 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         ack shouldBe RequestAck(request1Id, failed.length)
         n shouldBe 0
       }
-  }
-
-  it should "not reconsider failed transfers in a nonexistent request" in withController {
-    (_, controller) =>
-      controller
-        .lookupRequestFailures(request1Id)
-        .attempt
-        .map(_.left.value shouldBe NotFound(request1Id))
   }
 
   it should "not reconsider failures in an unrelated request" in withRequest {
@@ -751,6 +661,30 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         .listTransfers(requestId, 2, 2, sortDesc = true)
         .attempt
         .map(_.left.value shouldBe NotFound(requestId))
+  }
+
+  it should "only list transfers filtered to a specified status" in withRequest {
+    (_, controller) =>
+      val limit = 5
+      for {
+        info <- controller.listTransfers(
+          request1Id,
+          0,
+          limit.toLong,
+          sortDesc = false,
+          Option(TransferStatus.Pending)
+        )
+        emptyInfo <- controller.listTransfers(
+          request1Id,
+          0,
+          limit.toLong,
+          sortDesc = false,
+          Option(TransferStatus.Expanded)
+        )
+      } yield {
+        info.length shouldBe List(request1Transfers.length, limit).min
+        emptyInfo.isEmpty shouldBe true
+      }
   }
 
   it should "update the priority for all transfers in a request" in withRequest {
