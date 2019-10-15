@@ -13,11 +13,13 @@ import scala.concurrent.duration.FiniteDuration
   *                           before emitting to downstream processing
   * @param waitTimePerBatch max time consumers should wait for new records before
   *                         emitting to downstream processing
+  * @param maxMessageSizeMib max bytes to pull as a single message
   */
 case class ConsumerConfig(
   groupId: String,
   maxRecordsPerBatch: Int,
-  waitTimePerBatch: FiniteDuration
+  waitTimePerBatch: FiniteDuration,
+  maxMessageSizeMib: Option[Int]
 )
 
 object ConsumerConfig {

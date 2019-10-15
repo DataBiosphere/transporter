@@ -11,6 +11,7 @@ import fs2.kafka.{
   KafkaConsumer => KConsumer
 }
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import org.apache.kafka.clients.consumer.{ConsumerConfig => JConsumerConfig}
 import org.broadinstitute.transporter.kafka.config.{ConnectionConfig, ConsumerConfig}
 import org.broadinstitute.transporter.transfer.TransferMessage
 
@@ -81,7 +82,7 @@ object KafkaConsumer {
     // NOTE: This EC is backed by a single-threaded pool. If a pool with > 1 thread is created,
     // the Kafka libs will detect the possibility of concurrent modification and throw an exception.
     fs2.kafka.consumerExecutionContextResource[IO].map { actorEc =>
-      ConsumerSettings[K, V](actorEc)
+      val base = ConsumerSettings[K, V](actorEc)
       // Required to connect to Kafka at all.
         .withBootstrapServers(conn.bootstrapServers.intercalate(","))
         .withProperties(ConnectionConfig.securityProperties(conn.tls, conn.scram))
@@ -101,6 +102,14 @@ object KafkaConsumer {
         // No "official" recommendation on these values, we can tweak as we see fit.
         .withRequestTimeout(conn.requestTimeout)
         .withCloseTimeout(conn.closeTimeout)
+
+      consumer.maxMessageSizeMib.fold(base) { maxSize =>
+        val byteSize = (maxSize * 1024 * 1024).toString
+        base.withProperties(
+          JConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG -> byteSize,
+          JConsumerConfig.FETCH_MAX_BYTES_CONFIG -> byteSize
+        )
+      }
     }
 
   /**

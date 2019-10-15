@@ -23,7 +23,10 @@ org.broadinstitute.transporter {
                 hash-algorithm = "{{env "KAFKA_SCRAM_ALGORITHM"}}"
             }
         }
-        consumer.group-id = "{{env "KAFKA_GROUP_ID"}}"
+        consumer {
+            group-id = "{{env "KAFKA_GROUP_ID"}}"
+            max-message-size-mib = {{env "MIB_PER_TRANSFER_STEP"}}
+        }
 
         topics {
             request-topic = {{env "REQUEST_TOPIC"}}
