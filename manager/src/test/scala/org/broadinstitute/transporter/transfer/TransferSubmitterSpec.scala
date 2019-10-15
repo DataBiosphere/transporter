@@ -317,12 +317,13 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
         .expects(where { (topic: String, submitted: List[TransferMessage[Json]]) =>
           topic == theTopic &&
           submitted.length == parallelism &&
-          submitted.forall { message =>
-          // check to make sure that the request has request3Id and the transfers under it, as these are submitted
-          // "before" any other requests. If these show up, then we are correctly ordering transfers by priority AND
-          // submission time (or that we order by time given that transfers have the same priority)
-            message.ids.request == request3Id &&
-            request3Transfers.contains(message.ids.transfer -> message.message)
+          submitted.forall {
+            message =>
+              // check to make sure that the request has request3Id and the transfers under it, as these are submitted
+              // "before" any other requests. If these show up, then we are correctly ordering transfers by priority AND
+              // THEN submission time
+              message.ids.request == request3Id &&
+              request3Transfers.contains(message.ids.transfer -> message.message)
           }
         })
         .returning(IO.unit)
