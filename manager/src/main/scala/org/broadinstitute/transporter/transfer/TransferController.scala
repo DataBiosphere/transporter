@@ -286,42 +286,6 @@ class TransferController(
     checkAndExec(requestId)(rId => lookupSummaries(List(rId)).map(_.head))
 
   /**
-    * Get the JSON payloads returned by agents for successfully-completed transfers
-    * under a request.
-    */
-  def lookupRequestOutputs(requestId: UUID): IO[RequestInfo] =
-    lookupRequestInfo(requestId, TransferStatus.Succeeded)
-
-  /**
-    * Get the JSON payloads returned by agents for failed transfers
-    * under a request.
-    */
-  def lookupRequestFailures(requestId: UUID): IO[RequestInfo] =
-    lookupRequestInfo(requestId, TransferStatus.Failed)
-
-  /**
-    * Get any information collected by the manager from transfers under a previously-submitted
-    * request which have a given status.
-    */
-  private def lookupRequestInfo(
-    requestId: UUID,
-    status: TransferStatus
-  ): IO[RequestInfo] =
-    checkAndExec(requestId) { rId =>
-      List(
-        fr"SELECT t.id, t.info FROM",
-        TransfersJoinTable,
-        Fragments.whereAnd(
-          fr"r.id = $rId",
-          fr"t.status = $status",
-          fr"t.info IS NOT NULL"
-        )
-      ).combineAll
-        .query[TransferInfo]
-        .to[List]
-    }.map(RequestInfo(requestId, _))
-
-  /**
     * Reset the statuses for all failed transfers under a request to 'pending',
     * so that they will be re-submitted by the periodic sweeper.
     */
@@ -393,15 +357,22 @@ class TransferController(
     requestId: UUID,
     offset: Long,
     limit: Long,
-    sortDesc: Boolean
+    sortDesc: Boolean,
+    status: Option[TransferStatus] = None
   ): IO[List[TransferDetails]] =
     checkAndExec(requestId) { rId =>
       val order = Fragment.const(if (sortDesc) "desc" else "asc")
+      val statusFilter = status match {
+        case Some(actualStatus) => fr"AND status = $actualStatus"
+        case None               => fr""
+      }
       List(
         Fragment.const(
           s"SELECT id, status, priority, body, submitted_at, updated_at, info FROM $TransfersTable"
         ),
-        fr"WHERE request_id = $rId ORDER BY id" ++ order ++ fr"LIMIT $limit OFFSET $offset"
+        fr"WHERE request_id = $rId",
+        statusFilter,
+        fr"ORDER BY id" ++ order ++ fr"LIMIT $limit OFFSET $offset"
       ).combineAll
         .query[TransferDetails]
         .to[List]
