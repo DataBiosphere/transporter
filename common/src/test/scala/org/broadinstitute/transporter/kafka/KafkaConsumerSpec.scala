@@ -21,7 +21,7 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
 
   private val topic = "the-topic"
 
-  private val consumerConfig = ConsumerConfig("test-group", 3, 500.millis)
+  private val consumerConfig = ConsumerConfig("test-group", 3, 500.millis, None)
 
   behavior of "KafkaConsumer"
 

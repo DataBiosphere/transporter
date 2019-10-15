@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.kafka
 
 import java.util.Properties
 
+import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.producer.ProducerConfig
 import org.apache.kafka.streams.StreamsConfig
 import org.apache.kafka.streams.errors.LogAndFailExceptionHandler
@@ -34,7 +35,12 @@ case class KStreamsConfig(
     */
   private[kafka] def asMap: Map[String, String] =
     maxMessageSizeMib.fold(Map.empty[String, String]) { max =>
-      Map(ProducerConfig.MAX_REQUEST_SIZE_CONFIG -> (max * 1024 * 1024).toString)
+      val byteSize = (max * 1024 * 1024).toString
+      Map(
+        ProducerConfig.MAX_REQUEST_SIZE_CONFIG -> byteSize,
+        ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG -> byteSize,
+        ConsumerConfig.FETCH_MAX_BYTES_CONFIG -> byteSize
+      )
     } ++ ConnectionConfig.securityProperties(tls, scram) ++ Map(
       StreamsConfig.APPLICATION_ID_CONFIG -> applicationId,
       StreamsConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers.mkString(","),
