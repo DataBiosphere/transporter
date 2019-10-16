@@ -562,9 +562,7 @@ object WebApi {
         case None =>
           DecodeResult.Mismatch(s"One of: ${E.values.map(_.entryName).mkString(",")}", s)
       }
-    }(_.entryName)
-      .schema(enumSchema[E].schema)
-      .validate(Validator.`enum`[E](E.values.toList))
+    }(_.entryName).schema(enumSchema[E].schema)
 
   implicit def enumMapSchema[E <: EnumEntry, V](
     implicit e: Enum[E],
