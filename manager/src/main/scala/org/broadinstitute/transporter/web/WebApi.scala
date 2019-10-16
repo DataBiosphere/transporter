@@ -79,7 +79,7 @@ class WebApi(
       .in("status")
       .out(jsonBody[ManagerStatus])
       .errorOut(jsonBody[ManagerStatus])
-      .description("Query operational status of the system")
+      .summary("Query operational status of the system")
       .tag("Info")
       .serverLogic { _ =>
         infoController.status.map { status =>
@@ -91,7 +91,7 @@ class WebApi(
     endpoint
       .in("version")
       .out(jsonBody[ManagerVersion])
-      .description("Query version of the system")
+      .summary("Query version of the system")
       .tag("Info")
       .serverLogic { _ =>
         IO.pure(Either.right[Unit, ManagerVersion](infoController.version))
@@ -119,7 +119,7 @@ class WebApi(
         )
       )
     )
-    .description("List all transfer batches known to Transporter")
+    .summary("List all transfer batches known to Transporter")
     .serverLogic {
       case (offset, limit, sort) =>
         val getPage = transferController.listRequests(
@@ -148,7 +148,7 @@ class WebApi(
           )
         )
       )
-      .description("Submit a new batch of transfers")
+      .summary("Submit a new batch of transfers")
       .serverLogic { request =>
         buildResponse(
           transferController.recordRequest(request),
@@ -170,7 +170,7 @@ class WebApi(
           )
         )
       )
-      .description("Get the current status of a batch of transfers")
+      .summary("Get the current status of a batch of transfers")
       .serverLogic { requestId =>
         buildResponse(
           transferController.lookupRequestStatus(requestId),
@@ -193,7 +193,7 @@ class WebApi(
           )
         )
       )
-      .description("Update the priority of all transfers in a batch")
+      .summary("Update the priority of all transfers in a batch")
       .serverLogic {
         case (requestId, priority) =>
           buildResponse(
@@ -215,7 +215,7 @@ class WebApi(
           )
         )
       )
-      .description("Reset the state of all failed transfers in a batch to 'pending'")
+      .summary("Reset the state of all failed transfers in a batch to 'pending'")
       .serverLogic { requestId =>
         buildResponse(
           transferController.reconsiderRequest(requestId),
@@ -247,7 +247,7 @@ class WebApi(
         )
       )
     )
-    .description("List transfers of a batch")
+    .summary("List transfers of a batch")
     .serverLogic {
       case (requestId, offset, limit, sort, status) =>
         val getPage = transferController.listTransfers(
@@ -278,7 +278,7 @@ class WebApi(
           )
         )
       )
-      .description("Get the current status of a transfer")
+      .summary("Get the current status of a transfer")
       .serverLogic {
         case (requestId, transferId) =>
           buildResponse(
@@ -305,7 +305,7 @@ class WebApi(
         )
       )
     )
-    .description("Update the priority of a transfer")
+    .summary("Update the priority of a transfer")
     .serverLogic {
       case (requestId, transferId, priority) =>
         buildResponse(
@@ -327,7 +327,7 @@ class WebApi(
           )
         )
       )
-      .description("Reset the state of a transfer to 'pending' if it has failed")
+      .summary("Reset the state of a transfer to 'pending' if it has failed")
       .serverLogic {
         case (requestId, transferId) =>
           buildResponse(
