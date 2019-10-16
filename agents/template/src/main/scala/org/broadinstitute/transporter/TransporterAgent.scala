@@ -11,7 +11,7 @@ import org.broadinstitute.transporter.transfer.TransferRunner
 import org.broadinstitute.transporter.web.WebApi
 import org.broadinstitute.transporter.web.config.WebConfig
 import org.http4s.server.blaze.BlazeServerBuilder
-import pureconfig.ConfigReader
+import pureconfig.{ConfigReader, ConfigSource}
 import pureconfig.module.catseffect._
 
 import scala.concurrent.ExecutionContext
@@ -49,13 +49,15 @@ abstract class TransporterAgent[
 
   /** [[IOApp]] equivalent of `main`. */
   final override def run(args: List[String]): IO[ExitCode] =
-    loadConfigF[IO, AgentConfig[Config]]("org.broadinstitute.transporter").flatMap {
-      config =>
+    ConfigSource.default
+      .at("org.broadinstitute.transporter")
+      .loadF[IO, AgentConfig[Config]]
+      .flatMap { config =>
         runnerResource(config.runnerConfig).flatMap(streamResource(_, config.kafka)).use {
           stream =>
             runWebApi(new InfoController(stream), config.web)
         }
-    }
+      }
 
   /**
     * Build a resource which will construct and launch a Kafka stream to

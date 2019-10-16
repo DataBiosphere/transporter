@@ -1,12 +1,10 @@
 package org.broadinstitute.transporter.db
 
-import cats.effect.{ContextShift, IO, Resource}
+import cats.effect.{Blocker, ContextShift, IO, Resource}
 import doobie._
 import doobie.hikari.HikariTransactor
 import doobie.util.ExecutionContexts
 import org.broadinstitute.transporter.db.config.DbConfig
-
-import scala.concurrent.ExecutionContext
 
 object DbTransactor {
 
@@ -23,7 +21,7 @@ object DbTransactor {
     * @param cs proof of the ability to shift IO-wrapped computations
     *           onto other threads
     */
-  def resource(config: DbConfig, blockingEc: ExecutionContext)(
+  def resource(config: DbConfig, blockingEc: Blocker)(
     implicit cs: ContextShift[IO]
   ): Resource[IO, Transactor[IO]] =
     for {
@@ -34,7 +32,7 @@ object DbTransactor {
       _ <- Resource.liftF(IO.delay(Class.forName(config.driverClassname)))
       transactor <- HikariTransactor.initial[IO](
         connectEC = connectionContext,
-        transactEC = blockingEc
+        blocker = blockingEc
       )
       _ <- Resource.liftF {
         transactor.configure { dataSource =>

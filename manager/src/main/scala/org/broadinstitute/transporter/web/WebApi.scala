@@ -3,11 +3,12 @@ package org.broadinstitute.transporter.web
 import java.util.UUID
 
 import cats.data.{Kleisli, NonEmptyList}
-import cats.effect.{ContextShift, IO}
+import cats.effect.{Blocker, ContextShift, IO}
 import cats.implicits._
 import enumeratum.{Enum, EnumEntry}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.broadinstitute.transporter.BuildInfo
+import io.circe.Json
+import org.broadinstitute.monster.TransporterManagerBuildInfo
 import org.broadinstitute.transporter.error.ApiError
 import org.broadinstitute.transporter.info.{InfoController, ManagerStatus, ManagerVersion}
 import org.broadinstitute.transporter.transfer.api._
@@ -30,7 +31,6 @@ import tapir.server.http4s._
 import tapir.openapi.circe.yaml._
 
 import scala.collection.immutable.ListMap
-import scala.concurrent.ExecutionContext
 import scala.language.higherKinds
 
 /**
@@ -47,7 +47,7 @@ class WebApi(
   infoController: InfoController,
   transferController: TransferController,
   googleAuthConfig: Option[OAuthConfig],
-  blockingEc: ExecutionContext
+  blockingEc: Blocker
 )(implicit cs: ContextShift[IO]) {
   import WebApi._
 
@@ -437,8 +437,8 @@ class WebApi(
     config = Config(
       blockingEc,
       asset =>
-        asset.library == BuildInfo.swaggerLibrary &&
-          asset.version == BuildInfo.swaggerVersion &&
+        asset.library == TransporterManagerBuildInfo.swaggerLibrary &&
+          asset.version == TransporterManagerBuildInfo.swaggerVersion &&
           asset.asset != "index.html"
     )
   )
@@ -459,8 +459,8 @@ class WebApi(
     config = Config(
       blockingEc,
       asset =>
-        asset.library == BuildInfo.swaggerLibrary &&
-          asset.version == BuildInfo.swaggerVersion &&
+        asset.library == TransporterManagerBuildInfo.swaggerLibrary &&
+          asset.version == TransporterManagerBuildInfo.swaggerVersion &&
           asset.asset == "index.html"
     )
   ).map { response =>
@@ -518,7 +518,7 @@ class WebApi(
   def app: HttpApp[IO] = {
     implicit val serverOptions: Http4sServerOptions[IO] = Http4sServerOptions
       .default[IO]
-      .copy(blockingExecutionContext = blockingEc)
+      .copy(blockingExecutionContext = blockingEc.blockingContext)
 
     val definedRoutes = documentedRoutes.toRoutes
       .combineK(swaggerUiIndexRoutes)
@@ -562,7 +562,9 @@ object WebApi {
         case None =>
           DecodeResult.Mismatch(s"One of: ${E.values.map(_.entryName).mkString(",")}", s)
       }
-    }(_.entryName).schema(enumSchema[E].schema)
+    }(_.entryName)
+      .schema(enumSchema[E].schema)
+      .validate(Validator.`enum`[E](E.values.toList))
 
   implicit def enumMapSchema[E <: EnumEntry, V](
     implicit e: Enum[E],
@@ -575,6 +577,8 @@ object WebApi {
         Nil
       )
     )
+
+  implicit val jsonValidator: Validator[Json] = Validator.pass
 
   /** Top-level route which serves generated API docs. */
   val ApiDocsPath = "api-docs.yaml"
@@ -603,9 +607,9 @@ object WebApi {
      * one safe choice for the swagger parameters so there's no point
      * in taking them as arguments.
      */
-    s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/index.html"
+    s"/${TransporterManagerBuildInfo.swaggerLibrary}/${TransporterManagerBuildInfo.swaggerVersion}/index.html"
 
   /** Route which serves the OAuth redirect logic for the Swagger UI. */
   val OauthRedirectPath =
-    s"/${BuildInfo.swaggerLibrary}/${BuildInfo.swaggerVersion}/oauth2-redirect.html"
+    s"/${TransporterManagerBuildInfo.swaggerLibrary}/${TransporterManagerBuildInfo.swaggerVersion}/oauth2-redirect.html"
 }

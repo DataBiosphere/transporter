@@ -27,11 +27,13 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
   private val kafka = mock[KafkaProducer[Json]]
 
   private val request1Id = UUID.randomUUID()
+
   private val request1Transfers = List.tabulate(10) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 
   private val request2Id = UUID.randomUUID()
+
   private val request2Transfers = List.tabulate(20) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }

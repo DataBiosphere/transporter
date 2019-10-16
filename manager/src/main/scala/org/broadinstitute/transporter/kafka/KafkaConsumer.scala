@@ -2,14 +2,8 @@ package org.broadinstitute.transporter.kafka
 
 import cats.effect.{ContextShift, IO, Resource, Timer}
 import cats.implicits._
+import fs2.kafka.{ConsumerSettings => KConsumerSettings, KafkaConsumer => KConsumer, _}
 import fs2.{Chunk, Stream}
-import fs2.kafka.{
-  AutoOffsetReset,
-  CommittableOffset,
-  ConsumerSettings,
-  Deserializer,
-  KafkaConsumer => KConsumer
-}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.apache.kafka.clients.consumer.{ConsumerConfig => JConsumerConfig}
 import org.broadinstitute.transporter.kafka.config.{ConnectionConfig, ConsumerConfig}
@@ -50,19 +44,14 @@ object KafkaConsumer {
   )(
     implicit cs: ContextShift[IO],
     t: Timer[IO],
-    d: Deserializer.Attempt[TransferMessage[M]]
+    d: Deserializer[IO, Either[Throwable, TransferMessage[M]]]
   ): Resource[IO, KafkaConsumer[M]] = {
-    val built = for {
-      settings <- consumerSettings[Unit, Serdes.Attempt[TransferMessage[M]]](
-        connectionConfig,
-        consumerConfig
-      )
-      consumer <- fs2.kafka.consumerResource[IO].using(settings)
-    } yield {
-      consumer
-    }
+    val settings = consumerSettings[Unit, Serdes.Attempt[TransferMessage[M]]](
+      connectionConfig,
+      consumerConfig
+    )
 
-    built.evalMap { c =>
+    fs2.kafka.consumerResource[IO].using(settings).evalMap { c =>
       c.subscribeTo(topic).as {
         new Impl(c, consumerConfig.maxRecordsPerBatch, consumerConfig.waitTimePerBatch)
       }
@@ -75,42 +64,39 @@ object KafkaConsumer {
     * Some settings in the output are hard-coded to prevent silent data loss in the consumer,
     * which isn't acceptable for our use-case.
     */
-  private def consumerSettings[K: Deserializer, V: Deserializer](
+  private def consumerSettings[K, V](
     conn: ConnectionConfig,
     consumer: ConsumerConfig
-  ) =
-    // NOTE: This EC is backed by a single-threaded pool. If a pool with > 1 thread is created,
-    // the Kafka libs will detect the possibility of concurrent modification and throw an exception.
-    fs2.kafka.consumerExecutionContextResource[IO].map { actorEc =>
-      val base = ConsumerSettings[K, V](actorEc)
-      // Required to connect to Kafka at all.
-        .withBootstrapServers(conn.bootstrapServers.intercalate(","))
-        .withProperties(ConnectionConfig.securityProperties(conn.tls, conn.scram))
-        // Required to be the same across all instances of a single application,
-        // to avoid duplicate message processing.
-        .withGroupId(consumer.groupId)
-        // For debugging on the Kafka server; adds an ID to the logs.
-        .withClientId(conn.clientId)
-        // Force manual commits to avoid accidental data loss.
-        .withEnableAutoCommit(false)
-        /*
-         * When subscribing to a topic for the first time, start from the earliest message
-         * instead of the latest. Prevents accidentally losing data if a producer writes to
-         * a topic before the consumer subscribes to it.
-         */
-        .withAutoOffsetReset(AutoOffsetReset.Earliest)
-        // No "official" recommendation on these values, we can tweak as we see fit.
-        .withRequestTimeout(conn.requestTimeout)
-        .withCloseTimeout(conn.closeTimeout)
+  )(implicit kd: Deserializer[IO, K], vd: Deserializer[IO, V]) = {
+    val base = KConsumerSettings[IO, K, V]
+    // Required to connect to Kafka at all.
+      .withBootstrapServers(conn.bootstrapServers.intercalate(","))
+      .withProperties(ConnectionConfig.securityProperties(conn.tls, conn.scram))
+      // Required to be the same across all instances of a single application,
+      // to avoid duplicate message processing.
+      .withGroupId(consumer.groupId)
+      // For debugging on the Kafka server; adds an ID to the logs.
+      .withClientId(conn.clientId)
+      // Force manual commits to avoid accidental data loss.
+      .withEnableAutoCommit(false)
+      /*
+       * When subscribing to a topic for the first time, start from the earliest message
+       * instead of the latest. Prevents accidentally losing data if a producer writes to
+       * a topic before the consumer subscribes to it.
+       */
+      .withAutoOffsetReset(AutoOffsetReset.Earliest)
+      // No "official" recommendation on these values, we can tweak as we see fit.
+      .withRequestTimeout(conn.requestTimeout)
+      .withCloseTimeout(conn.closeTimeout)
 
-      consumer.maxMessageSizeMib.fold(base) { maxSize =>
-        val byteSize = (maxSize * 1024 * 1024).toString
-        base.withProperties(
-          JConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG -> byteSize,
-          JConsumerConfig.FETCH_MAX_BYTES_CONFIG -> byteSize
-        )
-      }
+    consumer.maxMessageSizeMib.fold(base) { maxSize =>
+      val byteSize = (maxSize * 1024 * 1024).toString
+      base.withProperties(
+        JConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG -> byteSize,
+        JConsumerConfig.FETCH_MAX_BYTES_CONFIG -> byteSize
+      )
     }
+  }
 
   /**
     * Concrete implementation of our consumer used by mainline code.
@@ -137,7 +123,7 @@ object KafkaConsumer {
       consumer.stream.evalTap { message =>
         logger.info(s"Got message from topic ${message.record.topic}")
       }.map { message =>
-        message.record.value().map(_ -> message.committableOffset)
+        message.record.value.map(_ -> message.offset)
       }.evalTap {
         case Right((m, _)) => logger.debug(s"Decoded message from Kafka: $m")
         case Left(err)     => logger.error(err)("Failed to decode Kafka message")

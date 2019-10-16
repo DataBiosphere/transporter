@@ -32,16 +32,19 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
     json"""{ "type": "object" }""".as[TransferSchema].right.value
 
   private val request1Id = UUID.randomUUID()
+
   private val request1Transfers = List.tabulate(50) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 
   private val request2Id = UUID.randomUUID()
+
   private val request2Transfers = List.tabulate(20) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 
   private val request3Id = UUID.randomUUID()
+
   private val request3Transfers = List.tabulate(2) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }

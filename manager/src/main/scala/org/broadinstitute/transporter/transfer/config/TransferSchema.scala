@@ -48,6 +48,7 @@ class TransferSchema private (
    */
 
   override def hashCode(): Int = json.hashCode()
+
   override def equals(obj: Any): Boolean = obj match {
     case qs: TransferSchema => json.equals(qs.json)
     case _                  => false

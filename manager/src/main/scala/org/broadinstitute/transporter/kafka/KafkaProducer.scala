@@ -2,13 +2,7 @@ package org.broadinstitute.transporter.kafka
 
 import cats.effect.{ContextShift, IO, Resource}
 import cats.implicits._
-import fs2.kafka.{
-  ProducerMessage,
-  ProducerRecord,
-  ProducerSettings,
-  Serializer,
-  KafkaProducer => KProducer
-}
+import fs2.kafka.{KafkaProducer => KProducer, _}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.broadinstitute.transporter.kafka.config.ConnectionConfig
 import org.broadinstitute.transporter.transfer.TransferMessage
@@ -41,7 +35,7 @@ object KafkaProducer {
     */
   def resource[M](config: ConnectionConfig)(
     implicit cs: ContextShift[IO],
-    s: Serializer[TransferMessage[M]]
+    s: Serializer[IO, TransferMessage[M]]
   ): Resource[IO, KafkaProducer[M]] =
     fs2.kafka
       .producerResource[IO]
@@ -54,8 +48,11 @@ object KafkaProducer {
     * Some settings in the output are hard-coded to prevent silent data loss in the producer,
     * which isn't acceptable for our use-case.
     */
-  private def producerSettings[K: Serializer, V: Serializer](config: ConnectionConfig) =
-    ProducerSettings[K, V]
+  private def producerSettings[K, V](config: ConnectionConfig)(
+    implicit ks: Serializer[IO, K],
+    vs: Serializer[IO, V]
+  ) =
+    ProducerSettings[IO, K, V]
     // Required to connect to Kafka at all.
       .withBootstrapServers(config.bootstrapServers.intercalate(","))
       .withProperties(ConnectionConfig.securityProperties(config.tls, config.scram))
@@ -84,7 +81,7 @@ object KafkaProducer {
 
       for {
         _ <- logger.info(s"Submitting ${records.length} records to Kafka")
-        ackIO <- producer.producePassthrough(ProducerMessage(records))
+        ackIO <- producer.produce(ProducerRecords(records))
         _ <- logger.debug(s"Waiting for Kafka to acknowledge submission...")
         _ <- ackIO
       } yield ()

@@ -1,5 +1,6 @@
 # App-specific:
 application.conf
+.scalafmt.conf
 
 # sbt:
 target/

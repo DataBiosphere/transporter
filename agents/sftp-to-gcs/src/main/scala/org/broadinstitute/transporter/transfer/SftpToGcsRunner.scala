@@ -1,6 +1,6 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.{ContextShift, IO, Resource, Timer}
+import cats.effect.{Blocker, ContextShift, IO, Resource, Timer}
 import cats.implicits._
 import org.broadinstitute.monster.storage.common.FileType
 import org.broadinstitute.monster.storage.gcs.{GcsApi, JsonHttpGcsApi}
@@ -136,13 +136,13 @@ object SftpToGcsRunner {
 
   private val bytesPerMib = 1024 * 1024
 
-  def resource(config: RunnerConfig, ec: ExecutionContext)(
+  def resource(config: RunnerConfig, ec: ExecutionContext, blocker: Blocker)(
     implicit cs: ContextShift[IO],
     t: Timer[IO]
   ): Resource[IO, SftpToGcsRunner] = {
     val sftp = SshjSftpApi.build(
       config.sftp,
-      ec,
+      blocker,
       maxRetries = config.retries.maxRetries,
       retryDelay = config.retries.maxDelay
     )

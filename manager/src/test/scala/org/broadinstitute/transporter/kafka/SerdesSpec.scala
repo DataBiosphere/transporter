@@ -2,6 +2,7 @@ package org.broadinstitute.transporter.kafka
 
 import java.util.UUID
 
+import fs2.kafka.Headers
 import io.circe.derivation.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder}
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
@@ -22,11 +23,18 @@ class SerdesSpec extends FlatSpec with Matchers with EitherValues {
     )
 
     List(foo1, foo2, foo3).foreach { foo =>
-      val serialized = Serdes.encodingSerializer[Foo].serialize("the-topic", foo)
-      val deserialized =
-        Serdes.decodingDeserializer[Foo].deserialize("the-topic", serialized)
+      val roundTrip = for {
+        serialized <- Serdes
+          .encodingSerializer[Foo]
+          .serialize("the-topic", Headers.empty, foo)
+        deserialized <- Serdes
+          .decodingDeserializer[Foo]
+          .deserialize("the-topic", Headers.empty, serialized)
+      } yield {
+        deserialized
+      }
 
-      deserialized.right.value shouldBe foo
+      roundTrip.unsafeRunSync().right.value shouldBe foo
     }
   }
 }
