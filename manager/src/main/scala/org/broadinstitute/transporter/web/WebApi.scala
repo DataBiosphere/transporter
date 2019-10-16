@@ -98,17 +98,15 @@ class WebApi(
       }
 
   private val baseRoute: Endpoint[Unit, Unit, Unit, Nothing] =
-    endpoint
-      .in("api" / "transporter" / "v1")
-      .tag("Transfers")
+    endpoint.in("api" / "transporter" / "v1")
 
-  private val requestsBase = baseRoute.in("transfers")
+  private val batchesBase = baseRoute.in("batches").tag("Transfer Batches")
 
-  private val lookupRequestsRoute: Route[
+  private val listBatchesRoute: Route[
     (Long, Long, SortOrder),
     ApiError,
     Page[RequestSummary]
-  ] = requestsBase.get
+  ] = batchesBase.get
     .in(query[Long]("offset"))
     .in(query[Long]("limit"))
     .in(query[SortOrder]("sort"))
@@ -137,8 +135,8 @@ class WebApi(
         )
     }
 
-  private val batchSubmitRoute: Route[BulkRequest, ApiError, RequestAck] =
-    requestsBase.post
+  private val submitBatchRoute: Route[BulkRequest, ApiError, RequestAck] =
+    batchesBase.post
       .in(jsonBody[BulkRequest])
       .out(jsonBody[RequestAck])
       .errorOut(
@@ -150,19 +148,38 @@ class WebApi(
           )
         )
       )
-      .description("Submit a new batch of transfer requests")
+      .description("Submit a new batch of transfers")
       .serverLogic { request =>
         buildResponse(
           transferController.recordRequest(request),
-          "Failed to submit request"
+          "Failed to submit new batch"
         )
       }
 
-  private val singleRequestBase = requestsBase
-    .in(path[UUID]("request-id"))
+  private val singleBatchBase = batchesBase.in(path[UUID]("batch-id"))
 
-  private val updateRequestPriorityRoute: Route[(UUID, Short), ApiError, RequestAck] =
-    singleRequestBase.put
+  private val batchStatusRoute: Route[UUID, ApiError, RequestSummary] =
+    singleBatchBase.get
+      .out(jsonBody[RequestSummary])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
+      .description("Get the current status of a batch of transfers")
+      .serverLogic { requestId =>
+        buildResponse(
+          transferController.lookupRequestStatus(requestId),
+          s"Failed to look up status of batch $requestId"
+        )
+      }
+
+  private val reprioritizeBatchRoute: Route[(UUID, Short), ApiError, RequestAck] =
+    singleBatchBase.patch
       .in("priority")
       .in(query[Short]("priority"))
       .out(jsonBody[RequestAck])
@@ -176,70 +193,46 @@ class WebApi(
           )
         )
       )
-      .description("Update the priority of a particular request")
+      .description("Update the priority of all transfers in a batch")
       .serverLogic {
         case (requestId, priority) =>
           buildResponse(
             transferController.updateRequestPriority(requestId, priority),
-            s"Failed to update priority for transfers under the request with ID $requestId"
+            s"Failed to update priority for transfers in the batch with ID $requestId"
           )
       }
 
-  private val updateTransferPriorityRoute: Route[
-    (UUID, UUID, Short),
-    ApiError,
-    RequestAck
-  ] =
-    singleRequestBase.put
-      .in("detail" / path[UUID]("transfer-id") / "priority")
-      .in(query[Short]("priority"))
+  private val reconsiderBatchRoute: Route[UUID, ApiError, RequestAck] =
+    singleBatchBase.patch
+      .in("reconsider")
       .out(jsonBody[RequestAck])
       .errorOut(
         oneOf(
           statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-          statusMapping(StatusCodes.Conflict, jsonBody[ApiError.Conflict]),
           statusMapping(
             StatusCodes.InternalServerError,
             jsonBody[ApiError.UnhandledError]
           )
         )
       )
-      .description("Update the priority of a particular request")
-      .serverLogic {
-        case (requestId, transferId, priority) =>
-          buildResponse(
-            transferController.updateTransferPriority(requestId, transferId, priority),
-            s"Failed to update priority for transfer with request ID $requestId and transfer ID $transferId"
-          )
-      }
-
-  private val requestStatusRoute: Route[UUID, ApiError, RequestSummary] =
-    singleRequestBase.get
-      .in("status")
-      .out(jsonBody[RequestSummary])
-      .errorOut(
-        oneOf(
-          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-          statusMapping(
-            StatusCodes.InternalServerError,
-            jsonBody[ApiError.UnhandledError]
-          )
-        )
-      )
-      .description("Get the current summary status of a transfer request")
+      .description("Reset the state of all failed transfers in a batch to 'pending'")
       .serverLogic { requestId =>
         buildResponse(
-          transferController.lookupRequestStatus(requestId),
-          s"Failed to look up request status for $requestId"
+          transferController.reconsiderRequest(requestId),
+          s"Failed to reconsider transfers for batch $requestId"
         )
       }
 
-  private val lookupTransfersRoute: Route[
+  private val transfersBase = singleBatchBase
+    .copy(info = singleBatchBase.info.copy(tags = Vector.empty))
+    .in("transfers")
+    .tag("Transfers")
+
+  private val listTransfersRoute: Route[
     (UUID, Long, Long, SortOrder, Option[TransferStatus]),
     ApiError,
     Page[TransferDetails]
-  ] = singleRequestBase.get
-    .in("list-transfers")
+  ] = transfersBase.get
     .in(query[Long]("offset"))
     .in(query[Long]("limit"))
     .in(query[SortOrder]("sort"))
@@ -254,9 +247,7 @@ class WebApi(
         )
       )
     )
-    .description(
-      "Get transfer details for a given request"
-    )
+    .description("List transfers of a batch")
     .serverLogic {
       case (requestId, offset, limit, sort, status) =>
         val getPage = transferController.listTransfers(
@@ -269,12 +260,62 @@ class WebApi(
         val getTotal = transferController.countTransfers(requestId)
         buildResponse(
           (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
-          s"Failed to list transfers for request ID $requestId"
+          s"Failed to list transfers of batch $requestId"
         )
     }
 
-  private val reconsiderRoute: Route[UUID, ApiError, RequestAck] =
-    singleRequestBase.put
+  private val singleTransferBase = transfersBase.in(path[UUID]("transfer-id"))
+
+  private val transferStatusRoute: Route[(UUID, UUID), ApiError, TransferDetails] =
+    singleTransferBase.get
+      .out(jsonBody[TransferDetails])
+      .errorOut(
+        oneOf(
+          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+          statusMapping(
+            StatusCodes.InternalServerError,
+            jsonBody[ApiError.UnhandledError]
+          )
+        )
+      )
+      .description("Get the current status of a transfer")
+      .serverLogic {
+        case (requestId, transferId) =>
+          buildResponse(
+            transferController.lookupTransferDetails(requestId, transferId),
+            s"Failed to look up status for transfer $transferId"
+          )
+      }
+
+  private val reprioritizeTransferRoute: Route[
+    (UUID, UUID, Short),
+    ApiError,
+    RequestAck
+  ] = singleTransferBase.patch
+    .in("priority")
+    .in(query[Short]("priority"))
+    .out(jsonBody[RequestAck])
+    .errorOut(
+      oneOf(
+        statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
+        statusMapping(StatusCodes.Conflict, jsonBody[ApiError.Conflict]),
+        statusMapping(
+          StatusCodes.InternalServerError,
+          jsonBody[ApiError.UnhandledError]
+        )
+      )
+    )
+    .description("Update the priority of a transfer")
+    .serverLogic {
+      case (requestId, transferId, priority) =>
+        buildResponse(
+          transferController.updateTransferPriority(requestId, transferId, priority),
+          s"Failed to update priority for transfer $transferId"
+        )
+    }
+
+  private val reconsiderTransferRoute: Route[(UUID, UUID), ApiError, RequestAck] =
+    singleTransferBase.patch
       .in("reconsider")
       .out(jsonBody[RequestAck])
       .errorOut(
@@ -286,57 +327,12 @@ class WebApi(
           )
         )
       )
-      .description("Reset the state of all failed transfers in a request to 'pending'")
-      .serverLogic { requestId =>
-        buildResponse(
-          transferController.reconsiderRequest(requestId),
-          s"Failed to reconsider transfers for $requestId"
-        )
-      }
-
-  private val reconsiderSingleTransferRoute: Route[(UUID, UUID), ApiError, RequestAck] =
-    singleRequestBase.put
-      .in("detail" / path[UUID]("transfer-id") / "reconsider")
-      .out(jsonBody[RequestAck])
-      .errorOut(
-        oneOf(
-          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-          statusMapping(
-            StatusCodes.InternalServerError,
-            jsonBody[ApiError.UnhandledError]
-          )
-        )
-      )
-      .description(
-        "Reset the state of a single failed transfer in a request to 'pending'"
-      )
+      .description("Reset the state of a transfer to 'pending' if it has failed")
       .serverLogic {
         case (requestId, transferId) =>
           buildResponse(
             transferController.reconsiderSingleTransfer(requestId, transferId),
-            s"Failed to reconsider transfer for $transferId in request $requestId"
-          )
-      }
-
-  private val detailsRoute: Route[(UUID, UUID), ApiError, TransferDetails] =
-    singleRequestBase.get
-      .in("detail" / path[UUID]("transfer-id"))
-      .out(jsonBody[TransferDetails])
-      .errorOut(
-        oneOf(
-          statusMapping(StatusCodes.NotFound, jsonBody[ApiError.NotFound]),
-          statusMapping(
-            StatusCodes.InternalServerError,
-            jsonBody[ApiError.UnhandledError]
-          )
-        )
-      )
-      .description("Get detailed info about a single transfer from a request")
-      .serverLogic {
-        case (requestId, transferId) =>
-          buildResponse(
-            transferController.lookupTransferDetails(requestId, transferId),
-            s"Failed to look up details for $transferId"
+            s"Failed to reconsider transfer for $transferId"
           )
       }
 
@@ -344,15 +340,15 @@ class WebApi(
   private val documentedRoutes = List(
     statusRoute,
     versionRoute,
-    lookupRequestsRoute,
-    batchSubmitRoute,
-    updateRequestPriorityRoute,
-    updateTransferPriorityRoute,
-    requestStatusRoute,
-    lookupTransfersRoute,
-    reconsiderRoute,
-    reconsiderSingleTransferRoute,
-    detailsRoute
+    listBatchesRoute,
+    submitBatchRoute,
+    batchStatusRoute,
+    reprioritizeBatchRoute,
+    reconsiderBatchRoute,
+    listTransfersRoute,
+    transferStatusRoute,
+    reprioritizeTransferRoute,
+    reconsiderTransferRoute
   )
 
   private val openapi = {
