@@ -2,6 +2,7 @@ package org.broadinstitute.transporter
 
 import cats.effect._
 import doobie.util.ExecutionContexts
+import org.broadinstitute.monster.TransporterManagerBuildInfo
 import org.broadinstitute.transporter.db.DbTransactor
 import org.broadinstitute.transporter.info.InfoController
 import org.broadinstitute.transporter.transfer.{
@@ -11,7 +12,7 @@ import org.broadinstitute.transporter.transfer.{
 }
 import org.broadinstitute.transporter.web.WebApi
 import org.http4s.server.blaze.BlazeServerBuilder
-
+import pureconfig.ConfigSource
 import pureconfig.module.catseffect._
 
 import scala.concurrent.ExecutionContext
@@ -31,38 +32,41 @@ object TransporterManager extends IOApp.WithContext {
 
   /** [[IOApp]] equivalent of `main`. */
   override def run(args: List[String]): IO[ExitCode] =
-    loadConfigF[IO, ManagerConfig]("org.broadinstitute.transporter").flatMap { config =>
-      val app = for {
-        // Set up a thread pool to run all blocking I/O throughout the app.
-        blockingEc <- ExecutionContexts.cachedThreadPool[IO]
-        // Build clients for interacting with external resources, for use
-        // across controllers in the app.
-        transactor <- DbTransactor.resource(config.db, blockingEc)
-        submitter <- TransferSubmitter.resource(
-          transactor,
-          config.transfer,
-          config.kafka
-        )
-        controller = new TransferController(config.transfer.schema, transactor)
-        listener <- TransferListener.resource(transactor, config.kafka, controller)
-      } yield {
-        val appRoutes = new WebApi(
-          new InfoController(BuildInfo.version, transactor),
-          controller,
-          googleAuthConfig = config.web.googleOauth,
-          blockingEc = blockingEc
-        )
+    ConfigSource.default
+      .at("org.broadinstitute.transporter")
+      .loadF[IO, ManagerConfig]
+      .flatMap { config =>
+        val app = for {
+          // Set up a thread pool to run all blocking I/O throughout the app.
+          blockingEc <- Blocker[IO]
+          // Build clients for interacting with external resources, for use
+          // across controllers in the app.
+          transactor <- DbTransactor.resource(config.db, blockingEc)
+          submitter <- TransferSubmitter.resource(
+            transactor,
+            config.transfer,
+            config.kafka
+          )
+          controller = new TransferController(config.transfer.schema, transactor)
+          listener <- TransferListener.resource(transactor, config.kafka, controller)
+        } yield {
+          val appRoutes = new WebApi(
+            new InfoController(TransporterManagerBuildInfo.version, transactor),
+            controller,
+            googleAuthConfig = config.web.googleOauth,
+            blockingEc = blockingEc
+          )
 
-        val server = BlazeServerBuilder[IO]
-          .bindHttp(port = config.web.port, host = config.web.host)
-          .withHttpApp(appRoutes.app)
+          val server = BlazeServerBuilder[IO]
+            .bindHttp(port = config.web.port, host = config.web.host)
+            .withHttpApp(appRoutes.app)
 
-        server.serve
-          .concurrently(submitter.sweepSubmissions)
-          .concurrently(listener.listen)
-          .compile
+          server.serve
+            .concurrently(submitter.sweepSubmissions)
+            .concurrently(listener.listen)
+            .compile
+        }
+
+        app.use(_.lastOrError)
       }
-
-      app.use(_.lastOrError)
-    }
 }

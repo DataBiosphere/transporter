@@ -32,6 +32,7 @@ object TransferStatus
 
   implicit val statusEncoder: KeyEncoder[TransferStatus] =
     KeyEncoder.encodeKeyString.contramap(_.entryName)
+
   implicit val statusDecoder: KeyDecoder[TransferStatus] =
     namesToValuesMap.get
 

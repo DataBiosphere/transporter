@@ -1,8 +1,6 @@
 package org.broadinstitute.transporter
 
-import java.util.concurrent.{ExecutorService, Executors}
-
-import cats.effect.{IO, Resource}
+import cats.effect.{Blocker, IO, Resource}
 import org.broadinstitute.transporter.api.{
   SftpToGcsOutput => Out,
   SftpToGcsProgress => Progress,
@@ -11,24 +9,15 @@ import org.broadinstitute.transporter.api.{
 import org.broadinstitute.transporter.config.RunnerConfig
 import org.broadinstitute.transporter.transfer.{SftpToGcsRunner, TransferRunner}
 
-import scala.concurrent.ExecutionContext
-
 /** Transporter agent which can copy files from an SFTP site into GCS. */
 object SftpToGcsAgent extends TransporterAgent[RunnerConfig, In, Progress, Out] {
-
-  /** Build a resource wrapping a single-threaded execution context. */
-  private def singleThreadedEc: Resource[IO, ExecutionContext] = {
-    val allocate = IO.delay(Executors.newSingleThreadScheduledExecutor())
-    val free = (es: ExecutorService) => IO.delay(es.shutdown())
-    Resource.make(allocate)(free).map(ExecutionContext.fromExecutor)
-  }
 
   override def runnerResource(
     config: RunnerConfig
   ): Resource[IO, TransferRunner[In, Progress, Out]] =
     for {
-      ec <- singleThreadedEc
-      runner <- SftpToGcsRunner.resource(config, ec)
+      blocker <- Blocker[IO]
+      runner <- SftpToGcsRunner.resource(config, executionContext, blocker)
     } yield {
       runner
     }

@@ -23,6 +23,7 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
   import org.broadinstitute.transporter.db.DoobieInstances._
 
   val nowMillis = 1234L
+
   private implicit val clk: Clock[IO] = new Clock[IO] {
     override def realTime(unit: TimeUnit): IO[Long] = IO.pure(nowMillis)
     override def monotonic(unit: TimeUnit): IO[Long] = IO.pure(nowMillis)
@@ -32,11 +33,13 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     json"""{ "type": "object" }""".as[TransferSchema].right.value
 
   private val request1Id = UUID.randomUUID()
+
   private val request1Transfers = List.tabulate(10) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }
 
   private val request2Id = UUID.randomUUID()
+
   private val request2Transfers = List.tabulate(20) { i =>
     UUID.randomUUID() -> json"""{ "i": $i }"""
   }

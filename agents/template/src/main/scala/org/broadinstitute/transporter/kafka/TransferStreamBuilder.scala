@@ -189,6 +189,7 @@ object TransferStreamBuilder {
 
   /** Model used for capturing errors caught by the agent framework. */
   private[kafka] case class UnhandledErrorInfo(message: String, detail: Option[String])
+
   private[kafka] implicit val encoder: Encoder[UnhandledErrorInfo] =
     io.circe.derivation.deriveEncoder
 }

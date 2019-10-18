@@ -23,6 +23,7 @@ class S3AuthProviderSpec extends FlatSpec with Matchers {
   private val testScope = s"$nowDate/$fakeRegion/$fakeService/aws4_request"
 
   private val testHeaders = "host;x-amz-date"
+
   private val testCanonical =
     s"""GET
        |/
