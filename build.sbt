@@ -30,7 +30,7 @@ val enumeratumVersion = "1.5.13"
 val storageLibsVersion = "0.5.0"
 val http4sVersion = "0.21.0-M5"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.23.8"
+val swaggerUiVersion = "3.24.0"
 val tapirVersion = "0.11.6"
 
 // Testing.
