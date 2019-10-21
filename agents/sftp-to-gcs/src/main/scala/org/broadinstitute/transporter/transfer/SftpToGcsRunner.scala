@@ -180,7 +180,9 @@ object SftpToGcsRunner {
       config.sftp,
       blocker,
       maxRetries = config.retries.maxRetries,
-      retryDelay = config.retries.maxDelay
+      retryDelay = config.retries.maxDelay,
+      // YOLO
+      readAhead = Int.MaxValue
     )
 
     val gcs = BlazeClientBuilder[IO](ec)
