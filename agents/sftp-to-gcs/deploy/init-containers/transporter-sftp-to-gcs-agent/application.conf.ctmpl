@@ -24,6 +24,7 @@ org.broadinstitute.transporter {
 
     runner-config {
         mib-per-step = {{env "MIB_PER_TRANSFER_STEP"}}
+        max-concurrent-reads = {{env "MAX_CONCURRENT_READS"}}
 
         sftp {
             host = "{{env "SFTP_HOST"}}"
