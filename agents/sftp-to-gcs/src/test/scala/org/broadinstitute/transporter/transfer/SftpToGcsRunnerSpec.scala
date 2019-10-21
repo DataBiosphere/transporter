@@ -1,6 +1,6 @@
 package org.broadinstitute.transporter.transfer
 
-import cats.effect.IO
+import cats.effect.{ContextShift, IO}
 import cats.implicits._
 import fs2.Stream
 import org.broadinstitute.monster.storage.common.{FileAttributes, FileType}
@@ -17,11 +17,16 @@ import org.http4s.headers._
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
+import scala.collection.mutable
+import scala.concurrent.ExecutionContext
+
 class SftpToGcsRunnerSpec
     extends FlatSpec
     with Matchers
     with MockFactory
     with EitherValues {
+
+  private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
   private val sourcePath = "sftp/path/to/thing"
   private val targetBucket = "the-bucket"
@@ -36,7 +41,8 @@ class SftpToGcsRunnerSpec
     val fakeGcs = mock[GcsApi]
 
     val expectedSize = stepSize / 2L
-    val data = Stream.emits("test data".getBytes)
+    val data = Stream.emits("test data".getBytes).unchunk
+    val buffer = new mutable.ArrayBuffer[Byte]()
 
     (fakeSftp.statFile _)
       .expects(sourcePath)
@@ -51,15 +57,21 @@ class SftpToGcsRunnerSpec
         `Content-Type`(MediaType.application.`octet-stream`),
         expectedSize,
         None,
-        data
+        *
       )
-      .returning(IO.unit)
+      .onCall { (_, _, _, _, _, bytes) =>
+        bytes.compile.toChunk.map { chunk =>
+          buffer.appendAll(chunk.toArray)
+          ()
+        }
+      }
 
     val out = new SftpToGcsRunner(fakeSftp, fakeGcs, stepSize).initialize(
       SftpToGcsRequest(sourcePath, targetBucket, targetPath, isDirectory = false)
     )
 
     out shouldBe Done(SftpToGcsOutput(targetBucket, targetPath))
+    new String(buffer.toArray) shouldBe "test data"
   }
 
   it should "initialize resumable uploads for large files" in {
@@ -145,14 +157,20 @@ class SftpToGcsRunnerSpec
 
     val start = 12345L
     val nextStart = 2 * start
-    val expectedData = Stream.emits("hello world".getBytes)
+    val expectedData = Stream.emits("hello world".getBytes).unchunk
+    val buffer = new mutable.ArrayBuffer[Byte]()
 
     (fakeSftp.readFile _)
       .expects(sourcePath, start, Some(start + stepSize))
       .returning(expectedData)
     (fakeGcs.uploadBytes _)
-      .expects(targetBucket, token, start, expectedData)
-      .returning(IO.pure(Left(nextStart)))
+      .expects(targetBucket, token, start, *)
+      .onCall { (_, _, _, bytes) =>
+        bytes.compile.toChunk.map { chunk =>
+          buffer.appendAll(chunk.toArray)
+          Left(nextStart)
+        }
+      }
 
     val in = SftpToGcsProgress(
       sourcePath,
@@ -165,6 +183,7 @@ class SftpToGcsRunnerSpec
     val out = new SftpToGcsRunner(fakeSftp, fakeGcs, stepSize).step(in)
 
     out shouldBe Progress(in.copy(bytesUploaded = nextStart))
+    new String(buffer.toArray) shouldBe "hello world"
   }
 
   it should "finish an in-flight resumable upload" in {
@@ -174,13 +193,19 @@ class SftpToGcsRunnerSpec
     val start = 12345L
     val totalSize = start + stepSize - 1
     val expectedData = Stream.emits("hello world".getBytes)
+    val buffer = new mutable.ArrayBuffer[Byte]()
 
     (fakeSftp.readFile _)
       .expects(sourcePath, start, Some(totalSize))
       .returning(expectedData)
     (fakeGcs.uploadBytes _)
-      .expects(targetBucket, token, start, expectedData)
-      .returning(IO.pure(Right(())))
+      .expects(targetBucket, token, start, *)
+      .onCall { (_, _, _, bytes) =>
+        bytes.compile.toChunk.map { chunk =>
+          buffer.appendAll(chunk.toArray)
+          Right(())
+        }
+      }
 
     val out = new SftpToGcsRunner(fakeSftp, fakeGcs, stepSize).step(
       SftpToGcsProgress(
@@ -194,5 +219,6 @@ class SftpToGcsRunnerSpec
     )
 
     out shouldBe Done(SftpToGcsOutput(targetBucket, targetPath))
+    new String(buffer.toArray) shouldBe "hello world"
   }
 }

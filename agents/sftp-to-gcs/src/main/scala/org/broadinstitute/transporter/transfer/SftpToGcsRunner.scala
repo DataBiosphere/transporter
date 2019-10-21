@@ -2,7 +2,9 @@ package org.broadinstitute.transporter.transfer
 
 import cats.effect.{Blocker, ContextShift, IO, Resource, Timer}
 import cats.implicits._
-import org.broadinstitute.monster.storage.common.FileType
+import fs2.{Chunk, Stream}
+import fs2.concurrent.Queue
+import org.broadinstitute.monster.storage.common.{FileAttributes, FileType}
 import org.broadinstitute.monster.storage.gcs.{GcsApi, JsonHttpGcsApi}
 import org.broadinstitute.monster.storage.sftp.{SftpApi, SshjSftpApi}
 import org.broadinstitute.transporter.api.{
@@ -25,8 +27,9 @@ import scala.concurrent.ExecutionContext
   * @param sftp client which can read data from a single SFTP site
   * @param gcs client which can write data into GCS
   */
-class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerStep: Int)
-    extends TransferRunner[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] {
+class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerStep: Int)(
+  implicit cs: ContextShift[IO]
+) extends TransferRunner[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] {
 
   override def initialize(
     request: SftpToGcsRequest
@@ -74,16 +77,9 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
           )
         case Some(sourceAttrs) =>
           if (sourceAttrs.size < bytesPerStep) {
-            gcs
-              .createObject(
-                request.gcsBucket,
-                request.gcsPath,
-                `Content-Type`(MediaType.application.`octet-stream`),
-                sourceAttrs.size,
-                None,
-                sftp.readFile(request.sftpPath)
-              )
-              .as(Done(SftpToGcsOutput(request.gcsBucket, request.gcsPath)))
+            transferOneShot(request, sourceAttrs).as(
+              Done(SftpToGcsOutput(request.gcsBucket, request.gcsPath))
+            )
           } else {
             gcs
               .initResumableUpload(
@@ -108,6 +104,32 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
           }
       }
 
+  private def transferOneShot(
+    request: SftpToGcsRequest,
+    sourceAttrs: FileAttributes
+  ): IO[Unit] =
+    Queue.noneTerminated[IO, Chunk[Byte]].flatMap { buffer =>
+      val runDownload = sftp
+        .readFile(request.sftpPath)
+        .chunks
+        .map(Some(_))
+        .append(Stream.emit(None))
+        .through(buffer.enqueue)
+        .compile
+        .drain
+
+      val runUpload = gcs.createObject(
+        request.gcsBucket,
+        request.gcsPath,
+        `Content-Type`(MediaType.application.`octet-stream`),
+        sourceAttrs.size,
+        None,
+        buffer.dequeue.flatMap(Stream.chunk)
+      )
+
+      List(runDownload, runUpload).parSequence_
+    }
+
   override def step(
     progress: SftpToGcsProgress
   ): TransferStep[Nothing, SftpToGcsProgress, SftpToGcsOutput] = {
@@ -115,18 +137,32 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
       progress.bytesUploaded + bytesPerStep,
       progress.totalBytes
     )
-    val byteSlice =
-      sftp.readFile(progress.sftpPath, progress.bytesUploaded, Some(lastByte))
-    gcs
-      .uploadBytes(
-        progress.gcsBucket,
-        progress.gcsToken,
-        progress.bytesUploaded,
-        byteSlice
-      )
-      .map {
-        case Left(bytesStored) => Progress(progress.copy(bytesUploaded = bytesStored))
-        case Right(())         => Done(SftpToGcsOutput(progress.gcsBucket, progress.gcsPath))
+
+    Queue
+      .noneTerminated[IO, Chunk[Byte]]
+      .flatMap { buffer =>
+        val downloadSlice = sftp
+          .readFile(progress.sftpPath, progress.bytesUploaded, Some(lastByte))
+          .chunks
+          .map(Some(_))
+          .append(Stream.emit(None))
+          .through(buffer.enqueue)
+          .compile
+          .drain
+
+        val uploadSlice = gcs.uploadBytes(
+          progress.gcsBucket,
+          progress.gcsToken,
+          progress.bytesUploaded,
+          buffer.dequeue.flatMap(Stream.chunk)
+        )
+
+        (downloadSlice, uploadSlice).parMapN {
+          case (_, Left(bytesStored)) =>
+            Progress(progress.copy(bytesUploaded = bytesStored))
+          case (_, Right(())) =>
+            Done(SftpToGcsOutput(progress.gcsBucket, progress.gcsPath))
+        }
       }
       .unsafeRunSync()
   }
