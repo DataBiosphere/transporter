@@ -264,7 +264,7 @@ class WebApi(
           sortDesc = sort == SortOrder.Desc,
           status
         )
-        val getTotal = transferController.countTransfers(requestId)
+        val getTotal = transferController.countTransfers(requestId, status)
         buildResponse(
           (getPage, getTotal).parMapN {
             case (items, total) => Page(items, total)

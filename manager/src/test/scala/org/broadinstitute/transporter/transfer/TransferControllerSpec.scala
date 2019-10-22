@@ -532,6 +532,28 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     controller.countTransfers(request1Id).map(_ shouldBe 10)
   }
 
+  it should "count all tracked transfers with a given status" in withRequest {
+    (tx, controller) =>
+      val updatedIds = request1Transfers.take(2).map(_._1)
+      for {
+        _ <- sql"""UPDATE transfers SET
+                 status = ${TransferStatus.Submitted: TransferStatus}
+                 WHERE id = ${updatedIds(0)} OR id = ${updatedIds(1)}""".update.run.void
+          .transact(tx)
+        submittedCount <- controller.countTransfers(
+          request1Id,
+          Some(TransferStatus.Submitted)
+        )
+        pendingCount <- controller.countTransfers(
+          request1Id,
+          Some(TransferStatus.Pending)
+        )
+      } yield {
+        submittedCount shouldBe updatedIds.length
+        pendingCount shouldBe 10 - updatedIds.length
+      }
+  }
+
   it should "get details for multiple transfers" in withRequest { (tx, controller) =>
     val request1TransfersSorted = request1Transfers.sortBy(_._1.toString)
     val (id1, body1) = request1TransfersSorted(2)

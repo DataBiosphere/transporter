@@ -6,7 +6,7 @@ val doobieVersion = "0.8.4"
 val postgresqlDriverVersion = "42.2.5"
 
 // JSON.
-val circeVersion = "0.12.2"
+val circeVersion = "0.12.3"
 val circeDerivationVersion = "0.12.0-M7"
 val enumeratumCirceVersion = "1.5.22"
 val everitJsonSchemaVersion = "1.12.0"

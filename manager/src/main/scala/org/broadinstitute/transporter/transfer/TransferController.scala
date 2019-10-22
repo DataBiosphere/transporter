@@ -339,11 +339,14 @@ class TransferController(
     }
 
   /** Get the total number of transfers stored by Transporter. */
-  def countTransfers(requestId: UUID): IO[Long] =
+  def countTransfers(requestId: UUID, status: Option[TransferStatus] = None): IO[Long] =
     List(
       fr"SELECT COUNT(1) FROM",
       Fragment.const(TransfersTable),
-      fr"WHERE request_id = $requestId"
+      Fragments.whereAndOpt(
+        Some(fr"request_id = $requestId"),
+        status.map(s => fr"status = $s")
+      )
     ).combineAll
       .query[Long]
       .unique
