@@ -180,7 +180,7 @@ object SftpToGcsRunner {
     val sftp = SshjSftpApi.build(
       config.sftp,
       blocker,
-      readChunkSize = 256 * bytesPerKib,
+      readChunkSize = 32 * bytesPerKib,
       maxRetries = config.retries.maxRetries,
       retryDelay = config.retries.maxDelay,
       readAhead = config.maxConcurrentReads
