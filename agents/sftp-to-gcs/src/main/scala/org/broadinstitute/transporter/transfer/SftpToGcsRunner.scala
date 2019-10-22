@@ -170,7 +170,8 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
 
 object SftpToGcsRunner {
 
-  private val bytesPerMib = 1024 * 1024
+  private val bytesPerKib = 1024
+  private val bytesPerMib = 1024 * bytesPerKib
 
   def resource(config: RunnerConfig, ec: ExecutionContext, blocker: Blocker)(
     implicit cs: ContextShift[IO],
@@ -179,6 +180,7 @@ object SftpToGcsRunner {
     val sftp = SshjSftpApi.build(
       config.sftp,
       blocker,
+      readChunkSize = 256 * bytesPerKib,
       maxRetries = config.retries.maxRetries,
       retryDelay = config.retries.maxDelay,
       readAhead = config.maxConcurrentReads
@@ -197,7 +199,8 @@ object SftpToGcsRunner {
 
         JsonHttpGcsApi.build(
           Logger(logHeaders = true, logBody = false)(retryingClient),
-          config.gcsServiceAccount
+          config.gcsServiceAccount,
+          writeChunkSize = bytesPerMib
         )
       }
 
