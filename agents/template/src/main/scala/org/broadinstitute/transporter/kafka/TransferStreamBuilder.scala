@@ -80,7 +80,7 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
                 logger.warn(err)(
                   s"Unhandled error initializing transfer ${ids.transfer} from request ${ids.request}"
                 )
-                Failure(err)
+                Failure("Unhandled error initializing transfer", err)
               },
               identity
             )
@@ -139,7 +139,7 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
                   logger.warn(err)(
                     s"Unhandled error running step on transfer ${ids.transfer} from request ${ids.request}"
                   )
-                  Failure(err)
+                  Failure("Unhandled error running step on transfer", err)
                 },
                 identity
               )

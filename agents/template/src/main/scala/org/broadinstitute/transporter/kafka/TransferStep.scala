@@ -47,16 +47,18 @@ final case class Expanded[I: Encoder](value: List[I])
   * Failure step, where something has gone wrong.
   * @param value The value/message to put in TransferMessage for the Failure step
   */
-final case class Failure(value: Throwable)
+final case class Failure(description: String, value: Throwable)
     extends TransferStep[Nothing, Nothing, Nothing] {
   def isDone = true
 
-  def message: Json =
+  def message: Json = {
+    val topLevelExplanation = Option(value.getMessage).fold("")(msg => s": $msg")
     (
       TransferResult.FatalFailure: TransferResult,
       UnhandledErrorInfo(
-        s"Failed to run next step",
-        Option(value.getMessage)
+        s"$description$topLevelExplanation",
+        Option(value.getCause).flatMap(cause => Option(cause.getMessage))
       )
     ).asJson
+  }
 }

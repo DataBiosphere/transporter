@@ -23,13 +23,14 @@ import org.broadinstitute.transporter.transfer.{
   TransferRunner
 }
 import org.scalamock.scalatest.MockFactory
-import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.{EitherValues, FlatSpec, Matchers}
 
 class TransferStreamBuilderSpec
     extends FlatSpec
     with Matchers
     with EmbeddedKafkaStreamsAllInOne
-    with MockFactory {
+    with MockFactory
+    with EitherValues {
 
   import TransferStreamBuilderSpec._
 
@@ -243,7 +244,34 @@ class TransferStreamBuilderSpec
     result2.message._1 shouldBe TransferResult.FatalFailure
 
     List(result1.message._2, result2.message._2).foreach { jsonInfo =>
-      jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
+      val errorPayload = jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].right.value
+      errorPayload.message should include("initializing")
+      errorPayload.message should include("OH NO")
+    }
+  }
+
+  it should "include the message of the causal exception in initialization failure reports when present" in {
+    val messages = List.tabulate(2) { i =>
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i))
+    }
+
+    val runner = mock[LoopRunner]
+    messages.foreach { msg =>
+      (runner.initialize _)
+        .expects(msg.message)
+        .throwing(new Exception("OH NO", new Exception("OH NOOOOOOOOO")))
+    }
+
+    val List(result1, result2) = roundTripTransfers(messages.map(_.asJson), runner)
+
+    result1.message._1 shouldBe TransferResult.FatalFailure
+    result2.message._1 shouldBe TransferResult.FatalFailure
+
+    List(result1.message._2, result2.message._2).foreach { jsonInfo =>
+      val errorPayload = jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].right.value
+      errorPayload.message should include("initializing")
+      errorPayload.message should include("OH NO")
+      errorPayload.detail shouldBe Some("OH NOOOOOOOOO")
     }
   }
 
@@ -263,7 +291,9 @@ class TransferStreamBuilderSpec
     result2.message._1 shouldBe TransferResult.FatalFailure
 
     List(result1.message._2, result2.message._2).foreach { jsonInfo =>
-      jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
+      val errorPayload = jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].right.value
+      errorPayload.message should include("initializing")
+      errorPayload.message shouldNot include("null")
     }
   }
 
@@ -285,7 +315,9 @@ class TransferStreamBuilderSpec
     result2.message._1 shouldBe TransferResult.FatalFailure
 
     List(result1.message._2, result2.message._2).foreach { jsonInfo =>
-      jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
+      val errorPayload = jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].right.value
+      errorPayload.message should include("step")
+      errorPayload.message should include("OH NO")
     }
   }
 
@@ -307,7 +339,36 @@ class TransferStreamBuilderSpec
     result2.message._1 shouldBe TransferResult.FatalFailure
 
     List(result1.message._2, result2.message._2).foreach { jsonInfo =>
-      jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].isRight shouldBe true
+      val errorPayload = jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].right.value
+      errorPayload.message should include("step")
+      errorPayload.message shouldNot include("null")
+    }
+  }
+
+  it should "include the message of the causal exception in step failure reports when present" in {
+    val messages = List.tabulate(2) { i =>
+      TransferMessage(ids.copy(transfer = UUID.randomUUID()), LoopRequest(i))
+    }
+
+    val runner = mock[LoopRunner]
+    messages.foreach { msg =>
+      val zero = LoopProgress(0, msg.message.loopCount)
+      (runner.initialize _).expects(msg.message).returning(Progress(zero))
+      (runner.step _)
+        .expects(zero)
+        .throwing(new Exception("OH NO", new Exception("OH NOOOOOO")))
+    }
+
+    val List(result1, result2) = roundTripTransfers(messages.map(_.asJson), runner)
+
+    result1.message._1 shouldBe TransferResult.FatalFailure
+    result2.message._1 shouldBe TransferResult.FatalFailure
+
+    List(result1.message._2, result2.message._2).foreach { jsonInfo =>
+      val errorPayload = jsonInfo.as[TransferStreamBuilder.UnhandledErrorInfo].right.value
+      errorPayload.message should include("step")
+      errorPayload.message should include("OH NO")
+      errorPayload.detail shouldBe Some("OH NOOOOOO")
     }
   }
 
