@@ -2,6 +2,8 @@ package org.broadinstitute.transporter.transfer
 
 import cats.effect.{Blocker, ContextShift, IO, Resource, Timer}
 import cats.implicits._
+import fs2.{Chunk, Stream}
+import fs2.concurrent.Queue
 import org.broadinstitute.monster.storage.common.FileType
 import org.broadinstitute.monster.storage.gcs.{GcsApi, JsonHttpGcsApi}
 import org.broadinstitute.monster.storage.sftp.{SftpApi, SshjSftpApi}
@@ -25,8 +27,9 @@ import scala.concurrent.ExecutionContext
   * @param sftp client which can read data from a single SFTP site
   * @param gcs client which can write data into GCS
   */
-class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerStep: Int)
-    extends TransferRunner[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] {
+class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerStep: Int)(
+  implicit cs: ContextShift[IO]
+) extends TransferRunner[SftpToGcsRequest, SftpToGcsProgress, SftpToGcsOutput] {
 
   override def initialize(
     request: SftpToGcsRequest
@@ -37,6 +40,30 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
       initFileRequest(request)
     }
     result.unsafeRunSync()
+  }
+
+  override def step(
+    progress: SftpToGcsProgress
+  ): TransferStep[Nothing, SftpToGcsProgress, SftpToGcsOutput] = {
+    val lastByte = math.min(
+      progress.bytesUploaded + bytesPerStep,
+      progress.totalBytes
+    )
+
+    moveData(
+      sftp.readFile(progress.sftpPath, progress.bytesUploaded, Some(lastByte)),
+      gcs.uploadBytes(
+        progress.gcsBucket,
+        progress.gcsToken,
+        progress.bytesUploaded,
+        _
+      )
+    ).map {
+      case Left(bytesStored) =>
+        Progress(progress.copy(bytesUploaded = bytesStored))
+      case Right(()) =>
+        Done(SftpToGcsOutput(progress.gcsBucket, progress.gcsPath))
+    }.unsafeRunSync()
   }
 
   /**
@@ -74,16 +101,17 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
           )
         case Some(sourceAttrs) =>
           if (sourceAttrs.size < bytesPerStep) {
-            gcs
-              .createObject(
+            moveData(
+              sftp.readFile(request.sftpPath),
+              gcs.createObject(
                 request.gcsBucket,
                 request.gcsPath,
                 `Content-Type`(MediaType.application.`octet-stream`),
                 sourceAttrs.size,
                 None,
-                sftp.readFile(request.sftpPath)
+                _
               )
-              .as(Done(SftpToGcsOutput(request.gcsBucket, request.gcsPath)))
+            ).as(Done(SftpToGcsOutput(request.gcsBucket, request.gcsPath)))
           } else {
             gcs
               .initResumableUpload(
@@ -108,33 +136,35 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
           }
       }
 
-  override def step(
-    progress: SftpToGcsProgress
-  ): TransferStep[Nothing, SftpToGcsProgress, SftpToGcsOutput] = {
-    val lastByte = math.min(
-      progress.bytesUploaded + bytesPerStep,
-      progress.totalBytes
-    )
-    val byteSlice =
-      sftp.readFile(progress.sftpPath, progress.bytesUploaded, Some(lastByte))
-    gcs
-      .uploadBytes(
-        progress.gcsBucket,
-        progress.gcsToken,
-        progress.bytesUploaded,
-        byteSlice
-      )
-      .map {
-        case Left(bytesStored) => Progress(progress.copy(bytesUploaded = bytesStored))
-        case Right(())         => Done(SftpToGcsOutput(progress.gcsBucket, progress.gcsPath))
-      }
-      .unsafeRunSync()
-  }
+  /**
+    * Copy a slice of data from SFTP to GCS.
+    *
+    * Depending on configured chunk sizes, download / upload streams may
+    * require making multiple round-trip requests to each storage system.
+    * The transfer process runs both streams concurrently, with an in-memory
+    * local buffer, to improve throughput.
+    */
+  private def moveData[O](
+    downloadStream: Stream[IO, Byte],
+    runUpload: Stream[IO, Byte] => IO[O]
+  ): IO[O] =
+    Queue.noneTerminated[IO, Chunk[Byte]].flatMap { buffer =>
+      val runDownload = downloadStream.chunks
+        .map(Some(_))
+        .append(Stream.emit(None))
+        .through(buffer.enqueue)
+        .compile
+        .drain
+
+      (runDownload, runUpload(buffer.dequeue.flatMap(Stream.chunk)))
+        .parMapN((_, out) => out)
+    }
 }
 
 object SftpToGcsRunner {
 
-  private val bytesPerMib = 1024 * 1024
+  private val bytesPerKib = 1024
+  private val bytesPerMib = 1024 * bytesPerKib
 
   def resource(config: RunnerConfig, ec: ExecutionContext, blocker: Blocker)(
     implicit cs: ContextShift[IO],
@@ -143,8 +173,10 @@ object SftpToGcsRunner {
     val sftp = SshjSftpApi.build(
       config.sftp,
       blocker,
+      readChunkSize = 32 * bytesPerKib,
       maxRetries = config.retries.maxRetries,
-      retryDelay = config.retries.maxDelay
+      retryDelay = config.retries.maxDelay,
+      readAhead = config.maxConcurrentReads
     )
 
     val gcs = BlazeClientBuilder[IO](ec)
@@ -160,7 +192,8 @@ object SftpToGcsRunner {
 
         JsonHttpGcsApi.build(
           Logger(logHeaders = true, logBody = false)(retryingClient),
-          config.gcsServiceAccount
+          config.gcsServiceAccount,
+          writeChunkSize = bytesPerMib
         )
       }
 

@@ -6,7 +6,7 @@ val doobieVersion = "0.8.4"
 val postgresqlDriverVersion = "42.2.5"
 
 // JSON.
-val circeVersion = "0.12.2"
+val circeVersion = "0.12.3"
 val circeDerivationVersion = "0.12.0-M7"
 val enumeratumCirceVersion = "1.5.22"
 val everitJsonSchemaVersion = "1.12.0"
@@ -27,10 +27,10 @@ val googleAuthVersion = "0.18.0"
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val storageLibsVersion = "0.5.0"
+val storageLibsVersion = "0.6.0"
 val http4sVersion = "0.21.0-M5"
 val swaggerUiModule = "swagger-ui"
-val swaggerUiVersion = "3.23.8"
+val swaggerUiVersion = "3.24.0"
 val tapirVersion = "0.11.6"
 
 // Testing.

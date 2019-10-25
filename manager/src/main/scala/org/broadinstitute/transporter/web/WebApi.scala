@@ -107,8 +107,8 @@ class WebApi(
     ApiError,
     Page[RequestSummary]
   ] = batchesBase.get
-    .in(query[Long]("offset"))
-    .in(query[Long]("limit"))
+    .in(query[Long]("offset").example(0L))
+    .in(query[Long]("limit").example(10L))
     .in(query[SortOrder]("sort"))
     .out(jsonBody[Page[RequestSummary]])
     .errorOut(
@@ -130,7 +130,9 @@ class WebApi(
         val getTotal = transferController.countRequests
 
         buildResponse(
-          (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
+          (getPage, getTotal).parMapN {
+            case (items, total) => Page(items, total)
+          },
           "Failed to list transfer batches"
         )
     }
@@ -141,7 +143,10 @@ class WebApi(
       .out(jsonBody[RequestAck])
       .errorOut(
         oneOf(
-          statusMapping(StatusCodes.BadRequest, jsonBody[ApiError.InvalidRequest]),
+          statusMapping(
+            StatusCodes.BadRequest,
+            jsonBody[ApiError.InvalidRequest]
+          ),
           statusMapping(
             StatusCodes.InternalServerError,
             jsonBody[ApiError.UnhandledError]
@@ -215,7 +220,9 @@ class WebApi(
           )
         )
       )
-      .summary("Reset the state of all failed transfers in a batch to 'pending'")
+      .summary(
+        "Reset the state of all failed transfers in a batch to 'pending'"
+      )
       .serverLogic { requestId =>
         buildResponse(
           transferController.reconsiderRequest(requestId),
@@ -233,8 +240,8 @@ class WebApi(
     ApiError,
     Page[TransferDetails]
   ] = transfersBase.get
-    .in(query[Long]("offset"))
-    .in(query[Long]("limit"))
+    .in(query[Long]("offset").example(0L))
+    .in(query[Long]("limit").example(10L))
     .in(query[SortOrder]("sort"))
     .in(query[Option[TransferStatus]]("status"))
     .out(jsonBody[Page[TransferDetails]])
@@ -257,9 +264,11 @@ class WebApi(
           sortDesc = sort == SortOrder.Desc,
           status
         )
-        val getTotal = transferController.countTransfers(requestId)
+        val getTotal = transferController.countTransfers(requestId, status)
         buildResponse(
-          (getPage, getTotal).parMapN { case (items, total) => Page(items, total) },
+          (getPage, getTotal).parMapN {
+            case (items, total) => Page(items, total)
+          },
           s"Failed to list transfers of batch $requestId"
         )
     }
@@ -309,7 +318,8 @@ class WebApi(
     .serverLogic {
       case (requestId, transferId, priority) =>
         buildResponse(
-          transferController.updateTransferPriority(requestId, transferId, priority),
+          transferController
+            .updateTransferPriority(requestId, transferId, priority),
           s"Failed to update priority for transfer $transferId"
         )
     }
@@ -383,7 +393,8 @@ class WebApi(
         components.copy(securitySchemes = labeledScheme)
       }
 
-      val pathSecurity = List(ListMap(OAuthConfig.AuthName -> OAuthConfig.AuthScopes))
+      val pathSecurity =
+        List(ListMap(OAuthConfig.AuthName -> OAuthConfig.AuthScopes))
       def addSecurity(op: Option[Operation]): Option[Operation] =
         op.map(_.copy(security = pathSecurity))
 
@@ -555,14 +566,21 @@ object WebApi {
   implicit def enumSchema[E <: EnumEntry: Enum]: SchemaFor[E] =
     SchemaFor(Schema.SString)
 
-  implicit def enumCodec[E <: EnumEntry](implicit E: Enum[E]): Codec.PlainCodec[E] =
+  implicit def enumCodec[E <: EnumEntry](
+    implicit E: Enum[E]
+  ): Codec.PlainCodec[E] =
     Codec.stringPlainCodecUtf8.mapDecode { s =>
       E.namesToValuesMap.get(s) match {
         case Some(e) => DecodeResult.Value(e)
         case None =>
-          DecodeResult.Mismatch(s"One of: ${E.values.map(_.entryName).mkString(",")}", s)
+          DecodeResult.Mismatch(
+            s"One of: ${E.values.map(_.entryName).mkString(",")}",
+            s
+          )
       }
-    }(_.entryName).schema(enumSchema[E].schema)
+    }(_.entryName)
+      .schema(enumSchema[E].schema)
+      .validate(Validator.`enum`(E.values.toList))
 
   implicit def enumMapSchema[E <: EnumEntry, V](
     implicit e: Enum[E],

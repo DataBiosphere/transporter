@@ -12,7 +12,8 @@ case class RunnerConfig(
   gcsServiceAccount: Option[Path],
   timeouts: TimeoutConfig,
   retries: RetryConfig,
-  mibPerStep: Int
+  mibPerStep: Int,
+  maxConcurrentReads: Int
 )
 
 object RunnerConfig {
