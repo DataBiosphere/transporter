@@ -27,7 +27,7 @@ val googleAuthVersion = "0.18.0"
 val enumeratumVersion = "1.5.13"
 
 // Web.
-val storageLibsVersion = "0.6.0"
+val storageLibsVersion = "0.7.0"
 val http4sVersion = "0.21.0-M5"
 val swaggerUiModule = "swagger-ui"
 val swaggerUiVersion = "3.24.0"
