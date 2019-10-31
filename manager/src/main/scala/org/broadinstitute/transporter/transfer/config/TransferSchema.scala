@@ -26,7 +26,7 @@ import scala.collection.JavaConverters._
   *                  to the specified rules
   */
 class TransferSchema private (
-  private val json: Json,
+  val json: Json,
   private[this] val validator: Schema
 ) {
 

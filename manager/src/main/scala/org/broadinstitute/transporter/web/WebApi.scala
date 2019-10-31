@@ -47,7 +47,8 @@ class WebApi(
   infoController: InfoController,
   transferController: TransferController,
   googleAuthConfig: Option[OAuthConfig],
-  blockingEc: Blocker
+  blockingEc: Blocker,
+  transferSchemaJson: Json
 )(implicit cs: ContextShift[IO]) {
   import WebApi._
 
@@ -137,9 +138,21 @@ class WebApi(
         )
     }
 
+  private val batchPostExampleTransfer: TransferRequest = TransferRequest(
+    transferSchemaJson.findAllByKey("properties").head.mapObject { properties =>
+      properties.mapValues(property => property.findAllByKey("type").head)
+    },
+    Option(0.toShort)
+  )
+
+  private val batchPostExampleBulkRequest: BulkRequest = BulkRequest(
+    List(batchPostExampleTransfer),
+    Option(batchPostExampleTransfer)
+  )
+
   private val submitBatchRoute: Route[BulkRequest, ApiError, RequestAck] =
     batchesBase.post
-      .in(jsonBody[BulkRequest])
+      .in(jsonBody[BulkRequest].example(batchPostExampleBulkRequest))
       .out(jsonBody[RequestAck])
       .errorOut(
         oneOf(
