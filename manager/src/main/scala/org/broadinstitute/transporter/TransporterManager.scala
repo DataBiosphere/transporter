@@ -55,7 +55,7 @@ object TransporterManager extends IOApp.WithContext {
             controller,
             googleAuthConfig = config.web.googleOauth,
             blockingEc = blockingEc,
-            config.transfer.schema.json
+            transferSchema = config.transfer.schema
           )
 
           val server = BlazeServerBuilder[IO]

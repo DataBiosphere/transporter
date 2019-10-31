@@ -6,6 +6,7 @@ import com.typesafe.config.{ConfigList, ConfigObject, ConfigValue, ConfigValueTy
 import io.circe.Decoder.Result
 import io.circe._
 import io.circe.syntax._
+import org.broadinstitute.transporter.transfer.api.{BulkRequest, TransferRequest}
 import org.everit.json.schema.{Schema, ValidationException}
 import org.everit.json.schema.loader.SchemaLoader
 import org.json.{JSONArray, JSONObject, JSONTokener}
@@ -26,7 +27,7 @@ import scala.collection.JavaConverters._
   *                  to the specified rules
   */
 class TransferSchema private (
-  val json: Json,
+  private val json: Json,
   private[this] val validator: Schema
 ) {
 
@@ -55,6 +56,20 @@ class TransferSchema private (
   }
 
   override def toString: String = json.spaces2
+
+  def asExample: BulkRequest = {
+    val batchPostExampleTransfer: TransferRequest = TransferRequest(
+      json.findAllByKey("properties").head.mapObject { properties =>
+        properties.mapValues(property => property.findAllByKey("type").head)
+      },
+      Option(0.toShort)
+    )
+
+    BulkRequest(
+      List(batchPostExampleTransfer),
+      Option(batchPostExampleTransfer)
+    )
+  }
 }
 
 object TransferSchema {
