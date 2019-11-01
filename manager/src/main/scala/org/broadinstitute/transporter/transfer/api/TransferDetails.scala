@@ -17,6 +17,7 @@ import org.broadinstitute.transporter.transfer.TransferStatus
   * @param submittedAt time at which the transfer was pushed to agents
   * @param updatedAt time at which the latest status update was received for the transfer
   * @param reportedInfo JSON output sent to the manager by an agent about the transfer
+  * @param stepsRun number of times this transfer has run through a Transporter agent
   */
 case class TransferDetails(
   id: UUID,
@@ -25,7 +26,8 @@ case class TransferDetails(
   requestBody: Json,
   submittedAt: Option[OffsetDateTime],
   updatedAt: Option[OffsetDateTime],
-  reportedInfo: Option[Json]
+  reportedInfo: Option[Json],
+  stepsRun: Long
 )
 
 object TransferDetails {

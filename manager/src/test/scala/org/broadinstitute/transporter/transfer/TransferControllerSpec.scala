@@ -376,10 +376,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
 
       for {
         _ <- failed.traverse_ { id =>
-          sql"UPDATE transfers SET status = ${TransferStatus.Failed: TransferStatus} WHERE id = $id".update.run.void
+          sql"UPDATE transfers SET status = ${TransferStatus.Failed: TransferStatus}, steps_run = 100 WHERE id = $id".update.run.void
         }.transact(tx)
         ack <- controller.reconsiderRequest(request1Id)
-        n <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Failed: TransferStatus}"
+        n <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Failed: TransferStatus} AND steps_run = 100"
           .query[Long]
           .unique
           .transact(tx)
@@ -414,10 +414,10 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
     (tx, controller) =>
       val (id, _) = request1Transfers.head
       for {
-        _ <- sql"UPDATE transfers SET status = ${TransferStatus.Failed: TransferStatus} WHERE id = $id".update.run.void
+        _ <- sql"UPDATE transfers SET status = ${TransferStatus.Failed: TransferStatus}, steps_run = 100 WHERE id = $id".update.run.void
           .transact(tx)
         ack <- controller.reconsiderSingleTransfer(request1Id, id)
-        n <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Failed: TransferStatus}"
+        n <- sql"SELECT COUNT(*) FROM transfers WHERE status = ${TransferStatus.Failed: TransferStatus} AND steps_run = 100"
           .query[Long]
           .unique
           .transact(tx)
@@ -486,7 +486,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         body,
         None,
         None,
-        None
+        None,
+        0
       )
       submittedInfo shouldBe TransferDetails(
         id,
@@ -495,7 +496,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         None,
-        None
+        None,
+        0
       )
       updatedInfo shouldBe TransferDetails(
         id,
@@ -504,7 +506,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
         body,
         Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
         Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
-        Some(json"{}")
+        Some(json"{}"),
+        0
       )
     }
   }
@@ -593,7 +596,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           body1,
           None,
           None,
-          None
+          None,
+          0
         ),
         TransferDetails(
           id2,
@@ -602,7 +606,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           body2,
           None,
           None,
-          None
+          None,
+          0
         )
       )
       submittedInfo shouldBe List(
@@ -613,7 +618,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
-          None
+          None,
+          0
         ),
         TransferDetails(
           id2,
@@ -622,7 +628,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           None,
-          None
+          None,
+          0
         )
       )
       updatedInfo shouldBe List(
@@ -633,7 +640,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           body1,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
-          Some(json"{}")
+          Some(json"{}"),
+          0
         ),
         TransferDetails(
           id2,
@@ -642,7 +650,8 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
           body2,
           Some(OffsetDateTime.ofInstant(submitted, ZoneId.of("UTC"))),
           Some(OffsetDateTime.ofInstant(updated, ZoneId.of("UTC"))),
-          Some(json"{}")
+          Some(json"{}"),
+          0
         )
       )
     }

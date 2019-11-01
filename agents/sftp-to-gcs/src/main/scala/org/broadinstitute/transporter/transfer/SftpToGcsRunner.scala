@@ -175,7 +175,7 @@ object SftpToGcsRunner {
       blocker,
       readChunkSize = 32 * bytesPerKib,
       maxRetries = config.retries.maxRetries,
-      retryDelay = config.retries.maxDelay,
+      maxRetryDelay = config.retries.maxDelay,
       readAhead = config.maxConcurrentReads
     )
 
