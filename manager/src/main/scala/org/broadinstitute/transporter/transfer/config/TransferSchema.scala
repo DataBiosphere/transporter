@@ -26,7 +26,7 @@ import scala.collection.JavaConverters._
   *                  to the specified rules
   */
 class TransferSchema private (
-  private val json: Json,
+  private val json: JsonObject,
   private[this] val validator: Schema
 ) {
 
@@ -54,11 +54,15 @@ class TransferSchema private (
     case _                  => false
   }
 
-  override def toString: String = json.spaces2
+  override def toString: String = json.asJson.spaces2
 
   def asExample: Json = {
-    json.findAllByKey("properties").head.mapObject { properties =>
-      properties.mapValues(property => property.findAllByKey("type").head)
+    json("properties").fold(Json.obj()) { properties =>
+      properties.mapObject { propObject =>
+        propObject.mapValues { property =>
+          property.withObject(_.apply("type").getOrElse(Json.fromString("string")))
+        }
+      }
     }
   }
 }
@@ -92,7 +96,7 @@ object TransferSchema {
       jsonObject = circeObjToEverit
     )
 
-  implicit val encoder: Encoder[TransferSchema] = _.json
+  implicit val encoder: Encoder[TransferSchema] = _.json.asJson
 
   implicit val decoder: Decoder[TransferSchema] = new Decoder[TransferSchema] {
 
@@ -126,7 +130,7 @@ object TransferSchema {
           SchemaLoader.load(everitObj)
         }.leftMap(DecodingFailure.fromThrowable(_, Nil))
       } yield {
-        new TransferSchema(obj.asJson, schema)
+        new TransferSchema(obj, schema)
       }
   }
 

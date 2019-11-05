@@ -182,4 +182,10 @@ class TransferSchemaSpec extends FlatSpec with Matchers with EitherValues {
           }"""
     schema.asExample shouldBe targetJson
   }
+
+  it should "handle example schemas with no properties" in {
+    val theJson = json"""{ "type": "object" }"""
+    val schema = theJson.as[TransferSchema].right.value
+    schema.asExample shouldBe json"{}"
+  }
 }
