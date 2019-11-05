@@ -6,7 +6,6 @@ import com.typesafe.config.{ConfigList, ConfigObject, ConfigValue, ConfigValueTy
 import io.circe.Decoder.Result
 import io.circe._
 import io.circe.syntax._
-import org.broadinstitute.transporter.transfer.api.{BulkRequest, TransferRequest}
 import org.everit.json.schema.{Schema, ValidationException}
 import org.everit.json.schema.loader.SchemaLoader
 import org.json.{JSONArray, JSONObject, JSONTokener}

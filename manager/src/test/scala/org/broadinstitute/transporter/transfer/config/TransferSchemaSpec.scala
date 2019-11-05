@@ -157,4 +157,29 @@ class TransferSchemaSpec extends FlatSpec with Matchers with EitherValues {
     schema.validate(json"""["a", "b", "c", "d"]""").isValid shouldBe false
     schema.validate(json"{}").isValid shouldBe false
   }
+
+  it should "convert to an example Json format" in {
+    val theJson = json"""{
+                       "title": "Example schema",
+                       "type": "object",
+                       "properties": {
+                          "prop1": {
+                              "description": "First example property",
+                              "type": "string"
+                              },
+                          "prop2": {
+                              "description": "Second example property",
+                              "type": "string"
+                              }
+                          },
+                       "required": ["prop1", "prop2"]
+                       }"""
+    val schema = theJson.as[TransferSchema].right.value
+    val targetJson =
+      json"""{
+          "prop1": "string",
+          "prop2": "string"
+          }"""
+    schema.asExample shouldBe targetJson
+  }
 }

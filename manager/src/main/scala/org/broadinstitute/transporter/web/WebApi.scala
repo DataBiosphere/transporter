@@ -140,7 +140,8 @@ class WebApi(
     }
 
   private val postTransferRequestExample: TransferRequest = TransferRequest(
-    transferSchema.asExample, Option(0.toShort)
+    transferSchema.asExample,
+    Option(0.toShort)
   )
 
   private val postBulkRequestExample: BulkRequest = BulkRequest(
