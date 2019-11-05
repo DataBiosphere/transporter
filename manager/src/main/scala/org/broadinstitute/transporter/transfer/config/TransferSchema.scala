@@ -55,6 +55,12 @@ class TransferSchema private (
   }
 
   override def toString: String = json.spaces2
+
+  def asExample: Json = {
+    json.findAllByKey("properties").head.mapObject { properties =>
+      properties.mapValues(property => property.findAllByKey("type").head)
+    }
+  }
 }
 
 object TransferSchema {

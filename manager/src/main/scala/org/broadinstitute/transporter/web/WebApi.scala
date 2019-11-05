@@ -12,6 +12,7 @@ import org.broadinstitute.monster.TransporterManagerBuildInfo
 import org.broadinstitute.transporter.error.ApiError
 import org.broadinstitute.transporter.info.{InfoController, ManagerStatus, ManagerVersion}
 import org.broadinstitute.transporter.transfer.api._
+import org.broadinstitute.transporter.transfer.config.TransferSchema
 import org.broadinstitute.transporter.transfer.{TransferController, TransferStatus}
 import org.broadinstitute.transporter.web.config.OAuthConfig
 import org.http4s.circe.CirceEntityEncoder
@@ -47,7 +48,8 @@ class WebApi(
   infoController: InfoController,
   transferController: TransferController,
   googleAuthConfig: Option[OAuthConfig],
-  blockingEc: Blocker
+  blockingEc: Blocker,
+  transferSchema: TransferSchema
 )(implicit cs: ContextShift[IO]) {
   import WebApi._
 
@@ -137,9 +139,19 @@ class WebApi(
         )
     }
 
+  private val postTransferRequestExample: TransferRequest = TransferRequest(
+    transferSchema.asExample,
+    Option(0.toShort)
+  )
+
+  private val postBulkRequestExample: BulkRequest = BulkRequest(
+    List(postTransferRequestExample),
+    Option(postTransferRequestExample)
+  )
+
   private val submitBatchRoute: Route[BulkRequest, ApiError, RequestAck] =
     batchesBase.post
-      .in(jsonBody[BulkRequest])
+      .in(jsonBody[BulkRequest].example(postBulkRequestExample))
       .out(jsonBody[RequestAck])
       .errorOut(
         oneOf(

@@ -60,7 +60,7 @@ function generate_configs () {
     '  kafka.topics {'
     "    request-topic: \"${KAFKA_TOPIC_PREFIX}.requests\""
     "    progress-topic: \"${KAFKA_TOPIC_PREFIX}.progress\""
-    "    results-topic: \"${KAFKA_TOPIC_PREFIX}.results\""
+    "    result-topic: \"${KAFKA_TOPIC_PREFIX}.results\""
     '  }'
     '}'
   )
@@ -69,7 +69,7 @@ function generate_configs () {
     'org.broadinstitute.transporter.kafka.topics {'
     "  request-topic: \"${KAFKA_TOPIC_PREFIX}.requests\""
     "  progress-topic: \"${KAFKA_TOPIC_PREFIX}.progress\""
-    "  results-topic: \"${KAFKA_TOPIC_PREFIX}.results\""
+    "  result-topic: \"${KAFKA_TOPIC_PREFIX}.results\""
     '}'
   )
 
