@@ -103,8 +103,8 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
 
     for {
       _ <- listener.recordTransferResults(Chunk.seq(updates))
-      updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at IS NOT NULL"
-        .query[(UUID, TransferStatus, Json)]
+      updated <- sql"SELECT id, status, info, steps_run FROM transfers WHERE updated_at IS NOT NULL"
+        .query[(UUID, TransferStatus, Json, Long)]
         .to[List]
         .transact(tx)
     } yield {
@@ -117,7 +117,8 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
               case TransferResult.FatalFailure => TransferStatus.Failed
               case TransferResult.Expanded     => TransferStatus.Expanded
             },
-            info
+            info,
+            1L
           )
       }
     }
@@ -157,15 +158,15 @@ class TransferListenerSpec extends PostgresSpec with MockFactory with EitherValu
             .transact(tx)
       }
       numUpdated <- listener.markTransfersInProgress(Chunk.seq(updates))
-      updated <- sql"SELECT id, status, info FROM transfers WHERE updated_at IS NOT NULL"
-        .query[(UUID, TransferStatus, Json)]
+      updated <- sql"SELECT id, status, info, steps_run FROM transfers WHERE updated_at IS NOT NULL"
+        .query[(UUID, TransferStatus, Json, Long)]
         .to[List]
         .transact(tx)
     } yield {
       numUpdated shouldBe updated.length
       updated should contain theSameElementsAs updates.map {
-        case TransferMessage(ids, (_, info)) =>
-          (ids.transfer, TransferStatus.InProgress, info)
+        case TransferMessage(ids, (steps, info)) =>
+          (ids.transfer, TransferStatus.InProgress, info, steps)
       }
     }
   }

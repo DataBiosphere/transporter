@@ -293,7 +293,7 @@ class TransferController(
     checkAndExec(requestId) { rId =>
       List(
         Fragment.const(s"UPDATE $TransfersTable t"),
-        fr"SET status = ${TransferStatus.Pending: TransferStatus} FROM",
+        fr"SET status = ${TransferStatus.Pending: TransferStatus}, steps_run = 0 FROM",
         Fragment.const(s"$RequestsTable r"),
         Fragments.whereAnd(
           fr"t.request_id = r.id",
@@ -311,7 +311,7 @@ class TransferController(
     checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
         Fragment.const(s"UPDATE $TransfersTable t"),
-        fr"SET status = ${TransferStatus.Pending: TransferStatus}",
+        fr"SET status = ${TransferStatus.Pending: TransferStatus}, steps_run = 0",
         Fragments.whereAnd(
           fr"t.request_id = $rId",
           fr"t.id = $tId",
@@ -330,7 +330,7 @@ class TransferController(
     checkAndExec(requestId, transferId) { (rId, tId) =>
       List(
         Fragment.const(
-          s"SELECT id, status, priority, body, submitted_at, updated_at, info FROM $TransfersTable"
+          s"SELECT id, status, priority, body, submitted_at, updated_at, info, steps_run FROM $TransfersTable"
         ),
         Fragments.whereAnd(fr"request_id = $rId", fr"id = $tId")
       ).combineAll
@@ -371,7 +371,7 @@ class TransferController(
       }
       List(
         Fragment.const(
-          s"SELECT id, status, priority, body, submitted_at, updated_at, info FROM $TransfersTable"
+          s"SELECT id, status, priority, body, submitted_at, updated_at, info, steps_run FROM $TransfersTable"
         ),
         fr"WHERE request_id = $rId",
         statusFilter,

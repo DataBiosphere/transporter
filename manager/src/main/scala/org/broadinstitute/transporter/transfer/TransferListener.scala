@@ -146,7 +146,7 @@ class TransferListener private[transfer] (
 
       numUpdated <- Update[(TransferStatus, Json, UUID, UUID)](
         s"""UPDATE $TransfersTable
-           |SET status = ?, info = ?, updated_at = ${timestampSql(now)}
+           |SET status = ?, info = ?, updated_at = ${timestampSql(now)}, steps_run = steps_run + 1
            |FROM $RequestsTable
            |WHERE $TransfersTable.request_id = $RequestsTable.id
            |AND $TransfersTable.id = ?
