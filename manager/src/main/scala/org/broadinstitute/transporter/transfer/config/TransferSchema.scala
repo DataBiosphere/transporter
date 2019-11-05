@@ -57,18 +57,10 @@ class TransferSchema private (
 
   override def toString: String = json.spaces2
 
-  def asExample: BulkRequest = {
-    val batchPostExampleTransfer: TransferRequest = TransferRequest(
-      json.findAllByKey("properties").head.mapObject { properties =>
-        properties.mapValues(property => property.findAllByKey("type").head)
-      },
-      Option(0.toShort)
-    )
-
-    BulkRequest(
-      List(batchPostExampleTransfer),
-      Option(batchPostExampleTransfer)
-    )
+  def asExample: Json = {
+    json.findAllByKey("properties").head.mapObject { properties =>
+      properties.mapValues(property => property.findAllByKey("type").head)
+    }
   }
 }
 

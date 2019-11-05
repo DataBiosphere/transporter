@@ -139,9 +139,18 @@ class WebApi(
         )
     }
 
+  private val postTransferRequestExample: TransferRequest = TransferRequest(
+    transferSchema.asExample, Option(0.toShort)
+  )
+
+  private val postBulkRequestExample: BulkRequest = BulkRequest(
+    List(postTransferRequestExample),
+    Option(postTransferRequestExample)
+  )
+
   private val submitBatchRoute: Route[BulkRequest, ApiError, RequestAck] =
     batchesBase.post
-      .in(jsonBody[BulkRequest].example(transferSchema.asExample))
+      .in(jsonBody[BulkRequest].example(postBulkRequestExample))
       .out(jsonBody[RequestAck])
       .errorOut(
         oneOf(
