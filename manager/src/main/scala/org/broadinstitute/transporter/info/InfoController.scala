@@ -24,7 +24,6 @@ class InfoController(
 )(
   implicit cs: ContextShift[IO]
 ) {
-
   private val logger = Slf4jLogger.getLogger[IO]
   private implicit val logHandler: LogHandler = DbLogHandler(logger)
 

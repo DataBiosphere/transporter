@@ -16,7 +16,6 @@ class GcsToGcsRunnerSpec
     with Matchers
     with MockFactory
     with EitherValues {
-
   private val sourceBucket = "bucket"
   private val sourcePath = "the-path/foo.bar"
   private val targetBucket = "bucket2"

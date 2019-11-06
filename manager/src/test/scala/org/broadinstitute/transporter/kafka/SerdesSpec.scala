@@ -13,7 +13,6 @@ class SerdesSpec extends FlatSpec with Matchers with EitherValues {
   behavior of "Serdes"
 
   it should "round-trip (de)serialization" in {
-
     val foo1 = Foo(Some("thing"), 0, Nil)
     val foo2 = Foo(None, -12312234, List.fill(3)(UUID.randomUUID()))
     val foo3 = Foo(

@@ -34,5 +34,4 @@ object DoobieInstances extends PostgresInstances with JsonInstances {
     */
   implicit def mapGet[K: KeyDecoder: TypeTag, V: Decoder: TypeTag]: Get[Map[K, V]] =
     Get[Json].temap(_.hcursor.as[Map[K, V]].leftMap(_.getMessage()))
-
 }

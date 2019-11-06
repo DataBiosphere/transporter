@@ -162,7 +162,6 @@ class SftpToGcsRunner private[transfer] (sftp: SftpApi, gcs: GcsApi, bytesPerSte
 }
 
 object SftpToGcsRunner {
-
   private val bytesPerKib = 1024
   private val bytesPerMib = 1024 * bytesPerKib
 

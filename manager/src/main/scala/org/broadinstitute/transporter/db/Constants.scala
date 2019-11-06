@@ -7,7 +7,6 @@ import doobie._
 import doobie.implicits._
 
 object Constants {
-
   val RequestsTable = "transfer_requests"
   val TransfersTable = "transfers"
 

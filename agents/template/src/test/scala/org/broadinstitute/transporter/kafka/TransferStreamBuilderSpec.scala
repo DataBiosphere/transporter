@@ -31,7 +31,6 @@ class TransferStreamBuilderSpec
     with EmbeddedKafkaStreamsAllInOne
     with MockFactory
     with EitherValues {
-
   import TransferStreamBuilderSpec._
 
   private val topics = TopicConfig(
@@ -89,7 +88,6 @@ class TransferStreamBuilderSpec
       topology,
       config.asMap
     ) {
-
       publishToKafka(
         topics.requestTopic,
         requests.map((null: Array[Byte]) -> _.asJson.noSpaces)
@@ -402,7 +400,6 @@ class TransferStreamBuilderSpec
 }
 
 object TransferStreamBuilderSpec {
-
   val UnhandledError = new RuntimeException("OH NO")
 
   case class LoopRequest(loopCount: Int)

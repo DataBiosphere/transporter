@@ -18,7 +18,6 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
 trait BaseKafkaSpec extends FlatSpec with Matchers with EmbeddedKafka {
-
   protected implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
   private val baseConfig = EmbeddedKafkaConfig(

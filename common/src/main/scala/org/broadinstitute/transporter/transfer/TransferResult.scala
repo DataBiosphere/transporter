@@ -15,7 +15,6 @@ object TransferResult
     extends Enum[TransferResult]
     with CirceEnum[TransferResult]
     with UpperSnakecase {
-
   override val values: IndexedSeq[TransferResult] = findValues
 
   /** Signal for transfers that completed successfully. */

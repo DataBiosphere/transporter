@@ -437,7 +437,6 @@ class WebApi(
 
   /** Convenience routes that don't need to be included in generated documentation. */
   private val shimRoutes = HttpRoutes.of[IO] {
-
     // Redirect from "stable" routes to version-specific routes for static pieces of Swagger.
     case GET -> Root =>
       TemporaryRedirect(Location(Uri.unsafeFromString(s"/$StableUiPath")))
@@ -561,7 +560,6 @@ class WebApi(
 }
 
 object WebApi {
-
   type Route[I, E, O] = ServerEndpoint[I, E, O, Nothing, IO]
 
   /*

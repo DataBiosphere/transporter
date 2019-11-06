@@ -22,7 +22,6 @@ import scala.concurrent.ExecutionContext
   */
 class GcsToGcsRunner private[transfer] (api: GcsApi)
     extends TransferRunner[GcsToGcsRequest, GcsToGcsProgress, GcsToGcsOutput] {
-
   /*
    * NOTE: There's a lot more we could do here.
    *

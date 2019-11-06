@@ -14,7 +14,6 @@ object DbLogHandler {
 
   /** Wrap a log4cats logger into a doobie log handler. */
   def apply(logger: SelfAwareStructuredLogger[IO]): LogHandler = LogHandler {
-
     case Success(sql, args, dbTime, clientTime) =>
       logger.debug(s"""Successful statement execution:
            |

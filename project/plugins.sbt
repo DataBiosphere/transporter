@@ -14,10 +14,8 @@ resolvers += Resolver.url(
   new URL("https://broadinstitute.jfrog.io/broadinstitute/libs-release/")
 )(publishPatterns)
 
-addSbtPlugin("org.broadinstitute.monster" % "monster-sbt-plugins" % "0.3.0")
+addSbtPlugin("org.broadinstitute.monster" % "monster-sbt-plugins" % "0.4.0")
 
 // TODO: Add these to our base plugins.
-// App packaging.
-addSbtPlugin("com.typesafe.sbt" % "sbt-native-packager" % "1.3.25")
 // Run from sbt as a background process.
 addSbtPlugin("io.spray" % "sbt-revolver" % "0.9.1")

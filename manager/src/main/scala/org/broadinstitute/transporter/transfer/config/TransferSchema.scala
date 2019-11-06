@@ -107,7 +107,6 @@ object TransferSchema {
       * JSON schema validation library supports.
       */
     val schemaSchema: Schema = SchemaLoader.load {
-
       val supportedVersions = List(4, 6, 7)
       val schemaJson = JsonObject(
         "$schema" -> schemaUrl(supportedVersions.last),

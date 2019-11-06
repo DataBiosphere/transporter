@@ -37,7 +37,6 @@ class TransferController(
   schema: TransferSchema,
   dbClient: Transactor[IO]
 )(implicit clk: Clock[IO]) {
-
   import DoobieInstances._
   import Constants._
 
@@ -136,7 +135,6 @@ class TransferController(
     * to maintain a configured parallelism factor.
     */
   def recordRequest(request: BulkRequest): IO[RequestAck] = {
-
     val transfersWithDefaults = request.transfers.map { transfer =>
       if (request.defaults.isDefined) {
         TransferRequest(

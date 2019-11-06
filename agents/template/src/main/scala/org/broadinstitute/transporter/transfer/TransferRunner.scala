@@ -9,7 +9,6 @@ import org.broadinstitute.transporter.kafka.TransferStep
   * to handle specific storage source / destination pairs.
   */
 trait TransferRunner[I, P, O] {
-
   /**
     * Initialize the transfer described by the given request, and
     * emit enough information to push the first chunk of data.

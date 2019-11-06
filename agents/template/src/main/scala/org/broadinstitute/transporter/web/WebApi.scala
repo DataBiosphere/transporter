@@ -12,7 +12,6 @@ import org.http4s.implicits._
   *                       running agent
   */
 class WebApi(infoController: InfoController) {
-
   import org.http4s.dsl.io._
   import org.http4s.circe.CirceEntityEncoder._
 

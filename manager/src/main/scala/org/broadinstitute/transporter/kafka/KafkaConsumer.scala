@@ -20,7 +20,6 @@ import scala.concurrent.duration.FiniteDuration
   * @tparam M type which messages pulled from Kafka should be parsed into
   */
 trait KafkaConsumer[M] {
-
   /**
     * Stream emitting batches of messages pulled from Kafka, paired with their
     * corresponding offsets.
@@ -116,7 +115,6 @@ object KafkaConsumer {
     waitTimePerBatch: FiniteDuration
   )(implicit cs: ContextShift[IO], t: Timer[IO])
       extends KafkaConsumer[M] {
-
     private val logger = Slf4jLogger.getLogger[IO]
 
     override def stream: Stream[IO, Chunk[(TransferMessage[M], CommittableOffset[IO])]] =
@@ -129,5 +127,4 @@ object KafkaConsumer {
         case Left(err)     => logger.error(err)("Failed to decode Kafka message")
       }.rethrow.groupWithin(maxPerBatch, waitTimePerBatch)
   }
-
 }

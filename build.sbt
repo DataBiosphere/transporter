@@ -55,7 +55,7 @@ lazy val transporter = project
 /** Definitions used by both the manager and agents. */
 lazy val `transporter-common` = project
   .in(file("./common"))
-  .enablePlugins(BasePlugin)
+  .enablePlugins(MonsterBasePlugin)
   .settings(publish / skip := true)
   .settings(
     libraryDependencies ++= Seq(
@@ -77,7 +77,7 @@ lazy val `transporter-common` = project
   */
 lazy val `transporter-manager-migrations` = project
   .in(file("./manager/db-migrations"))
-  .enablePlugins(TransporterDockerPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .settings(
     // Rewrite the Docker mappings to only include changelog files stored at /working.
     // Relative structure of the changelogs is preserved.
@@ -181,7 +181,7 @@ lazy val `transporter-manager` = project
 /** Common framework for transfer-executing agents. */
 lazy val `transporter-agent-template` = project
   .in(file("./agents/template"))
-  .enablePlugins(BasePlugin)
+  .enablePlugins(MonsterBasePlugin)
   .dependsOn(`transporter-common`)
   .settings(publish / skip := true)
   .settings(

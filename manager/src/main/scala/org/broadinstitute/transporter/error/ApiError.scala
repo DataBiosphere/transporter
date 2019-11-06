@@ -9,7 +9,6 @@ import io.circe.derivation.{deriveDecoder, deriveEncoder}
 sealed trait ApiError extends Exception with Product with Serializable
 
 object ApiError {
-
   /**
     * Exception used to mark when a user submits transfers
     * that don't match the manager's expected schema.

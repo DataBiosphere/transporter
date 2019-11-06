@@ -50,7 +50,6 @@ class S3AuthProviderSpec extends FlatSpec with Matchers {
     s"""Authorization: AWS4-HMAC-SHA256 Credential=$fakeAccessKey/$testScope,SignedHeaders=$testHeaders,Signature=$testSignature"""
 
   it should "create canonical requests" in {
-
     val (canonicalized, headerNames) = S3AuthProvider.canonicalize(
       method = Method.GET,
       uri = Uri.uri("https://bucket.s3.amazonaws.com/?Param2=value2&Param1=value1"),

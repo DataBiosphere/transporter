@@ -17,7 +17,6 @@ trait PostgresSpec
     with Matchers
     with ForAllTestContainer
     with BeforeAndAfterEach {
-
   protected implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
   override val container: PostgreSQLContainer = PostgreSQLContainer("postgres:9.6.10")

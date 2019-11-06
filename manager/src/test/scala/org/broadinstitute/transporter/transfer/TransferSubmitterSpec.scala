@@ -19,7 +19,6 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
 class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherValues {
-
   import org.broadinstitute.transporter.db.DoobieInstances._
 
   private implicit val t: Timer[IO] = IO.timer(ExecutionContext.global)
@@ -67,7 +66,6 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
                   VALUES
                   ($id, $request2Id, $body, ${TransferStatus.Pending: TransferStatus}, 0, 0)""".update.run.void
       }
-
     } yield ()
 
     setup.transact(tx).flatMap(_ => test(tx, submitter)).unsafeRunSync()
@@ -350,5 +348,4 @@ class TransferSubmitterSpec extends PostgresSpec with MockFactory with EitherVal
         submitted shouldBe parallelism
       }
   }
-
 }

@@ -152,7 +152,6 @@ class TransferListener private[transfer] (
            |AND $TransfersTable.id = ?
            |AND $RequestsTable.id = ?""".stripMargin
       ).updateMany(finalStatusUpdates)
-
     } yield {
       numUpdated
     }

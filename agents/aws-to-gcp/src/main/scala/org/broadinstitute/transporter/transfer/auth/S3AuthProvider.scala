@@ -90,7 +90,6 @@ class S3AuthProvider(config: AwsConfig) {
 }
 
 object S3AuthProvider {
-
   private val AWSAuthAlgorithm = "AWS4-HMAC-SHA256"
 
   /**
@@ -202,5 +201,4 @@ object S3AuthProvider {
     "Authorization",
     s"$AWSAuthAlgorithm Credential=$accessKey/$credentialScope,SignedHeaders=$signedHeaders,Signature=$signature"
   )
-
 }

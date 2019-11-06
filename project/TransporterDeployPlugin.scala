@@ -3,8 +3,10 @@ import com.typesafe.sbt.packager.NativePackagerKeys
 import com.typesafe.sbt.packager.docker.{Cmd, DockerChmodType, DockerPlugin}
 import com.typesafe.sbt.packager.linux.LinuxKeys
 import com.typesafe.sbt.packager.universal.UniversalPlugin.autoImport._
+import org.broadinstitute.monster.sbt.MonsterDockerPlugin
 import sbt._
 import sbt.Keys._
+
 import sys.process.Process
 
 /**
@@ -14,7 +16,7 @@ import sys.process.Process
 object TransporterDeployPlugin extends AutoPlugin with LinuxKeys with NativePackagerKeys {
   import DockerPlugin.autoImport._
 
-  override def requires: Plugins = TransporterDockerPlugin
+  override def requires: Plugins = MonsterDockerPlugin
 
   object autoImport {
 

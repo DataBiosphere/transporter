@@ -7,7 +7,6 @@ import doobie.util.ExecutionContexts
 import org.broadinstitute.transporter.db.config.DbConfig
 
 object DbTransactor {
-
   // Recommendation from Hikari docs:
   // https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing#the-formula
   private val MaxDbConnections = (2 * Runtime.getRuntime.availableProcessors) + 1

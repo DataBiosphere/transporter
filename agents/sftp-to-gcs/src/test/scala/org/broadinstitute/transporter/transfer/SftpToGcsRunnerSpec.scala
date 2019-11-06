@@ -25,7 +25,6 @@ class SftpToGcsRunnerSpec
     with Matchers
     with MockFactory
     with EitherValues {
-
   private implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
   private val sourcePath = "sftp/path/to/thing"

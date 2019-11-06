@@ -49,7 +49,6 @@ class GcsAuthProvider private[transfer] (
     * and refresh it if so.
     */
   private def maybeRefreshToken(now: Instant): IO[Unit] = {
-
     val maybeExpirationInstant = for {
       token <- Option(googleCreds.getAccessToken)
       expiration <- Option(token.getExpirationTime)

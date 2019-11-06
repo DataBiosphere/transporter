@@ -136,7 +136,6 @@ class KafkaConsumerSpec extends BaseKafkaSpec with EitherValues {
                   offset.commit.as(message)
               }
               .through(q.enqueue)
-
           }.compile.drain.start
 
           fiber.bracket(_ => q.dequeue.take(5).compile.toList)(_.cancel)

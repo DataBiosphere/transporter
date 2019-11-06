@@ -6,13 +6,11 @@ import org.broadinstitute.transporter.PostgresSpec
 import org.scalamock.scalatest.MockFactory
 
 class InfoControllerSpec extends PostgresSpec with MockFactory {
-
   private val version = "0.0.0-TEST"
 
   behavior of "InfoController"
 
   it should "check the DB for status" in {
-
     new InfoController(version, transactor).status
       .unsafeRunSync() shouldBe ManagerStatus(
       ok = true,

@@ -35,10 +35,8 @@ class KafkaProducerSpec extends BaseKafkaSpec {
           }
         }
         .unsafeRunSync()
-
     }
 
     published shouldBe messages.map(Right(_))
   }
-
 }

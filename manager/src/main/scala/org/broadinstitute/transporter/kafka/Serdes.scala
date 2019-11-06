@@ -10,7 +10,6 @@ import io.circe.syntax._
 
 /** Kafka (de)serializers for types not covered by fs2-kafka. */
 object Serdes {
-
   /** Convenience alias to allow using `Either` in context-bounds. */
   type Attempt[T] = Either[Throwable, T]
 

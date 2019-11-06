@@ -41,11 +41,9 @@ class AwsToGcpRunner(
   override def initialize(
     request: AwsToGcpRequest
   ): TransferStep[AwsToGcpRequest, AwsToGcpProgress, AwsToGcpOutput] = {
-
     val forceTransfer = request.force.getOrElse(false)
 
     val initFlow = for {
-
       // First, check if the source S3 object exists and is readable.
       s3Metadata <- getS3Metadata(
         bucket = request.s3Bucket,
@@ -374,7 +372,6 @@ class AwsToGcpRunner(
     )
 
     for {
-
       gcsReq <- IO.delay {
         Request[IO](
           method = Method.POST,
@@ -397,7 +394,6 @@ class AwsToGcpRunner(
     } yield {
       locationHeader.value
     }
-
   }
 
   override def step(
@@ -513,7 +509,6 @@ class AwsToGcpRunner(
 }
 
 object AwsToGcpRunner {
-
   /**
     * Default region in AWS.
     *

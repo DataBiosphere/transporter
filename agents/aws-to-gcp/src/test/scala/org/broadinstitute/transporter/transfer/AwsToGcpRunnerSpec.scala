@@ -4,7 +4,6 @@ import org.http4s._
 import org.scalatest.{FlatSpec, Matchers}
 
 class AwsToGcpRunnerSpec extends FlatSpec with Matchers {
-
   private val bucket = "test-bucket"
 
   behavior of "AwsToGcpRunner"

@@ -22,7 +22,6 @@ object TransferStatus
     extends Enum[TransferStatus]
     with CirceEnum[TransferStatus]
     with PostgresInstances {
-
   override val toString: String = "TransferStatus"
 
   override val values: IndexedSeq[TransferStatus] = findValues

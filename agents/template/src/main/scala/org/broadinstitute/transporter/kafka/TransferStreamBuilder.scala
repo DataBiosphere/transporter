@@ -167,7 +167,6 @@ class TransferStreamBuilder[I: Decoder, P: Encoder: Decoder, O: Encoder](
 }
 
 object TransferStreamBuilder {
-
   private[this] val parser = new JawnParser()
 
   /**

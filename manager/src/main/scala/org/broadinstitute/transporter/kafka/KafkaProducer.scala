@@ -13,7 +13,6 @@ import org.broadinstitute.transporter.transfer.TransferMessage
   * @tparam M the type of messages which should be pushed to Kafka by this producer
   */
 trait KafkaProducer[M] {
-
   /**
     * Submit a batch of messages to a Kafka topic.
     *
@@ -73,7 +72,6 @@ object KafkaProducer {
     */
   private[kafka] class Impl[M](producer: KProducer[IO, Unit, TransferMessage[M]])
       extends KafkaProducer[M] {
-
     private val logger = Slf4jLogger.getLogger[IO]
 
     override def submit(topic: String, messages: List[TransferMessage[M]]): IO[Unit] = {
@@ -87,5 +85,4 @@ object KafkaProducer {
       } yield ()
     }
   }
-
 }
