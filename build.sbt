@@ -9,7 +9,6 @@ val postgresqlDriverVersion = "42.2.5"
 val circeVersion = "0.12.3"
 val circeDerivationVersion = "0.12.0-M7"
 val enumeratumCirceVersion = "1.5.22"
-val everitJsonSchemaVersion = "1.12.0"
 
 // Kafka.
 val fs2KafkaVersion = "0.20.1"
@@ -140,7 +139,6 @@ lazy val `transporter-manager` = project
     },
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % logbackVersion,
-      "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
       "com.softwaremill.tapir" %% "tapir-core" % tapirVersion,

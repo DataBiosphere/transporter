@@ -19,8 +19,6 @@ import org.broadinstitute.transporter.error.ApiError.{Conflict, InvalidRequest, 
 import org.broadinstitute.transporter.transfer.api._
 import org.broadinstitute.transporter.transfer.config.TransferSchema
 
-import scala.collection.JavaConverters._
-
 /**
   * Component responsible for backing Transporter's transfer-level web APIs.
   *
@@ -215,7 +213,7 @@ class TransferController(
         case Valid(_) => IO.unit
         case Invalid(errs) =>
           NonEmptyList
-            .fromList(errs.toList.flatMap(_.getAllMessages.asScala.toList))
+            .fromList(errs.toList.map(_.getMessage))
             .fold(IO.unit) { msgs =>
               logger
                 .error("Requests failed validation:")
