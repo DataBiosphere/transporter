@@ -20,11 +20,11 @@ pipeline {
                 sh 'sbt Compile/compile Test/compile'
             }
         }
-        stage('Test') {
+        /*stage('Test') {
             steps {
                 sh 'sbt test'
             }
-        }
+        }*/
         stage('Publish') {
             //when { branch 'master' }
             environment {
