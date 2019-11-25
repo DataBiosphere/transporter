@@ -239,7 +239,7 @@ lazy val `transporter-gcs-to-gcs-agent` = project
 
 lazy val `transporter-sftp-to-gcs-agent` = project
   .in(file("./agents/sftp-to-gcs"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(
     libraryDependencies ++= Seq(
