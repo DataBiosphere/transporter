@@ -28,7 +28,7 @@ object DbTransactor {
       connectionContext <- ExecutionContexts.fixedThreadPool[IO](MaxDbConnections)
       // NOTE: Lines beneath here are from doobie's implementation of `HikariTransactor.newHikariTransactor`.
       // Have to open up the guts to set detailed configuration.
-      _ <- Resource.liftF(IO.delay(Class.forName(config.driverClassname)))
+      _ <- Resource.liftF(IO.delay(Class.forName(DbConfig.DriverClassName)))
       transactor <- HikariTransactor.initial[IO](
         connectEC = connectionContext,
         blocker = blockingEc

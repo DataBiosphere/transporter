@@ -128,7 +128,7 @@ lazy val `transporter-manager-migrations` = project
 /** Web service which receives, distributes, and tracks transfer requests. */
 lazy val `transporter-manager` = project
   .in(file("./manager"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-common`, `transporter-manager-migrations` % Test)
   .settings(
     // Needed to resolve JSON schema lib.
