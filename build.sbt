@@ -209,7 +209,7 @@ lazy val `transporter-agent-template` = project
 /** Agent which can transfer files from AWS to GCP. */
 lazy val `transporter-aws-to-gcp-agent` = project
   .in(file("./agents/aws-to-gcp"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(
     resolvers += Resolver.jcenterRepo,
@@ -224,7 +224,7 @@ lazy val `transporter-aws-to-gcp-agent` = project
 
 lazy val `transporter-gcs-to-gcs-agent` = project
   .in(file("./agents/gcs-to-gcs"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(
     libraryDependencies ++= Seq(
