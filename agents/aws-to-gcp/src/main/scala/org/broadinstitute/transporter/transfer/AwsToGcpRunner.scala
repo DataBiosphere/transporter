@@ -173,7 +173,14 @@ class AwsToGcpRunner(
           S3Metadata(_, response.contentType)
         }
       } else {
-        S3Failure.raise(response, s"Failed to get metadata for $path in $bucket/$region")
+        // HEAD responses contain no body, and therefore no useful error info.
+        val debugRequest = s3Req.withMethod(Method.GET).putHeaders(Range(0, 0))
+        s3Client(debugRequest, region).use { debugResponse =>
+          S3Failure.raise(
+            debugResponse.withStatus(response.status),
+            s"Failed to get metadata for $path in $bucket/$region"
+          )
+        }
       }
     }
   }
