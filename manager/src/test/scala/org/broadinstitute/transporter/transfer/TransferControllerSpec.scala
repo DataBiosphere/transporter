@@ -110,32 +110,6 @@ class TransferControllerSpec extends PostgresSpec with MockFactory with EitherVa
       }
   }
 
-  it should "not record new transfers with malformed requests" in withController {
-    (tx, controller) =>
-      val transferCount = 10
-      val request = BulkRequest(
-        List.tabulate(transferCount)(i => TransferRequest(json"""[$i]""", None))
-      )
-
-      for {
-        (initRequests, initTransfers) <- (
-          countRequests.query[Long].unique,
-          countTransfers.query[Long].unique
-        ).tupled.transact(tx)
-        ackOrErr <- controller.recordRequest(request).attempt
-        (postRequests, postTransfers) <- (
-          countRequests.query[Long].unique,
-          countTransfers.query[Long].unique
-        ).tupled.transact(tx)
-      } yield {
-        initRequests shouldBe 0
-        initTransfers shouldBe 0
-        ackOrErr.left.value shouldBe an[InvalidRequest]
-        postRequests shouldBe 0
-        postTransfers shouldBe 0
-      }
-  }
-
   it should "merge defaults correctly into transfer requests" in withController {
     (tx, controller) =>
       val transferCount = 10

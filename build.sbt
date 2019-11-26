@@ -9,7 +9,6 @@ val postgresqlDriverVersion = "42.2.5"
 val circeVersion = "0.12.3"
 val circeDerivationVersion = "0.12.0-M7"
 val enumeratumCirceVersion = "1.5.22"
-val everitJsonSchemaVersion = "1.12.0"
 
 // Kafka.
 val fs2KafkaVersion = "0.20.1"
@@ -129,7 +128,7 @@ lazy val `transporter-manager-migrations` = project
 /** Web service which receives, distributes, and tracks transfer requests. */
 lazy val `transporter-manager` = project
   .in(file("./manager"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-common`, `transporter-manager-migrations` % Test)
   .settings(
     // Needed to resolve JSON schema lib.
@@ -140,7 +139,6 @@ lazy val `transporter-manager` = project
     },
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % logbackVersion,
-      "com.github.everit-org.json-schema" % "org.everit.json.schema" % everitJsonSchemaVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "com.ovoenergy" %% "fs2-kafka" % fs2KafkaVersion,
       "com.softwaremill.tapir" %% "tapir-core" % tapirVersion,
@@ -211,7 +209,7 @@ lazy val `transporter-agent-template` = project
 /** Agent which can transfer files from AWS to GCP. */
 lazy val `transporter-aws-to-gcp-agent` = project
   .in(file("./agents/aws-to-gcp"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(
     resolvers += Resolver.jcenterRepo,
@@ -226,7 +224,7 @@ lazy val `transporter-aws-to-gcp-agent` = project
 
 lazy val `transporter-gcs-to-gcs-agent` = project
   .in(file("./agents/gcs-to-gcs"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(
     libraryDependencies ++= Seq(
@@ -241,7 +239,7 @@ lazy val `transporter-gcs-to-gcs-agent` = project
 
 lazy val `transporter-sftp-to-gcs-agent` = project
   .in(file("./agents/sftp-to-gcs"))
-  .enablePlugins(TransporterDeployPlugin)
+  .enablePlugins(MonsterDockerPlugin)
   .dependsOn(`transporter-agent-template`)
   .settings(
     libraryDependencies ++= Seq(

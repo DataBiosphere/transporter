@@ -1,7 +1,0 @@
-#!/bin/bash
-declare -r LIQUIBASE_HOST='{{env "DB_URL"}}'
-declare -r LIQUIBASE_DATABASE='{{env "DB_NAME"}}'
-declare -r LIQUIBASE_USERNAME='{{env "DB_USERNAME"}}'
-declare -r LIQUIBASE_PASSWORD='{{env "DB_PASSWORD"}}'
-
-exec /usr/local/bin/entrypoint.sh ${@}
