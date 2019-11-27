@@ -292,7 +292,6 @@ class AwsToGcpRunner(
 }
 
 object AwsToGcpRunner {
-
   /**
     * Default region in AWS.
     *
