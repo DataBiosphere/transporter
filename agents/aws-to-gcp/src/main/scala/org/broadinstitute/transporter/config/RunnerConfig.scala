@@ -9,7 +9,8 @@ case class RunnerConfig(
   aws: AwsConfig,
   gcp: GcpConfig,
   timeouts: TimeoutConfig,
-  retries: RetryConfig
+  retries: RetryConfig,
+  mibPerStep: Int
 )
 
 object RunnerConfig {
