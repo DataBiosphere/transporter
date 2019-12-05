@@ -38,8 +38,9 @@ case class KStreamsConfig(
       val byteSize = (max * 1024 * 1024).toString
       Map(
         ProducerConfig.MAX_REQUEST_SIZE_CONFIG -> byteSize,
+        ProducerConfig.BUFFER_MEMORY_CONFIG -> byteSize,
         ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG -> byteSize,
-        ConsumerConfig.FETCH_MAX_BYTES_CONFIG -> byteSize
+        ConsumerConfig.FETCH_MAX_BYTES_CONFIG -> byteSize,
       )
     } ++ ConnectionConfig.securityProperties(tls, scram) ++ Map(
       StreamsConfig.APPLICATION_ID_CONFIG -> applicationId,
