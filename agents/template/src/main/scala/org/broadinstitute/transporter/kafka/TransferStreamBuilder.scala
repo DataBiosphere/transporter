@@ -176,7 +176,12 @@ object TransferStreamBuilder {
     * the encoding / decoding logic we're already writing.
     */
   implicit def jsonSerde[A >: Null: Encoder: Decoder]: Serde[A] = KSerdes.fromFn[A](
-    (message: A) => message.asJson.noSpaces.getBytes,
+    (message: A) => {
+      val buf = Printer.noSpaces.printToByteBuffer(message.asJson)
+      val out = new Array[Byte](buf.limit())
+      buf.get(out)
+      out
+    },
     (bytes: Array[Byte]) =>
       parser
         .decodeByteBuffer[A](ByteBuffer.wrap(bytes))
