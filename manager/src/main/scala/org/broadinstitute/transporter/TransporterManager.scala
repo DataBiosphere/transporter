@@ -60,6 +60,7 @@ object TransporterManager extends IOApp.WithContext {
 
           val server = BlazeServerBuilder[IO]
             .bindHttp(port = config.web.port, host = config.web.host)
+            .withResponseHeaderTimeout(config.web.responseTimeout)
             .withHttpApp(appRoutes.app)
 
           server.serve
