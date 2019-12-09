@@ -17,4 +17,5 @@
     <include file="changesets/13-add-request-received-time.xml" relativeToChangelogFile="true" />
     <include file="changesets/14-add-request-priority.xml" relativeToChangelogFile="true" />
     <include file="changesets/15-add-expanded-transfer-status.xml" relativeToChangelogFile="true" />
+    <include file="changesets/16-index-request-id.xml" relativeToChangelogFile="true" />
 </databaseChangeLog>
