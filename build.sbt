@@ -9,6 +9,7 @@ val postgresqlDriverVersion = "42.2.5"
 val circeVersion = "0.12.3"
 val circeDerivationVersion = "0.12.0-M7"
 val enumeratumCirceVersion = "1.5.22"
+val jacksonDatabindVersion = "2.9.10.4"
 
 // Kafka.
 val fs2KafkaVersion = "0.20.1"
@@ -185,6 +186,7 @@ lazy val `transporter-agent-template` = project
   .settings(
     libraryDependencies ++= Seq(
       "ch.qos.logback" % "logback-classic" % logbackVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % jacksonDatabindVersion,
       "com.github.pureconfig" %% "pureconfig-cats-effect" % pureConfigVersion,
       "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion,
       "org.http4s" %% "http4s-blaze-server" % http4sVersion,
